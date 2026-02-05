@@ -1,0 +1,44 @@
+name: VectorFOC CI
+
+on:
+  push:
+    paths:
+      - "**"
+  pull_request:
+    paths:
+      - "**"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi cmake make
+
+      - name: Build firmware (CMake + arm-none-eabi)
+        run: |
+          mkdir -p build
+          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
+          cmake --build build -j2
+
+      - name: Build tests (host)
+        run: |
+          mkdir -p test/build-ci
+          cmake -S test -B test/build-ci
+          cmake --build test/build-ci -j2
+
+      - name: Run tests (host)
+        run: |
+          ./test/build-ci/test_runner_core
+          ./test/build-ci/test_runner_state
+          ./test/build-ci/test_runner_closed_loop
+          ./test/build-ci/test_runner_fault
+          ./test/build-ci/test_runner_traj

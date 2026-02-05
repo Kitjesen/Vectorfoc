@@ -1,0 +1,96 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "CMake: Configure",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-DCMAKE_BUILD_TYPE=Debug",
+                "-DCMAKE_TOOLCHAIN_FILE=${workspaceFolder}/cmake/gcc-arm-none-eabi.cmake",
+                "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+                "-B",
+                "${workspaceFolder}/build"
+            ],
+            "problemMatcher": [],
+            "group": "build"
+        },
+        {
+            "label": "CMake: Build",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build",
+                "-j",
+                "8"
+            ],
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "dependsOn": [
+                "CMake: Configure"
+            ]
+        },
+        {
+            "label": "CMake: Clean",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build",
+                "--target",
+                "clean"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash via ST-Link",
+            "type": "shell",
+            "command": "STM32_Programmer_CLI",
+            "args": [
+                "-c",
+                "port=SWD",
+                "-w",
+                "${workspaceFolder}/build/VectorFoc.hex",
+                "-v",
+                "-rst"
+            ],
+            "problemMatcher": [],
+            "dependsOn": [
+                "CMake: Build"
+            ]
+        },
+        {
+            "label": "Flash via OpenOCD",
+            "type": "shell",
+            "command": "openocd",
+            "args": [
+                "-f",
+                "interface/stlink.cfg",
+                "-f",
+                "target/stm32g4x.cfg",
+                "-c",
+                "program ${workspaceFolder}/build/VectorFoc.elf verify reset exit"
+            ],
+            "problemMatcher": [],
+            "dependsOn": [
+                "CMake: Build"
+            ]
+        },
+        {
+            "label": "Size Analysis",
+            "type": "shell",
+            "command": "arm-none-eabi-size",
+            "args": [
+                "-A",
+                "${workspaceFolder}/build/VectorFoc.elf"
+            ],
+            "problemMatcher": []
+        }
+    ]
+}
