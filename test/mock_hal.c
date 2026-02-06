@@ -1,4 +1,7 @@
 #include "motor_hal_api.h"
+#include "fsm.h"
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -16,6 +19,10 @@ static float mock_theta = 0.0f;
 static float mock_velocity = 0.0f;
 
 // --- Mock Control Interface ---
+void MockHAL_SetNoiseLevel(float sigma) {
+  (void)sigma; // No-op in basic mock
+}
+
 void MockHAL_SetCurrents(float ia, float ib, float ic) {
   mock_adc_ia = ia;
   mock_adc_ib = ib;
@@ -103,3 +110,54 @@ Motor_HAL_Handle_t g_mock_hal = {
 };
 
 Motor_HAL_Handle_t *MockHAL_GetHandle(void) { return &g_mock_hal; }
+
+// ============================================================
+// Stubs for symbols referenced by motor.c and fsm.c
+// These provide link-time resolution for the test environment.
+// ============================================================
+
+// --- Global variables ---
+StateMachine g_ds402_state_machine;
+uint8_t g_can_id = 1;
+
+// --- HAL PWM stubs (hal_pwm.h) ---
+int MHAL_PWM_Enable(void) {
+  printf("[STUB] MHAL_PWM_Enable\n");
+  return 0;
+}
+int MHAL_PWM_Disable(void) {
+  printf("[STUB] MHAL_PWM_Disable\n");
+  return 0;
+}
+int MHAL_PWM_Brake(void) {
+  printf("[STUB] MHAL_PWM_Brake\n");
+  return 0;
+}
+
+// --- HAL system tick (hal_abstraction.h) ---
+uint32_t HAL_GetSystemTick(void) { return 0; }
+
+// --- Calibration stubs ---
+// Use opaque pointers to avoid pulling in full motor.h dependency tree.
+// The linker only cares about symbol names in C.
+typedef int CalibResult_stub;
+CalibResult_stub CurrentCalib_Update(void *motor, void *ctx) { return 0; }
+void Init_Motor_Calib(void *motor) {}
+CalibResult_stub RSLSCalib_Update(void *motor, void *ctx, float period) {
+  return 0;
+}
+CalibResult_stub FluxCalib_Update(void *motor, void *ctx) { return 0; }
+
+// --- Parameter system stub ---
+void Param_ScheduleSave(void) {}
+
+// --- Motor control stub ---
+void MotorControl_Run(void *motor) {}
+
+// --- Safety stubs ---
+void Safety_Update_Slow(void *motor, void *fsm) {}
+bool Safety_HasActiveFault(void) { return false; }
+uint32_t Safety_GetActiveFaultBits(void) { return 0; }
+
+// --- LED stub ---
+void RGB_DisplayColorById(uint8_t color_id) { (void)color_id; }
