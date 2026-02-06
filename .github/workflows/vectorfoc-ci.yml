@@ -42,3 +42,14 @@ jobs:
           ./test/build-ci/test_runner_closed_loop
           ./test/build-ci/test_runner_fault
           ./test/build-ci/test_runner_traj
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: firmware-binaries
+          path: |
+            build/VectorFoc.elf
+            build/VectorFoc.bin
+            build/VectorFoc.hex
+          retention-days: 30
