@@ -1,7 +1,7 @@
-#include "motor/foc/clarke.h"
-#include "motor/foc/foc_algorithm.h"
-#include "motor/foc/park.h"
-#include "motor/foc/svpwm.h"
+#include "foc/clarke.h"
+#include "foc/foc_algorithm.h"
+#include "foc/park.h"
+#include "foc/svpwm.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>

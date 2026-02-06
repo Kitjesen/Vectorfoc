@@ -26,89 +26,77 @@ endif()
 
 # Include directories
 include_directories(
-    Core/Inc
-    Drivers/STM32G4xx_HAL_Driver/Inc
-    ${CMAKE_SOURCE_DIR}/Drivers/STM32G4xx_HAL_Driver/Inc/Legacy
-    Drivers/STM32G4xx_HAL_Driver/Inc/Legacy
-    Drivers/CMSIS/Device/ST/STM32G4xx/Include
-    Drivers/CMSIS/Include
-    Middlewares/Third_Party/FreeRTOS/Source/include
-    Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
-    Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS
-    Middlewares/ST/STM32_USB_Device_Library/Core/Inc
-    Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
-    APP
-    APP/init
-    APP/rtos
-    APP/isr
-    BSP
-    BSP/adc
-    BSP/can
-    BSP/dwt
-    BSP/flash
-    BSP/log
-    BSP/usart
-    MODULES
-    MODULES/hal
-    MODULES/led
-    MODULES/algorithm
-    MODULES/communication
-    MODULES/communication/canopen
-    MODULES/communication/inovxio
-    MODULES/communication/mit
-    MODULES/communication/executor
-    MODULES/encoder
-    MODULES/encoder/MT6816
-    MODULES/motor
-    MODULES/motor/api
-    MODULES/motor/calibration
-    MODULES/motor/control
-    MODULES/motor/control/loops
-    MODULES/motor/control/modes
-
-    MODULES/motor/core
-    MODULES/motor/foc
-
-    MODULES/motor/fsm
-    MODULES/motor/hal
-
-    MODULES/motor/safety
-    MODULES/parameter
-    MODULES/vofa
-    MODULES/error
-    USB_Device
-    USB_Device/App
-    USB_Device/Target
+    # Lib - 第三方/CubeMX 生成代码
+    Lib/Core/Inc
+    Lib/Drivers/STM32G4xx_HAL_Driver/Inc
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Inc/Legacy
+    Lib/Drivers/STM32G4xx_HAL_Driver/Inc/Legacy
+    Lib/Drivers/CMSIS/Device/ST/STM32G4xx/Include
+    Lib/Drivers/CMSIS/Include
+    Lib/Middlewares/Third_Party/FreeRTOS/Source/include
+    Lib/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
+    Lib/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS
+    Lib/Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+    Lib/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
+    Lib/USB_Device
+    Lib/USB_Device/App
+    Lib/USB_Device/Target
+    # Src - 自定义代码
+    Src/APP
+    Src/APP/init
+    Src/APP/rtos
+    Src/APP/isr
+    Src/HAL/interface
+    Src/HAL/stm32g4
+    Src/HAL/bsp
+    Src/HAL/encoder
+    Src/ALGO
+    Src/ALGO/motor
+    Src/ALGO/control
+    Src/ALGO/foc
+    Src/ALGO/pid
+    Src/ALGO/observer
+    Src/ALGO/trajectory
+    Src/COMM
+    Src/COMM/manager
+    Src/COMM/executor
+    Src/COMM/protocol
+    Src/COMM/protocol/canopen
+    Src/COMM/protocol/inovxio
+    Src/COMM/protocol/mit
+    Src/COMM/transport
+    Src/UI
+    Src/UI/parameter
+    Src/UI/led
+    Src/UI/vofa
+    Src/UI/error
 )
 
 # Source files
 file(GLOB_RECURSE SOURCES
-    "Core/Src/*.c"
-    "Drivers/STM32G4xx_HAL_Driver/Src/*.c"
-    "Middlewares/Third_Party/FreeRTOS/Source/*.c"
-    "APP/*.c"
-    "BSP/*.c"
-    "MODULES/*.c"
-    "USB_Device/*.c"
-    "Middlewares/ST/STM32_USB_Device_Library/Core/Src/*.c"
-    "Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Src/*.c"
+    "Lib/Core/Src/*.c"
+    "Lib/Drivers/STM32G4xx_HAL_Driver/Src/*.c"
+    "Lib/Middlewares/Third_Party/FreeRTOS/Source/*.c"
+    "Lib/USB_Device/*.c"
+    "Lib/Middlewares/ST/STM32_USB_Device_Library/Core/Src/*.c"
+    "Lib/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Src/*.c"
+    "Src/APP/*.c"
+    "Src/HAL/*.c"
+    "Src/ALGO/*.c"
+    "Src/COMM/*.c"
+    "Src/UI/*.c"
 )
 
-# Exclude problematic files with HAL naming conflicts
-list(FILTER SOURCES EXCLUDE REGEX "BSP/bsp_adc_stm32g4.c")
-list(FILTER SOURCES EXCLUDE REGEX "BSP/bsp_pwm_stm32g4.c")
-list(FILTER SOURCES EXCLUDE REGEX "BSP/bsp_encoder_mt6816.c")
-list(FILTER SOURCES EXCLUDE REGEX "MODULES/motor/control/dispatcher.c")
 # list(FILTER SOURCES EXCLUDE REGEX "MODULES/hal/.*")
 
 # Exclude template/example files if necessary, or specific files that shouldn't be compiled
 # Remove all portable files first
-list(FILTER SOURCES EXCLUDE REGEX "Middlewares/Third_Party/FreeRTOS/Source/portable/.*")
+list(FILTER SOURCES EXCLUDE REGEX "Lib/Middlewares/Third_Party/FreeRTOS/Source/portable/.*")
 
 # Manually adding FreeRTOS portable files
 list(APPEND SOURCES
-    "Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c"
-    "Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/port.c"
+    "Lib/Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c"
+    "Lib/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/port.c"
 )
 
 # Startup file

@@ -457,35 +457,23 @@ graph TD
 
 ---
 
-## 项目结构
+## 项目结构（简化）
 
 ```
-VectorFoc/
-├── MODULES/
-│   ├── motor/
-│   │   ├── core/          # 电机核心数据结构
-│   │   ├── control/       # 控制算法 (modes.c等)
-│   │   ├── foc/           # FOC算法 (clarke/park/svpwm)
-│   │   ├── calibration/   # 校准功能
-│   │   ├── safety/        # 故障检测
-│   │   ├── fsm/           # 状态机管理
-│   │   └── hal/           # 电机硬件抽象层
-│   ├── encoder/
-│   │   └── MT6816/        # MT6816编码器驱动
-│   ├── communication/
-│   │   ├── inovxio/       # Inovxio协议
-│   │   ├── mit/           # MIT协议
-│   │   ├── canopen/       # CANopen协议
-│   │   └── manager.c      # 协议管理器
-│   ├── algorithm/
-│   │   ├── pid.c          # PID控制器
-│   │   ├── trap_traj.c    # 梯形轨迹
-│   │   └── rate_limiter.c # 速率限制
-│   ├── hal/               # 板级硬件抽象 (Led/Flash等)
-│   └── parameter/         # 参数管理
-├── Core/                  # STM32 HAL初始化
-└── CMakeLists.txt         # 构建配置
+VectorFOC/
+├── APP/            # 应用层与任务
+├── BSP/            # 板级驱动
+├── Core/           # STM32 HAL 初始化
+├── Drivers/        # HAL/CMSIS 驱动
+├── Middlewares/    # FreeRTOS/USB 等中间件
+├── MODULES/        # 功能模块（电机/通信/算法/参数等）
+├── USB_Device/     # USB 设备实现
+├── MDK-ARM/        # Keil 工程文件
+├── test/           # 单元测试
+└── CMakeLists.txt  # 构建配置
 ```
+
+> 详细模块结构见 `MODULES/` 内各自 `README.md`。
 
 ---
 
@@ -570,10 +558,6 @@ motor.PosPID.Ki = 0.0f;
 
 ---
 
-## 联系方式
-
-- **问题反馈**: [GitHub Issues](https://github.com/your-repo/issues)
-- **技术支持**: support@example.com
 
 ---
 

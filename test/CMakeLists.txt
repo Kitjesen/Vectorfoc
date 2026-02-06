@@ -10,18 +10,16 @@ set(PROJ_ROOT "${CMAKE_SOURCE_DIR}/..")
 # Include Directories (Mirroring compiled firmware includes)
 include_directories(
     ${CMAKE_SOURCE_DIR}/mocks
-    ${PROJ_ROOT}/Core/Inc
-    ${PROJ_ROOT}/Drivers/STM32G4xx_HAL_Driver/Inc
-    ${PROJ_ROOT}/Drivers/CMSIS/Device/ST/STM32G4xx/Include
-    ${PROJ_ROOT}/Drivers/CMSIS/Include
+    ${PROJ_ROOT}/Lib/Core/Inc
+    ${PROJ_ROOT}/Lib/Drivers/STM32G4xx_HAL_Driver/Inc
+    ${PROJ_ROOT}/Lib/Drivers/CMSIS/Device/ST/STM32G4xx/Include
+    ${PROJ_ROOT}/Lib/Drivers/CMSIS/Include
 
-    ${PROJ_ROOT}/APP
-    ${PROJ_ROOT}/BSP
-    ${PROJ_ROOT}/MODULES/motor
-
-    ${PROJ_ROOT}/MODULES/motor/hal
-    ${PROJ_ROOT}/MODULES/algorithm
-    ${PROJ_ROOT}/MODULES/communication
+    ${PROJ_ROOT}/Src/APP
+    ${PROJ_ROOT}/Src/HAL/interface
+    ${PROJ_ROOT}/Src/HAL/encoder
+    ${PROJ_ROOT}/Src/ALGO
+    ${PROJ_ROOT}/Src/ALGO/motor
 )
 
 # Mock Definitions to satisfy strict includes if needed
@@ -32,11 +30,11 @@ add_definitions(-DSTM32G431xx)
 
 # Source Files for Core FOC Algorithm
 set(FOC_ALGO_SOURCES
-    ${PROJ_ROOT}/MODULES/motor/foc/foc_algorithm.c
-    ${PROJ_ROOT}/MODULES/motor/foc/clarke.c
-    ${PROJ_ROOT}/MODULES/motor/foc/park.c
-    ${PROJ_ROOT}/MODULES/motor/foc/svpwm.c
-    ${PROJ_ROOT}/MODULES/motor/foc/trigonometry.c
+    ${PROJ_ROOT}/Src/ALGO/foc/foc_algorithm.c
+    ${PROJ_ROOT}/Src/ALGO/foc/clarke.c
+    ${PROJ_ROOT}/Src/ALGO/foc/park.c
+    ${PROJ_ROOT}/Src/ALGO/foc/svpwm.c
+    ${PROJ_ROOT}/Src/ALGO/foc/trigonometry.c
 )
 
 # --- Target: Core Unit Tests ---
@@ -49,9 +47,9 @@ add_executable(test_runner_core
 # Requires more sources (fsm, core motor logic, pid, etc)
 set(MOTOR_CORE_SOURCES
     ${FOC_ALGO_SOURCES}
-    ${PROJ_ROOT}/MODULES/motor/core/motor.c
-    ${PROJ_ROOT}/MODULES/motor/fsm/fsm.c
-    ${PROJ_ROOT}/MODULES/algorithm/pid.c
+    ${PROJ_ROOT}/Src/ALGO/motor/motor.c
+    ${PROJ_ROOT}/Src/ALGO/motor/fsm.c
+    ${PROJ_ROOT}/Src/ALGO/pid/pid.c
     # Mock HAL implementation
     mock_hal.c
     # Motor Plant Simulation
@@ -82,6 +80,6 @@ target_link_libraries(test_runner_fault m)
 # --- Target: Trajectory Planner Tests ---
 add_executable(test_runner_traj
     test_trap_traj.c
-    ${PROJ_ROOT}/MODULES/algorithm/trap_traj.c
+    ${PROJ_ROOT}/Src/ALGO/trajectory/trap_traj.c
 )
 target_link_libraries(test_runner_traj m)

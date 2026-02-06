@@ -1,4 +1,4 @@
-
+﻿
 
 
 ARM Macro Assembler    Page 1 
@@ -666,8 +666,8 @@ ARM Macro Assembler    Page 11
               00000000 
               00000000 
 Command Line: --debug --xref --diag_suppress=9931 --cpu=Cortex-M4.fp.sp --apcs=
-interwork --depend=zhang-foc\startup_stm32g431xx.d -ozhang-foc\startup_stm32g43
-1xx.o -I../Core/Inc -I.\RTE\_Zhang-FOC -IC:\Users\16429\AppData\Local\Arm\Packs
+interwork --depend=VectorFOC\startup_stm32g431xx.d -oVectorFOC\startup_stm32g43
+1xx.o -I../Core/Inc -I.\RTE\_VectorFOC -IC:\Users\16429\AppData\Local\Arm\Packs
 \ARM\CMSIS\5.9.0\CMSIS\Core\Include -IC:\Users\16429\AppData\Local\Arm\Packs\Ke
 il\STM32G4xx_DFP\1.5.0\Drivers\CMSIS\Device\ST\STM32G4xx\Include --predefine="_
 _MICROLIB SETA 1" --predefine="__UVISION_VERSION SETA 539" --predefine="_RTE_ S

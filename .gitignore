@@ -2,7 +2,7 @@ build/
 test/build/
 test/build-ci/
 MDK-ARM/DebugConfig/
-MDK-ARM/Zhang-FOC/
+MDK-ARM/VectorFOC/
 MDK-ARM/.vscode/
 
 *.o
@@ -20,3 +20,7 @@ MDK-ARM/.vscode/
 *.idb
 *.ilk
 *.exp
+
+# Keil user-specific files
+*.uvguix.*
+*.uvoptx

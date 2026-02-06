@@ -1,4 +1,4 @@
-#include "motor/core/motor.h"
+#include "motor.h"
 #include "motor_hal_api.h"
 #include <assert.h>
 #include <stdio.h>
