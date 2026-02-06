@@ -1,6 +1,7 @@
 #include "motor.h"
 #include "motor_hal_api.h"
 #include "motor_plant.h"
+#include "fsm.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -11,6 +12,9 @@ void MockHAL_SetCurrents(float ia, float ib, float ic);
 void MockHAL_SetEncoder(float theta, float vel);
 void MockHAL_GetPWM(float *a, float *b, float *c);
 Motor_HAL_Handle_t *MockHAL_GetHandle(void);
+
+// FSM instance defined in mock_hal.c
+extern StateMachine g_ds402_state_machine;
 extern void MotorStateTask(MOTOR_DATA *motor);
 
 // Helper from closed loop test
@@ -35,7 +39,8 @@ int main() {
   memset(&motor, 0, sizeof(MOTOR_DATA));
   motor.components.hal = MockHAL_GetHandle();
 
-  motor.state.State_Mode = STATE_MODE_RUNNING;
+  StateMachine_Init(&g_ds402_state_machine);
+  g_ds402_state_machine.current_state = STATE_OPERATION_ENABLED;
   motor.state.Control_Mode = CONTROL_MODE_VELOCITY;
   motor.Controller.vel_setpoint = 20.0f;
 

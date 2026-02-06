@@ -1,5 +1,6 @@
 #include "motor.h"
 #include "motor_hal_api.h"
+#include "fsm.h"
 #include <assert.h>
 #include <stdio.h>
 
@@ -7,6 +8,9 @@
 // Mock HAL External
 void MockHAL_SetCurrents(float ia, float ib, float ic);
 Motor_HAL_Handle_t *MockHAL_GetHandle(void);
+
+// FSM instance defined in mock_hal.c
+extern StateMachine g_ds402_state_machine;
 
 // Main Test
 int main() {
@@ -17,10 +21,9 @@ int main() {
   memset(&motor, 0, sizeof(MOTOR_DATA));
   motor.components.hal = MockHAL_GetHandle();
 
-  // Init Core
-  // We might need to call Init_Motor_No_Calib(&motor) if we can link it
-  // But for unit test, manual state setup is often safer if dependencies are
-  // complex
+  // Initialize the DS402 state machine
+  StateMachine_Init(&g_ds402_state_machine);
+
   motor.state.State_Mode = STATE_MODE_IDLE;
   motor.state.Control_Mode = CONTROL_MODE_VELOCITY;
 
@@ -29,13 +32,10 @@ int main() {
   if (motor.state.State_Mode != STATE_MODE_IDLE)
     return 1;
 
-  // 2. Transition to Running
-  // In actual code, this is triggered by CAN command or API.
-  // Here we manually force it or assume MotorStateTask handles it if flagged.
-  // Let's mimic the API: Motor_SetState(&motor, STATE_MODE_RUNNING);
-  // Since we don't have the API linked easily without "motor_api.c", we set
-  // manually.
-  motor.state.State_Mode = STATE_MODE_RUNNING;
+  // 2. Transition to Running via FSM
+  // MotorStateTask syncs State_Mode from g_ds402_state_machine,
+  // so we must set the FSM to STATE_OPERATION_ENABLED.
+  g_ds402_state_machine.current_state = STATE_OPERATION_ENABLED;
   motor.Controller.vel_setpoint = 10.0f;
 
   // 3. Step the Task

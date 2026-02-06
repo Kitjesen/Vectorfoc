@@ -1,6 +1,7 @@
 #include "motor.h"
 #include "motor_hal_api.h"
 #include "motor_plant.h"
+#include "fsm.h"
 #include <stdio.h>
 
 
@@ -9,6 +10,9 @@ void MockHAL_SetCurrents(float ia, float ib, float ic);
 void MockHAL_SetEncoder(float theta, float vel);
 void MockHAL_GetPWM(float *a, float *b, float *c);
 Motor_HAL_Handle_t *MockHAL_GetHandle(void);
+
+// FSM instance defined in mock_hal.c
+extern StateMachine g_ds402_state_machine;
 
 // External access to Motor Task functions if not exposed
 // Assuming we link against MotorStateTask
@@ -59,8 +63,9 @@ int main() {
   motor.Controller.current_ctrl_p_gain = 10.0f;  // Roughly L * BW
   motor.Controller.current_ctrl_i_gain = 100.0f; // Roughly R * BW
 
-  // Init State
-  motor.state.State_Mode = STATE_MODE_RUNNING; // Skip calibration for this test
+  // Init State - set FSM to OPERATION_ENABLED so MotorStateTask maps to RUNNING
+  StateMachine_Init(&g_ds402_state_machine);
+  g_ds402_state_machine.current_state = STATE_OPERATION_ENABLED;
   motor.state.Control_Mode = CONTROL_MODE_VELOCITY;
 
   // Target
