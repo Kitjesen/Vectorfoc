@@ -7,7 +7,7 @@ set(CMAKE_C_STANDARD 99)
 # Define project root relative to test dir
 set(PROJ_ROOT "${CMAKE_SOURCE_DIR}/..")
 
-# Include Directories (Mirroring compiled firmware includes)
+# Include Directories
 include_directories(
     ${CMAKE_SOURCE_DIR}/mocks
     ${PROJ_ROOT}/Lib/Core/Inc
@@ -16,17 +16,32 @@ include_directories(
     ${PROJ_ROOT}/Lib/Drivers/CMSIS/Include
 
     ${PROJ_ROOT}/Src/APP
+    ${PROJ_ROOT}/Src/APP/init
+    ${PROJ_ROOT}/Src/APP/isr
+    ${PROJ_ROOT}/Src/APP/rtos
     ${PROJ_ROOT}/Src/HAL/interface
     ${PROJ_ROOT}/Src/HAL/encoder
+    ${PROJ_ROOT}/Src/HAL/bsp
+    ${PROJ_ROOT}/Src/HAL/stm32g4
     ${PROJ_ROOT}/Src/ALGO
+    ${PROJ_ROOT}/Src/ALGO/foc
     ${PROJ_ROOT}/Src/ALGO/motor
+    ${PROJ_ROOT}/Src/ALGO/pid
+    ${PROJ_ROOT}/Src/ALGO/control
+    ${PROJ_ROOT}/Src/ALGO/observer
+    ${PROJ_ROOT}/Src/ALGO/trajectory
+    ${PROJ_ROOT}/Src/COMM/manager
+    ${PROJ_ROOT}/Src/COMM/executor
+    ${PROJ_ROOT}/Src/COMM/transport
+    ${PROJ_ROOT}/Src/UI/error
+    ${PROJ_ROOT}/Src/UI/parameter
+    ${PROJ_ROOT}/Src/UI/vofa
+    ${PROJ_ROOT}/Src/UI/led
 )
 
-# Mock Definitions to satisfy strict includes if needed
+# Mock definitions for test environment
 add_definitions(-DTEST_ENV)
 add_definitions(-DSTM32G431xx)
-# We might need to mock stm32 header if it is strictly required by some files. 
-# For pure algo it shouldn't be.
 
 # Source Files for Core FOC Algorithm
 set(FOC_ALGO_SOURCES
@@ -44,15 +59,12 @@ add_executable(test_runner_core
 )
 
 # --- Target: State Machine / Integration Tests ---
-# Requires more sources (fsm, core motor logic, pid, etc)
 set(MOTOR_CORE_SOURCES
     ${FOC_ALGO_SOURCES}
     ${PROJ_ROOT}/Src/ALGO/motor/motor.c
     ${PROJ_ROOT}/Src/ALGO/motor/fsm.c
     ${PROJ_ROOT}/Src/ALGO/pid/pid.c
-    # Mock HAL implementation
     mock_hal.c
-    # Motor Plant Simulation
     motor_plant.c
 )
 

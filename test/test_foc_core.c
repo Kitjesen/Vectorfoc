@@ -23,7 +23,7 @@ int Test_Clarke() {
   float Ialpha, Ibeta;
 
   // Balanced 3-phase: 1, -0.5, -0.5 -> Alpha should be 1
-  Clarke_Transform(Ia, Ib, &Ialpha, &Ibeta);
+  Clarke_Transform(Ia, Ib, Ic, &Ialpha, &Ibeta);
 
   ASSERT_NEAR(Ialpha, 1.0f, 0.001f);
   ASSERT_NEAR(Ibeta, 0.0f, 0.001f); // Beta should be 0 since Ib=Ic
@@ -63,11 +63,7 @@ int Test_SVPWM() {
   float v_bus = 12.0f;
   float t_a, t_b, t_c;
 
-  // SVPWM usually takes normalized inputs or raw voltages?
-  // Let's check api. svpwm.h usually calculates duties.
-  // Assuming SVPWM_Calculate(Valpha, Vbeta, Vbus, &ta, &tb, &tc)
-
-  SVPWM_Calculate(Valpha, Vbeta, &t_a, &t_b, &t_c);
+  SVPWM_Modulate(Valpha, Vbeta, v_bus, &t_a, &t_b, &t_c);
 
   // Just sanity check they are within 0-1
   if (t_a < 0.0f || t_a > 1.0f)

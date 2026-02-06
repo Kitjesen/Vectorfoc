@@ -457,7 +457,7 @@ graph TD
 
 ---
 
-## 项目结构（简化）
+## 项目结构
 
 ```
 VectorFOC/
@@ -565,6 +565,5 @@ motor.PosPID.Ki = 0.0f;
 
 - STM32 HAL库
 - MIT Cheetah 开源项目
-- Robstride/Inovxio 协议文档
-
+- Robstride 协议文档
 ---

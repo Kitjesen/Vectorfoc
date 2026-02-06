@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
 <Project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="project_projx.xsd">
 
   <SchemaVersion>2.1</SchemaVersion>
@@ -387,7 +387,7 @@
             <File>
               <FileName>startup_stm32g431xx.s</FileName>
               <FileType>2</FileType>
-              <FilePath>startup_stm32g431xx.s</FilePath>
+              <FilePath>../Lib/startup_stm32g431xx.s</FilePath>
             </File>
           </Files>
         </Group>

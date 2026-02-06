@@ -100,10 +100,10 @@ list(APPEND SOURCES
 )
 
 # Startup file
-list(APPEND SOURCES "startup_stm32g431xx.s")
+list(APPEND SOURCES "Lib/startup_stm32g431xx.s")
 
 # Linker script
-set(LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/stm32g431xx_flash.ld")
+set(LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/Lib/stm32g431xx_flash.ld")
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${MCU_FLAGS} -T${LINKER_SCRIPT} -Wl,--gc-sections -Wl,--print-memory-usage -Wl,-Map=${CMAKE_PROJECT_NAME}.map")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --specs=nano.specs --specs=nosys.specs")
