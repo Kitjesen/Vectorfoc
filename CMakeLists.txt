@@ -5,6 +5,66 @@ project(VectorFoc C CXX ASM)
 
 # Toolchain setup is expected to be passed via -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
 
+# =============================================================================
+# Version extraction from Git
+# =============================================================================
+# Try to get version from git tag (e.g., v1.2.3 -> 1.2.3)
+execute_process(
+    COMMAND git describe --tags --abbrev=0
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_TAG
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+
+# Get short git hash
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+
+# Check if working directory is dirty
+execute_process(
+    COMMAND git status --porcelain
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_DIRTY_OUTPUT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+
+if(GIT_DIRTY_OUTPUT)
+    set(GIT_DIRTY 1)
+else()
+    set(GIT_DIRTY 0)
+endif()
+
+# Parse version from tag (v1.2.3 -> MAJOR=1, MINOR=2, PATCH=3)
+if(GIT_TAG MATCHES "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+    set(FW_VERSION_MAJOR ${CMAKE_MATCH_1})
+    set(FW_VERSION_MINOR ${CMAKE_MATCH_2})
+    set(FW_VERSION_PATCH ${CMAKE_MATCH_3})
+else()
+    # Default version if no git tag
+    set(FW_VERSION_MAJOR 0)
+    set(FW_VERSION_MINOR 0)
+    set(FW_VERSION_PATCH 0)
+endif()
+
+message(STATUS "Firmware Version: ${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.${FW_VERSION_PATCH}")
+message(STATUS "Git Hash: ${GIT_HASH} (dirty: ${GIT_DIRTY})")
+
+# Pass version to compiler
+add_definitions(
+    -DFW_VERSION_MAJOR=${FW_VERSION_MAJOR}
+    -DFW_VERSION_MINOR=${FW_VERSION_MINOR}
+    -DFW_VERSION_PATCH=${FW_VERSION_PATCH}
+    -DFW_GIT_HASH="${GIT_HASH}"
+    -DFW_GIT_DIRTY=${GIT_DIRTY}
+)
+
 # MCU specific definitions
 set(MCU_FLAGS "-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb")
 add_definitions(-DSTM32G431xx -DUSE_HAL_DRIVER -DSTM32G4xx)
