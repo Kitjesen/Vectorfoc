@@ -12,6 +12,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/mocks
     ${PROJ_ROOT}/Lib/Core/Inc
     ${PROJ_ROOT}/Lib/Drivers/STM32G4xx_HAL_Driver/Inc
+    ${PROJ_ROOT}/Lib/Drivers/STM32G4xx_HAL_Driver/Inc/Legacy
     ${PROJ_ROOT}/Lib/Drivers/CMSIS/Device/ST/STM32G4xx/Include
     ${PROJ_ROOT}/Lib/Drivers/CMSIS/Include
 
