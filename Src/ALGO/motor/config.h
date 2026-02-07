@@ -13,8 +13,13 @@
    1. 硬件与时钟配置 (Hardware Configuration)
    ==============================================================================
  */
-#define SYS_CLOCK_HZ 168000000.0f // 系统主频 168MHz
-#define TIMER1_CLK_MHz 168        // 定时器1时钟频率 [MHz]
+// 注意: SYS_CLOCK_HZ 和硬件引脚映射统一在 board_config.h 定义
+// 这里提供浮点版本用于控制算法计算
+#ifndef SYS_CLOCK_HZ
+#define SYS_CLOCK_HZ 168000000UL  // 默认系统主频 168MHz
+#endif
+#define SYS_CLOCK_HZ_F ((float)SYS_CLOCK_HZ)
+#define TIMER1_CLK_MHz (SYS_CLOCK_HZ / 1000000UL)
 
 /* PWM 配置 */
 #define PWM_FREQUENCY 20000 // PWM 开关频率 [Hz]

@@ -39,6 +39,7 @@
 #include "safety_control.h" // For Safety_GetActiveFaultBits
 #include "param_access.h"
 #include "param_table.h"
+#include "device_id.h"
 #include <string.h>
 
 #define CAN_BROADCAST_ADDR 0x7F   ///< CAN广播地址
@@ -337,11 +338,10 @@ void Protocol_ProcessRxFrame(const CAN_Frame *frame) {
         tx_frame.is_extended = true;
         tx_frame.dlc = 8;
 
-        // 读取STM32唯一ID (12字节/96位)
-        uint32_t uuid[3] = {0x12345678, 0x87654321, 0x00000000};
-        uint32_t *uid = (uint32_t *)UID_BASE; // UID_BASE defined in STM32 HAL
-        memcpy(uuid, uid, 12);
-        memcpy(tx_frame.data, uuid, 8); // 仅发送前8字节
+        // 读取STM32唯一ID (96-bit, factory programmed)
+        DeviceUID_t uid;
+        DeviceID_GetUID(&uid);
+        memcpy(tx_frame.data, &uid, 8); // 发送前8字节 (word0 + word1)
 
         Protocol_SendFrame(&tx_frame);
         return; // 处理完毕直接返回，不解析为常规命令
@@ -358,8 +358,8 @@ void Protocol_ProcessRxFrame(const CAN_Frame *frame) {
   }
 
 #ifdef DEBUG
-  // Calculate execution time (assuming 168MHz CPU)
-  exec_time_us = (DWT->CYCCNT - start_cnt) / 168;
+  // Calculate execution time
+  exec_time_us = (DWT->CYCCNT - start_cnt) / (SYS_CLOCK_HZ / 1000000UL);
   if (exec_time_us > s_comm_stats.exec_time_max_us) {
     s_comm_stats.exec_time_max_us = exec_time_us;
   }
