@@ -102,6 +102,7 @@ include_directories(
     Lib/USB_Device/App
     Lib/USB_Device/Target
     # Src - 自定义代码
+    Src/config
     Src/APP
     Src/APP/init
     Src/APP/rtos

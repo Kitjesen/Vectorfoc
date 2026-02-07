@@ -1,15 +1,12 @@
 #include "hal_abstraction.h"
 
-/* STM32 HAL库包含（根据实际芯片型号调整） */
 #ifdef USE_HAL_DRIVER
-#include "main.h" // 包含HAL库和CAN句柄
+#include "board_config.h"
+#include "main.h"
 
-/* ADC温度读取需要的头文件 */
+/* ADC temperature reading */
 #include "motor_adc.h"
 #include "bsp_adc.h"
-
-/* 外部CAN句柄（需要在main.c中定义） */
-extern FDCAN_HandleTypeDef hfdcan1;
 #endif
 
 /**
@@ -104,7 +101,7 @@ bool HAL_CAN_Transmit(const CAN_Frame *frame) {
 
   /* 发送CAN消息 */
   HAL_StatusTypeDef status = HAL_FDCAN_AddMessageToTxFifoQ(
-      &hfdcan1, &tx_header, (uint8_t *)frame->data);
+      &HW_CAN, &tx_header, (uint8_t *)frame->data);
 
   return (status == HAL_OK);
 #else
@@ -119,7 +116,7 @@ bool HAL_CAN_Transmit(const CAN_Frame *frame) {
  */
 bool HAL_CAN_IsTxMailboxAvailable(void) {
 #ifdef USE_HAL_DRIVER
-  return (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) > 0);
+  return (HAL_FDCAN_GetTxFifoFreeLevel(&HW_CAN) > 0);
 #else
   return true;
 #endif

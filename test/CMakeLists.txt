@@ -16,6 +16,7 @@ include_directories(
     ${PROJ_ROOT}/Lib/Drivers/CMSIS/Device/ST/STM32G4xx/Include
     ${PROJ_ROOT}/Lib/Drivers/CMSIS/Include
 
+    ${PROJ_ROOT}/Src/config
     ${PROJ_ROOT}/Src/APP
     ${PROJ_ROOT}/Src/APP/init
     ${PROJ_ROOT}/Src/APP/isr

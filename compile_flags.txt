@@ -18,6 +18,7 @@ arm-none-eabi
 -ILib/Middlewares/Third_Party/FreeRTOS/Source/include
 -ILib/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS
 -ILib/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
+-ISrc/config
 -ISrc/APP
 -ISrc/APP/init
 -ISrc/APP/rtos

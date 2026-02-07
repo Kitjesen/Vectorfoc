@@ -13,7 +13,7 @@
    1. 硬件与时钟配置 (Hardware Configuration)
    ==============================================================================
  */
-// 注意: SYS_CLOCK_HZ 和硬件引脚映射统一在 board_config.h 定义
+// 注意: SYS_CLOCK_HZ 和硬件引脚映射在 Src/config/board_config.h 定义
 // 这里提供浮点版本用于控制算法计算
 #ifndef SYS_CLOCK_HZ
 #define SYS_CLOCK_HZ 168000000UL  // 默认系统主频 168MHz

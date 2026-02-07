@@ -4,6 +4,8 @@
  * @note    All pin assignments, peripheral mappings, and board-specific constants
  *          are defined here. Modify THIS FILE when porting to a new board.
  *
+ * Location: Src/config/ — 板级与引脚配置统一放这里，便于查找和换板
+ *
  * === How to port to a new board ===
  * 1. Copy this file as board_config_<your_board>.h
  * 2. Update pin/peripheral assignments
@@ -116,27 +118,27 @@
 #define HW_VBUS_DIVIDER_RATIO  ((HW_VBUS_R_HIGH + HW_VBUS_R_LOW) / HW_VBUS_R_LOW)
 
 /* ==========================================================================
-   6. Encoder - SPI3 (MT6816)
+   6. Encoder - SPI1 (MT6816)
    ========================================================================== */
-#define HW_ENC_SPI             hspi3           // SPI handle
-#define HW_ENC_SPI_INST        SPI3            // SPI peripheral
-#define HW_ENC_CS_PIN          GPIO_PIN_12     // PB12 - Chip select
-#define HW_ENC_CS_PORT         GPIOB
-#define HW_ENC_SCK_PIN         GPIO_PIN_3      // PB3
-#define HW_ENC_MISO_PIN        GPIO_PIN_4      // PB4
-#define HW_ENC_MOSI_PIN        GPIO_PIN_5      // PB5
+#define HW_ENC_SPI             hspi1           // SPI handle
+#define HW_ENC_SPI_INST        SPI1            // SPI peripheral
+#define HW_ENC_CS_PIN          GPIO_PIN_4      // PC4 - Chip select (SPI1_CS)
+#define HW_ENC_CS_PORT         GPIOC
+#define HW_ENC_SCK_PIN         GPIO_PIN_5      // PA5
+#define HW_ENC_MISO_PIN        GPIO_PIN_6      // PA6
+#define HW_ENC_MOSI_PIN        GPIO_PIN_7      // PA7
 #define HW_ENC_CPR             16384           // Counts per revolution (14-bit)
 
 /* ==========================================================================
-   7. Pre-Driver - SPI1 (DRV8323 or similar)
+   7. Pre-Driver - SPI3 (DRV8323 or similar)
    ========================================================================== */
-#define HW_DRV_SPI             hspi1           // SPI handle
-#define HW_DRV_SPI_INST        SPI1            // SPI peripheral
-#define HW_DRV_CS_PIN          GPIO_PIN_4      // PC4 - Chip select
-#define HW_DRV_CS_PORT         GPIOC
-#define HW_DRV_SCK_PIN         GPIO_PIN_5      // PA5
-#define HW_DRV_MISO_PIN        GPIO_PIN_6      // PA6
-#define HW_DRV_MOSI_PIN        GPIO_PIN_7      // PA7
+#define HW_DRV_SPI             hspi3           // SPI handle
+#define HW_DRV_SPI_INST        SPI3            // SPI peripheral
+#define HW_DRV_CS_PIN          GPIO_PIN_12     // PB12 - Chip select (SPI3_CS)
+#define HW_DRV_CS_PORT         GPIOB
+#define HW_DRV_SCK_PIN         GPIO_PIN_3      // PB3
+#define HW_DRV_MISO_PIN        GPIO_PIN_4      // PB4
+#define HW_DRV_MOSI_PIN        GPIO_PIN_5      // PB5
 
 /* ==========================================================================
    8. CAN Bus - FDCAN1

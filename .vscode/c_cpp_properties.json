@@ -11,6 +11,7 @@
                 "${workspaceFolder}/Lib/Middlewares/Third_Party/FreeRTOS/Source/include",
                 "${workspaceFolder}/Lib/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS",
                 "${workspaceFolder}/Lib/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F",
+                "${workspaceFolder}/Src/config",
                 "${workspaceFolder}/Src/APP",
                 "${workspaceFolder}/Src/APP/init",
                 "${workspaceFolder}/Src/APP/rtos",

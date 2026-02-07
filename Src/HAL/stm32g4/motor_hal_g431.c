@@ -1,12 +1,11 @@
 #include "motor_adc.h"
 #include "config.h"
+#include "board_config.h"
 #include "motor_hal_api.h"
 #include "mt6816_encoder.h"
 #include "hal_abstraction.h" // For HAL_GetTemperature()
 #include <math.h>
 
-extern TIM_HandleTypeDef htim1;
-extern ADC_HandleTypeDef hadc1;
 extern MT6816_Handle_t encoder_data;
 extern CURRENT_DATA current_data;
 
@@ -17,36 +16,36 @@ extern CURRENT_DATA current_data;
 
 static void G431_PWM_SetDuty(float dtc_a, float dtc_b, float dtc_c) {
   // 直接写 TIM 比较寄存器，死区补偿在 inner.c 中完成
-  uint16_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
+  uint16_t arr = __HAL_TIM_GET_AUTORELOAD(&HW_PWM_TIMER);
 
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, (uint16_t)(dtc_a * arr));
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, (uint16_t)(dtc_b * arr));
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, (uint16_t)(dtc_c * arr));
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_W, (uint16_t)(dtc_a * arr));
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_V, (uint16_t)(dtc_b * arr));
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_U, (uint16_t)(dtc_c * arr));
 }
 
 static void G431_PWM_Enable(void) {
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_2);
-  HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_3);
+  HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_U);
+  HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_V);
+  HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_W);
+  HAL_TIMEx_PWMN_Start(&HW_PWM_TIMER, HW_PWM_CH_U);
+  HAL_TIMEx_PWMN_Start(&HW_PWM_TIMER, HW_PWM_CH_V);
+  HAL_TIMEx_PWMN_Start(&HW_PWM_TIMER, HW_PWM_CH_W);
 }
 
 static void G431_PWM_Disable(void) {
-  HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_2);
-  HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
-  HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
-  HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_2);
-  HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_3);
+  HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_U);
+  HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_V);
+  HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_W);
+  HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_U);
+  HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_V);
+  HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_W);
 }
 
 static void G431_PWM_Brake(void) {
   // Low side ON, High side OFF
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_U, 0);
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_V, 0);
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_W, 0);
   // Ensure outputs are enabled
   G431_PWM_Enable();
 }
@@ -125,12 +124,10 @@ static void G431_ADC_Update(Motor_HAL_SensorData_t *data) {
   // Let's use the existing current_data struct to hold offsets,
   // but do the reading here to fulfill the HAL contract.
 
-  float adc_i_a =
-      (float)hadc1.Instance
-          ->JDR3; // Note: Check if JDR3 corresponds to Phase A in previous code
-  float adc_i_b = (float)hadc1.Instance->JDR2;
-  float adc_i_c = (float)hadc1.Instance->JDR1;
-  float adc_vbus = (float)hadc1.Instance->JDR4;
+  float adc_i_a = (float)HW_ADC_CURRENT.Instance->HW_ADC_JDR_IA;
+  float adc_i_b = (float)HW_ADC_CURRENT.Instance->HW_ADC_JDR_IB;
+  float adc_i_c = (float)HW_ADC_CURRENT.Instance->HW_ADC_JDR_IC;
+  float adc_vbus = (float)HW_ADC_CURRENT.Instance->HW_ADC_JDR_VBUS;
 
   // 零偏来自 current_data (adc.h)，校准结果通过 ADC_SetCurrentOffsets 写入
   data->i_a = (adc_i_a - current_data.Ia_offset) * FAC_CURRENT;
@@ -153,9 +150,9 @@ static void G431_ADC_CalibrateOffsets(void) {
 
   for (int i = 0; i < samples; i++) {
     HAL_Delay(1); // Simple blocking delay for calibration
-    sum_a += hadc1.Instance->JDR3;
-    sum_b += hadc1.Instance->JDR2;
-    sum_c += hadc1.Instance->JDR1;
+    sum_a += HW_ADC_CURRENT.Instance->HW_ADC_JDR_IA;
+    sum_b += HW_ADC_CURRENT.Instance->HW_ADC_JDR_IB;
+    sum_c += HW_ADC_CURRENT.Instance->HW_ADC_JDR_IC;
   }
 
   current_data.Ia_offset = (float)sum_a / samples;

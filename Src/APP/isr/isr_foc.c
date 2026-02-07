@@ -7,6 +7,7 @@
 #include "isr_foc.h"
 
 #include "adc.h"
+#include "board_config.h"
 #include "hal_abstraction.h" // For HAL_WatchdogFeed()
 #include "main.h"
 #include "motor.h"
@@ -55,7 +56,7 @@ static inline void ISR_RunAdvancedControl(MOTOR_DATA *motor) {
 /* ========== 中断回调 ========== */
 
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
-  if (hadc->Instance != hadc1.Instance)
+  if (hadc->Instance != HW_ADC_CURRENT.Instance)
     return;
 
 #if ADJUST_EN

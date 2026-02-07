@@ -1,4 +1,5 @@
 #include "mt6816_encoder.h"
+#include "board_config.h"
 #include "common.h"
 #include "config.h"
 #include "error_manager.h"
@@ -24,14 +25,12 @@
  * ============================================================================
  */
 
-extern SPI_HandleTypeDef hspi1;
-
 /** Default encoder instance (kept for compatibility, but low-level code won't
  * rely on it) */
 ENCODER_DATA encoder_data = {
-    .hspi = &hspi1,
-    .cs_port = SPI1_CS_GPIO_Port,
-    .cs_pin = SPI1_CS_Pin,
+    .hspi = &HW_ENC_SPI,
+    .cs_port = HW_ENC_CS_PORT,
+    .cs_pin = HW_ENC_CS_PIN,
     .pole_pairs = 7,
     .offset_counts = 0,
     .dir = MT6816_DIR_CW,

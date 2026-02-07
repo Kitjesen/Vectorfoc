@@ -6,9 +6,10 @@
 
 #include "app_init.h"
 
+#include "board_config.h"
 #include "bsp_adc.h"
 #include "bsp_can.h"
-#include "can_transport.h" // 传输层适配器
+#include "can_transport.h" // Transport layer adapter
 #include "bsp_init.h"
 #include "bsp_log.h"
 #include "error_manager.h"
@@ -27,7 +28,7 @@ void App_Init(void) {
 
   DWT_Delay(0.016f); // MT6816上电的16ms无输出数据
   BSPInit();         // 初始化DWT
-  LogInit(&huart1);  // 初始化日志
+  LogInit(&HW_UART_DEBUG);  // Initialize debug log
 
   // 统一错误管理器初始化
   ErrorManager_Init();

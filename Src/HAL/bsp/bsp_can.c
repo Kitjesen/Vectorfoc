@@ -4,6 +4,7 @@
  */
 
 #include "bsp_can.h"
+#include "board_config.h"
 #include "bsp_dwt.h"
 #include "bsp_log.h"
 #include "main.h"
@@ -51,10 +52,10 @@ static bool FDCANAddFilter(FDCANInstance *_instance) {
  */
 static bool FDCANServiceInit(void) {
   HAL_StatusTypeDef result;
-  result = HAL_FDCAN_Start(&hfdcan1);
-  result |= HAL_FDCAN_ActivateNotification(&hfdcan1,
+  result = HAL_FDCAN_Start(&HW_CAN);
+  result |= HAL_FDCAN_ActivateNotification(&HW_CAN,
                                            FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
-  result |= HAL_FDCAN_ActivateNotification(&hfdcan1,
+  result |= HAL_FDCAN_ActivateNotification(&HW_CAN,
                                            FDCAN_IT_RX_FIFO1_NEW_MESSAGE, 0);
   return result == HAL_OK;
 }
@@ -223,8 +224,7 @@ bool BSP_CAN_SendFrame(const CAN_Frame *frame) {
   TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
   TxHeader.MessageMarker = 0;
 
-  // Use hfdcan1 directly for now (Single instance simplification)
-  return (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader,
+  return (HAL_FDCAN_AddMessageToTxFifoQ(&HW_CAN, &TxHeader,
                                         (uint8_t *)frame->data) == HAL_OK);
 }
 
