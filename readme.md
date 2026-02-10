@@ -1,4 +1,4 @@
-# VectorFOC 电机控制器固件
+# VectorFOC
 
 ![VectorFOC](fig/foc.png)
 
