@@ -1,11 +1,9 @@
 /**
  * @file app_init.c
- * @brief 应用层统一初始化实现
- * @note 原 robot.c 内容迁移至此
+ * @brief init
+ * @note  robot.c
  */
-
 #include "app_init.h"
-
 #include "board_config.h"
 #include "bsp_adc.h"
 #include "bsp_can.h"
@@ -22,45 +20,47 @@
 #include "safety_control.h"
 #include "param_access.h"
 
+static bool App_ReportFaultCallback(uint32_t fault_bits, void *motor) {
+  return Protocol_ReportFaultCallback(fault_bits, (MOTOR_DATA *)motor);
+}
+
+static ProtocolType App_GetBootProtocol(void) {
+  if (g_protocol_type <= PROTOCOL_MIT) {
+    return (ProtocolType)g_protocol_type;
+  }
+  g_protocol_type = PROTOCOL_INOVXIO;
+  return PROTOCOL_INOVXIO;
+}
+
 void App_Init(void) {
-  // 关闭中断,防止在初始化过程中发生中断
+  // interrupt,initinterrupt
   __disable_irq();
-
-  DWT_Delay(0.016f); // MT6816上电的16ms无输出数据
-  BSPInit();         // 初始化DWT
+  DWT_Delay(0.016f); // MT681616msoutput
+  BSPInit();         // initDWT
   LogInit(&HW_UART_DEBUG);  // Initialize debug log
-
-  // 统一错误管理器初始化
+  // errorinit
   ErrorManager_Init();
-
-  adc_bsp_init(); // 初始化ADC
+  adc_bsp_init(); // initADC
   if (MHAL_PWM_Enable() != 0) {
     ERROR_REPORT(ERROR_HW_PWM_INIT, "PWM start failed");
     Error_Handler();
   }
   RGB_DisplayColorById(0);
-
   /* ===== System Initialization ===== */
-
   // 0. Safety & Detection System
   Detection_Init(NULL);
   Safety_Init(NULL);
-  Safety_RegisterFaultCallback(Protocol_ReportFaultCallback);
-
+  Safety_RegisterFaultCallback(App_ReportFaultCallback);
   // 1. Parameter System
   Param_SystemInitOnce();
-
   // 2. Communication: CAN BSP + Transport + Protocol Manager
   BSP_CAN_Init();
   CAN_Transport_Init();
   Protocol_RegisterTransport(CAN_Transport_GetInterface());
-  Protocol_Init(PROTOCOL_INOVXIO);
-
+  Protocol_Init(App_GetBootProtocol());
   // 3. DS402 State Machine
   StateMachine_Init(&g_ds402_state_machine);
-
   // 4. Motor Initialization
   Init_Motor_No_Calib(&motor_data);
-
   __enable_irq();
 }

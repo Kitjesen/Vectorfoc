@@ -5,6 +5,9 @@ project(VectorFoc C CXX ASM)
 
 # Toolchain setup is expected to be passed via -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
 
+set(FW_VERSION_FALLBACK "1.0.0" CACHE STRING
+    "Fallback firmware version when git tags are unavailable")
+
 # =============================================================================
 # Version extraction from Git
 # =============================================================================
@@ -26,6 +29,10 @@ execute_process(
     ERROR_QUIET
 )
 
+if(NOT GIT_HASH)
+    set(GIT_HASH "unknown")
+endif()
+
 # Check if working directory is dirty
 execute_process(
     COMMAND git status --porcelain
@@ -46,11 +53,15 @@ if(GIT_TAG MATCHES "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)")
     set(FW_VERSION_MAJOR ${CMAKE_MATCH_1})
     set(FW_VERSION_MINOR ${CMAKE_MATCH_2})
     set(FW_VERSION_PATCH ${CMAKE_MATCH_3})
+elseif(FW_VERSION_FALLBACK MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
+    set(FW_VERSION_MAJOR ${CMAKE_MATCH_1})
+    set(FW_VERSION_MINOR ${CMAKE_MATCH_2})
+    set(FW_VERSION_PATCH ${CMAKE_MATCH_3})
+    message(WARNING
+        "No semver git tag found; using fallback firmware version ${FW_VERSION_FALLBACK}")
 else()
-    # Default version if no git tag
-    set(FW_VERSION_MAJOR 0)
-    set(FW_VERSION_MINOR 0)
-    set(FW_VERSION_PATCH 0)
+    message(FATAL_ERROR
+        "FW_VERSION_FALLBACK must use MAJOR.MINOR.PATCH format, got: ${FW_VERSION_FALLBACK}")
 endif()
 
 message(STATUS "Firmware Version: ${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.${FW_VERSION_PATCH}")
@@ -107,6 +118,7 @@ include_directories(
     Src/APP/init
     Src/APP/rtos
     Src/APP/isr
+    Src/BOOT
     Src/HAL/interface
     Src/HAL/stm32g4
     Src/HAL/bsp
@@ -146,6 +158,7 @@ file(GLOB_RECURSE SOURCES
     "Src/ALGO/*.c"
     "Src/COMM/*.c"
     "Src/UI/*.c"
+    "Src/BOOT/bootloader.c"
 )
 
 # list(FILTER SOURCES EXCLUDE REGEX "MODULES/hal/.*")
@@ -163,8 +176,8 @@ list(APPEND SOURCES
 # Startup file
 list(APPEND SOURCES "Lib/startup_stm32g431xx.s")
 
-# Linker script
-set(LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/Lib/stm32g431xx_flash.ld")
+# Linker script (use App linker script with bootloader support)
+set(LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/Lib/stm32g431xx_app.ld")
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${MCU_FLAGS} -T${LINKER_SCRIPT} -Wl,--gc-sections -Wl,--print-memory-usage -Wl,-Map=${CMAKE_PROJECT_NAME}.map")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --specs=nano.specs --specs=nosys.specs")

@@ -49,8 +49,12 @@ float PID_CalcDt(PidTypeDef *pid, float fdb, float set, float dt) {
     return 0.0f;
   }
 
-  // Sanity check for dt
-  if (dt <= 0.000001f) {
+  // Sanity check for dt and controller inputs.
+  if (dt <= 1e-7f || dt > 1.0f || !isfinite(dt)) {
+    return pid->out;
+  }
+
+  if (!isfinite(fdb) || !isfinite(set)) {
     return pid->out;
   }
 

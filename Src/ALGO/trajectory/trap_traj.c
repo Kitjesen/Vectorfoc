@@ -18,6 +18,19 @@ void TRAJ_plan(TrajTypeDef *traj, float Xf, float Xi, float Vi, float Vmax,
     return;
   }
 
+  // Reject invalid limits and keep the profile stationary.
+  if (Amax <= 0.0f || Dmax <= 0.0f || Vmax <= 0.0f) {
+    traj->Xi_ = Xi;
+    traj->Xf_ = Xi;
+    traj->Vi_ = 0.0f;
+    traj->Tf_ = 0.0f;
+    traj->Ta_ = 0.0f;
+    traj->Tv_ = 0.0f;
+    traj->Td_ = 0.0f;
+    traj->trajectory_done = true;
+    return;
+  }
+
   float dX = Xf - Xi;
   float stop_dist = (Vi * Vi) / (2.0f * Dmax);
   float dXstop = copysignf(stop_dist, Vi);

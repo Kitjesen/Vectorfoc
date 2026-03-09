@@ -1,6 +1,6 @@
 #include "impl.h"
 #include "foc/clarke.h"
-#include "hal_pwm.h" // For MHAL_PWM_SetDuty (统一 HAL)
+#include "hal_pwm.h" // For MHAL_PWM_SetDuty ( HAL)
 #include "config.h"
 #include "control/control.h"
 #include "foc/foc_algorithm.h"
@@ -9,25 +9,20 @@
 #include "mt6816_encoder.h"
 #include "trajectory/trap_traj.h"
 #include <math.h>
-
 /**
  * @brief Control Mode Implementations
  */
 extern void OpenControlMode(MOTOR_DATA *motor, float target_velocity);
-
 // Debug Macros (Legacy)
 #ifndef TORQUE_ADJUST
 #define TORQUE_ADJUST 0
 #endif
-
 #ifndef TORQUE_AND_CURRENT
 #define TORQUE_AND_CURRENT 0
 #endif
-
 void ControlImpl_SetThetaFromEncoder(MOTOR_DATA *motor) {
   motor->algo_input.theta_elec = motor->feedback.phase_angle;
 }
-
 void ControlImpl_SetPidLimits(MOTOR_DATA *motor) {
   switch (motor->state.Control_Mode) {
   case CONTROL_MODE_OPEN:
@@ -58,42 +53,34 @@ void ControlImpl_SetPidLimits(MOTOR_DATA *motor) {
     break;
   }
 }
-
 /**
- * @brief 注入电压矢量 (开环控制实现)
- * @note 替代旧的 FOC_voltage 函数，使用新架构的数据结构。
+ * @brief voltage (open loop)
+ * @note  FOC_voltage ，。
  */
 void Control_InjectVoltage(MOTOR_DATA *motor, float Vd, float Vq, float angle) {
-  // 1. 设置目标电压
+  // 1. settargetvoltage
   motor->algo_output.Vd = Vd;
   motor->algo_output.Vq = Vq;
   motor->algo_input.theta_elec = angle;
-
-  // 2. 逆Park变换 (dq -> alpha-beta)
+  // 2. Park (dq -> alpha-beta)
   Park_Inverse(Vd, Vq, angle, &motor->algo_output.Valpha,
                &motor->algo_output.Vbeta);
-
-  // 3. SVPWM调制
-  // 注意：这里需要确保 Vbus 有效，否则使用默认值
+  // 3. SVPWMmodulation
+  // ： Vbus ，
   float vbus = motor->algo_input.Vbus;
   if (vbus < VBUS_MIN_VALID_V) {
     vbus = DEFAULT_VBUS_VOLTAGE_V;
   }
-
   SVPWM_Modulate(motor->algo_output.Valpha, motor->algo_output.Vbeta, vbus,
                  &motor->algo_output.Ta, &motor->algo_output.Tb,
                  &motor->algo_output.Tc);
-
-  // 4. 应用到硬件 (HAL)
+  // 4.  (HAL)
   MHAL_PWM_SetDuty(motor->algo_output.Ta, motor->algo_output.Tb,
                    motor->algo_output.Tc);
 }
-
 void ControlImpl_Open(MOTOR_DATA *motor) { OpenControlMode(motor, 5); }
-
 void ControlImpl_Torque(MOTOR_DATA *motor, MotorControlCtx *ctx) {
   ControlImpl_SetThetaFromEncoder(motor);
-
 #if TORQUE_AND_CURRENT
 #if TORQUE_ADJUST
   motor->algo_input.Iq_ref = 0.0f;
@@ -126,15 +113,12 @@ void ControlImpl_Torque(MOTOR_DATA *motor, MotorControlCtx *ctx) {
   motor->algo_input.Id_ref = 0.0f;
 #endif
 }
-
 void ControlImpl_Velocity(MOTOR_DATA *motor) {
   ControlImpl_SetThetaFromEncoder(motor);
 }
-
 void ControlImpl_Position(MOTOR_DATA *motor) {
   ControlImpl_SetThetaFromEncoder(motor);
 }
-
 void ControlImpl_VelocityRamp(MOTOR_DATA *motor) {
   ControlImpl_SetThetaFromEncoder(motor);
   float max_step_size = fabsf(VEL_POS_PERIOD * motor->Controller.vel_ramp_rate);
@@ -145,10 +129,8 @@ void ControlImpl_VelocityRamp(MOTOR_DATA *motor) {
   motor->Controller.torque_setpoint =
       (step / VEL_POS_PERIOD) * motor->Controller.inertia;
 }
-
 void ControlImpl_PositionRamp(MOTOR_DATA *motor, MotorControlCtx *ctx) {
   ControlImpl_SetThetaFromEncoder(motor);
-
   // 1) Trajectory Planning (When new target arrives)
   if (motor->Controller.input_updated) {
     TRAJ_plan(&ctx->traj, motor->Controller.input_position, // Target Position
@@ -157,17 +139,14 @@ void ControlImpl_PositionRamp(MOTOR_DATA *motor, MotorControlCtx *ctx) {
               motor->Controller.traj_vel,                  // Max Velocity
               motor->Controller.traj_accel,                // Max Acceleration
               motor->Controller.traj_decel);               // Max Deceleration
-
     ctx->traj.t = 0.0f;
     ctx->traj.trajectory_done = false;
     motor->Controller.input_updated = false;
   }
-
   // Avoid updating uninitialized trajectory
   if (ctx->traj.trajectory_done) {
     return;
   }
-
   if (ctx->traj.t > ctx->traj.Tf_) {
     ctx->traj.trajectory_done = true;
     motor->Controller.pos_setpoint = motor->Controller.input_position;
@@ -185,25 +164,20 @@ void ControlImpl_PositionRamp(MOTOR_DATA *motor, MotorControlCtx *ctx) {
     }
   }
 }
-
 void ControlImpl_MIT(MOTOR_DATA *motor) {
   ControlImpl_SetThetaFromEncoder(motor);
-
   // ========== Parameter Validity Check ==========
   if (motor->Controller.mit_kp < 0.0f || motor->Controller.mit_kd < 0.0f) {
     motor->algo_input.Iq_ref = 0.0f;
     motor->algo_input.Id_ref = 0.0f;
     return;
   }
-
   // ========== Unit Conversion: turn -> rad ==========
   float pos_actual_rad = motor->feedback.position * M_2PI;
   float vel_actual_rad = motor->feedback.velocity * M_2PI;
-
   // ========== MIT Impedance Control: τ = Kp*Δθ + Kd*Δω ==========
   float pos_error = motor->Controller.mit_pos_des - pos_actual_rad;
   float vel_error = motor->Controller.mit_vel_des - vel_actual_rad;
-
   // ========== Stability Check: Protect if error is too large ==========
   if (fabsf(pos_error) > MIT_POSITION_STABILITY_THRESH ||
       fabsf(vel_error) > MIT_VELOCITY_STABILITY_THRESH) {
@@ -211,46 +185,39 @@ void ControlImpl_MIT(MOTOR_DATA *motor) {
     motor->algo_input.Id_ref = 0.0f;
     return;
   }
-
   // Calculate Impedance Torque
   float impedance_torque = motor->Controller.mit_kp * pos_error +
                            motor->Controller.mit_kd * vel_error;
-
   // ========== Torque Limiting ==========
   float desired_torque =
-      CLAMP(impedance_torque, -motor->Controller.torque_limit,
-            motor->Controller.torque_limit);
-
+      CLAMP(impedance_torque + motor->Controller.input_torque,
+            -motor->Controller.torque_limit, motor->Controller.torque_limit);
   // ========== Convert to Current and Limit ==========
   float desired_current = desired_torque / motor->Controller.torque_const;
   motor->Controller.input_current =
       CLAMP(desired_current, -motor->Controller.current_limit,
             motor->Controller.current_limit);
-
   motor->algo_input.Iq_ref = motor->Controller.input_current;
   motor->algo_input.Id_ref = 0.0f;
 }
-
 /**
- * @brief 开环控制模式 (速度积分控制电角度)
- * @param motor 电机数据指针
- * @param target_velocity 目标速度 [rad/s]
+ * @brief open loopmode (speed/velocityintegralangle)
+ * @param motor motor
+ * @param target_velocity targetspeed/velocity [rad/s]
  *
- * @note 控制原理:
- *   1. 根据目标速度积分计算电角度: θ = θ + ω×Ts
- *   2. 施加固定幅值的电压矢量 (Vd=0, Vq=0.5V)
- *   3. 适用于无传感器启动或低速运行
+ * @note :
+ *   1. targetspeed/velocityintegralcalcangle: θ = θ + ω×Ts
+ *   2. voltage (Vd=0, Vq=0.5V)
+ *   3. startrunning
  */
 void OpenControlMode(MOTOR_DATA *motor, float target_velocity) {
-  float Ts = CURRENT_MEASURE_PERIOD; // 控制周期 [s]
-
-  // 电角度积分: θ(k+1) = θ(k) + ω×Ts
-  // 使用新架构变量
+  float Ts = CURRENT_MEASURE_PERIOD; // period [s]
+  // angleintegral: θ(k+1) = θ(k) + ω×Ts
+  //
   motor->algo_input.theta_elec = normalize_angle(
       motor->algo_input.theta_elec + target_velocity * Ts);
-
-  // 施加固定电压矢量 (Vd=0, Vq=固定值)
-  // 替换 FOC_voltage 为 Control_InjectVoltage
+  // voltage (Vd=0, Vq=)
+  //  FOC_voltage  Control_InjectVoltage
   Control_InjectVoltage(motor, 0.0f, OPEN_MODE_FIXED_VOLTAGE,
                         motor->algo_input.theta_elec);
 }
