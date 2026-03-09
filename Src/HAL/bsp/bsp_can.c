@@ -1,6 +1,6 @@
 /**
  * @file bsp_can.c
- * @brief CAN总线硬件抽象层实现
+ * @brief CAN鎬荤嚎纭欢鎶借薄灞傚疄鐜?
  */
 
 #include "bsp_can.h"
@@ -20,16 +20,16 @@
 #define GET_CMD_TYPE(id) (((id) >> 24) & 0x1F)
 #define GET_TARGET_ID(id) ((id) & 0xFF)
 
-/* CAN实例管理（兼容旧代码） */
+/* CAN瀹炰緥绠＄悊锛堝吋瀹规棫浠ｇ爜锛?*/
 static FDCANInstance *fdcan_instance[FDCAN_MX_REGISTER_CNT] = {NULL};
 static uint8_t idx;
 
-/* ========== 内部辅助函数 ========== */
+/* ========== 鍐呴儴杈呭姪鍑芥暟 ========== */
 
 /**
- * @brief CAN过滤器初始化
- * @param _instance CAN实例指针
- * @return true成功，false失败
+ * @brief CAN杩囨护鍣ㄥ垵濮嬪寲
+ * @param _instance CAN瀹炰緥鎸囬拡
+ * @return true鎴愬姛锛宖alse澶辫触
  */
 static bool FDCANAddFilter(FDCANInstance *_instance) {
   HAL_StatusTypeDef result;
@@ -47,8 +47,8 @@ static bool FDCANAddFilter(FDCANInstance *_instance) {
 }
 
 /**
- * @brief CAN服务初始化（启动FDCAN并激活中断）
- * @return true成功，false失败
+ * @brief CAN鏈嶅姟鍒濆鍖栵紙鍚姩FDCAN骞舵縺娲讳腑鏂級
+ * @return true鎴愬姛锛宖alse澶辫触
  */
 static bool FDCANServiceInit(void) {
   HAL_StatusTypeDef result;
@@ -60,11 +60,11 @@ static bool FDCANServiceInit(void) {
   return result == HAL_OK;
 }
 
-/* ========== 公共接口函数 ========== */
+/* ========== 鍏叡鎺ュ彛鍑芥暟 ========== */
 
 /**
- * @brief 初始化CAN服务（对外接口）
- * @note 在App_Init中调用，启动FDCAN和中断
+ * @brief 鍒濆鍖朇AN鏈嶅姟锛堝澶栨帴鍙ｏ級
+ * @note 鍦ˋpp_Init涓皟鐢紝鍚姩FDCAN鍜屼腑鏂?
  */
 void BSP_CAN_Init(void) {
   if (FDCANServiceInit()) {
@@ -75,20 +75,20 @@ void BSP_CAN_Init(void) {
 }
 
 /**
- * @brief 注册FDCAN实例（兼容接口）
- * @param config 初始化配置
- * @return CAN实例指针
+ * @brief 娉ㄥ唽FDCAN瀹炰緥锛堝吋瀹规帴鍙ｏ級
+ * @param config 鍒濆鍖栭厤缃?
+ * @return CAN瀹炰緥鎸囬拡
  */
 FDCANInstance *FDCANRegister(FDCAN_Init_Config_s *config) {
   if (!idx) {
-    FDCANServiceInit(); // 延迟初始化
+    FDCANServiceInit(); // 寤惰繜鍒濆鍖?
   }
   if (idx >= FDCAN_MX_REGISTER_CNT) {
     while (1)
       LOGERROR("[bsp_can] Max instances reached");
   }
 
-  // 检查ID冲突
+  // 妫€鏌D鍐茬獊
   for (size_t i = 0; i < idx; i++) {
     if (fdcan_instance[i]->rx_id == config->rx_id &&
         fdcan_instance[i]->fdcan_handle == config->fdcan_handle) {
@@ -123,16 +123,29 @@ FDCANInstance *FDCANRegister(FDCAN_Init_Config_s *config) {
 }
 
 /**
- * @brief 通过FDCAN发送数据
- * @param _instance CAN实例
- * @param timeout 超时时间（ms）
-  return 1;
+ * @brief Send a queued frame through an FDCAN instance.
+ * @param _instance Registered CAN instance.
+ * @param timeout Timeout in ms; currently unused in the unified HAL path.
+ * @return 1 on success, 0 on failure.
+ */
+uint8_t FDCANTransmit(FDCANInstance *_instance, float timeout) {
+  (void)timeout;
+
+  if (_instance == NULL || _instance->fdcan_handle == NULL) {
+    return 0U;
+  }
+
+  return (HAL_FDCAN_AddMessageToTxFifoQ(_instance->fdcan_handle,
+                                        &_instance->txconf,
+                                        _instance->tx_buff) == HAL_OK)
+             ? 1U
+             : 0U;
 }
 
 /**
- * @brief 设置CAN数据长度
- * @param _instance CAN实例
- * @param length 数据长度（0-8字节）
+ * @brief Set CAN DLC.
+ * @param _instance CAN instance.
+ * @param length Payload length [0, 8].
  */
 void FDCANSetDLC(FDCANInstance *_instance, uint8_t length) {
   switch (length) {
@@ -170,9 +183,9 @@ void FDCANSetDLC(FDCANInstance *_instance, uint8_t length) {
 }
 
 /**
- * @brief 发送CAN帧 (抽象接口)
- * @param frame CAN协议帧
- * @return true成功，false失败
+ * @brief 鍙戦€丆AN甯?(鎶借薄鎺ュ彛)
+ * @param frame CAN鍗忚甯?
+ * @return true鎴愬姛锛宖alse澶辫触
  */
 bool BSP_CAN_SendFrame(const CAN_Frame *frame) {
   if (frame == NULL) {
@@ -228,23 +241,23 @@ bool BSP_CAN_SendFrame(const CAN_Frame *frame) {
                                         (uint8_t *)frame->data) == HAL_OK);
 }
 
-/* ========== 接收中断回调 ========== */
+/* ========== 鎺ユ敹涓柇鍥炶皟 ========== */
 
 /**
- * @brief 统一的CAN消息处理回调
- * @param _hcan FDCAN句柄
- * @param fifox FIFO编号（FIFO0或FIFO1）
- * @note 由FIFO中断触发调用
+ * @brief 缁熶竴鐨凜AN娑堟伅澶勭悊鍥炶皟
+ * @param _hcan FDCAN鍙ユ焺
+ * @param fifox FIFO缂栧彿锛團IFO0鎴朏IFO1锛?
+ * @note 鐢盕IFO涓柇瑙﹀彂璋冪敤
  */
 static void FDCANFIFOxCallback(FDCAN_HandleTypeDef *_hcan, uint32_t fifox) {
   static FDCAN_RxHeaderTypeDef rxconf;
   uint8_t can_rx_buff[8];
 
   while (HAL_FDCAN_GetRxFifoFillLevel(_hcan, fifox)) {
-    // 从FIFO获取消息
+    // 浠嶧IFO鑾峰彇娑堟伅
     HAL_FDCAN_GetRxMessage(_hcan, fifox, &rxconf, can_rx_buff);
 
-    // 转换为协议栈格式并处理
+    // 杞崲涓哄崗璁爤鏍煎紡骞跺鐞?
     CAN_Frame frame;
     frame.id = rxconf.Identifier;
     frame.dlc = rxconf.DataLength >> 16; // Approximation for Classic CAN
@@ -257,9 +270,9 @@ static void FDCANFIFOxCallback(FDCAN_HandleTypeDef *_hcan, uint32_t fifox) {
 }
 
 /**
- * @brief FIFO0新消息中断回调
- * @param hfdcan FDCAN句柄
- * @param RxFifo0ITs 中断标志
+ * @brief FIFO0鏂版秷鎭腑鏂洖璋?
+ * @param hfdcan FDCAN鍙ユ焺
+ * @param RxFifo0ITs 涓柇鏍囧織
  */
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan,
                                uint32_t RxFifo0ITs) {
@@ -269,9 +282,9 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan,
 }
 
 /**
- * @brief FIFO1新消息中断回调
- * @param hfdcan FDCAN句柄
- * @param RxFifo1ITs 中断标志
+ * @brief FIFO1鏂版秷鎭腑鏂洖璋?
+ * @param hfdcan FDCAN鍙ユ焺
+ * @param RxFifo1ITs 涓柇鏍囧織
  */
 void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hfdcan,
                                uint32_t RxFifo1ITs) {

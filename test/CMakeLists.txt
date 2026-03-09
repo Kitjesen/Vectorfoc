@@ -30,6 +30,8 @@ add_definitions(-DTEST_ENV)
 # Compiler flags for warnings
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -Wno-unused-parameter)
+elseif(MSVC)
+    add_compile_options(/utf-8)
 endif()
 
 function(register_test_target target)

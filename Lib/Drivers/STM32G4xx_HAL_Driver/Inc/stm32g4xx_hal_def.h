@@ -29,6 +29,9 @@ extern "C" {
 #ifndef STM32G431xx
 #define STM32G431xx
 #endif
+#ifndef STM32G4
+#define STM32G4
+#endif
 #include "stm32_hal_legacy.h" /* Aliases file for old names compatibility */
 #include "stm32g4xx.h"
 #include <stddef.h>

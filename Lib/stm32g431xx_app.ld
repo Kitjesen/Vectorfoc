@@ -9,26 +9,32 @@ _Min_Stack_Size = 0x400;
 
 MEMORY
 {
-  RAM (xrw)    : ORIGIN = 0x20000000, LENGTH = 32K - 16  /* 保留末尾 16 bytes 给 boot flag */
-  FLASH (rx)   : ORIGIN = 0x08004000, LENGTH = 224K      /* Application 区域 */
+  RAM (xrw)    : ORIGIN = 0x20000000, LENGTH = 32K - 16  /* 濞ｅ洦绻勯弳鈧柡鍫亜閻?16 bytes 缂?boot flag */
+  FLASH (rx)   : ORIGIN = 0x08004000, LENGTH = 224K      /* Application 闁告牕鎼悡?*/
+}
+
+PHDRS
+{
+  text PT_LOAD FLAGS(5);
+  data PT_LOAD FLAGS(6);
 }
 
 SECTIONS
 {
-  /* 向量表 */
+  /* 闁告碍鍨块崳铏规偘?*/
   .isr_vector :
   {
     . = ALIGN(4);
     KEEP(*(.isr_vector))
     . = ALIGN(4);
-  } >FLASH
+  } >FLASH :text
 
-  /* App Header (位于向量表后 0x200 偏移处) */
+  /* App Header (濞达絽绉崇花顒勫触閹达箑娅ら悶娑栧妼閹?0x200 闁稿绻掍簺濠? */
   .app_header 0x08004200 :
   {
     KEEP(*(.app_header))
     . = ALIGN(4);
-  } >FLASH
+  } >FLASH :text
 
   .text :
   {
@@ -42,7 +48,7 @@ SECTIONS
     KEEP (*(.fini))
     . = ALIGN(4);
     _etext = .;
-  } >FLASH
+  } >FLASH :text
 
   .rodata :
   {
@@ -50,21 +56,21 @@ SECTIONS
     *(.rodata)
     *(.rodata*)
     . = ALIGN(4);
-  } >FLASH
+  } >FLASH :text
 
-  .ARM.extab   : { *(.ARM.extab* .gnu.linkonce.armextab.*) } >FLASH
+  .ARM.extab   : { *(.ARM.extab* .gnu.linkonce.armextab.*) } >FLASH :text
   .ARM : {
     __exidx_start = .;
     *(.ARM.exidx*)
     __exidx_end = .;
-  } >FLASH
+  } >FLASH :text
 
   .preinit_array :
   {
     PROVIDE_HIDDEN (__preinit_array_start = .);
     KEEP (*(.preinit_array*))
     PROVIDE_HIDDEN (__preinit_array_end = .);
-  } >FLASH
+  } >FLASH :text
 
   .init_array :
   {
@@ -72,7 +78,7 @@ SECTIONS
     KEEP (*(SORT(.init_array.*)))
     KEEP (*(.init_array*))
     PROVIDE_HIDDEN (__init_array_end = .);
-  } >FLASH
+  } >FLASH :text
 
   .fini_array :
   {
@@ -80,7 +86,7 @@ SECTIONS
     KEEP (*(SORT(.fini_array.*)))
     KEEP (*(.fini_array*))
     PROVIDE_HIDDEN (__fini_array_end = .);
-  } >FLASH
+  } >FLASH :text
 
   _sidata = LOADADDR(.data);
 
@@ -92,15 +98,15 @@ SECTIONS
     *(.data*)
     . = ALIGN(4);
     _edata = .;
-  } >RAM AT> FLASH
+  } >RAM AT> FLASH :data
 
-  /* Boot flag 区域 (不初始化，复位保持) */
+  /* Boot flag 闁告牕鎼悡?(濞戞挸绉撮崹鍨叏鐎ｎ亜顕ч柨娑樿嫰椤﹀弶鎷呭鍕闁? */
   .noinit (NOLOAD) :
   {
     . = ALIGN(4);
     *(.noinit)
     . = ALIGN(4);
-  } >RAM
+  } >RAM :data
 
   . = ALIGN(4);
   .bss :
@@ -113,9 +119,9 @@ SECTIONS
     . = ALIGN(4);
     _ebss = .;
     __bss_end__ = _ebss;
-  } >RAM
+  } >RAM :data
 
-  ._user_heap_stack :
+  ._user_heap_stack (NOLOAD) :
   {
     . = ALIGN(8);
     PROVIDE ( end = . );
@@ -123,7 +129,7 @@ SECTIONS
     . = . + _Min_Heap_Size;
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
-  } >RAM
+  } >RAM :NONE
 
   /DISCARD/ :
   {

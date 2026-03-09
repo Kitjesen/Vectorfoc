@@ -25,11 +25,88 @@
  ********************************************************************************/
 
 #include "bsp_log.h"
+#include <stddef.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 static USARTInstance *log_usart_instance;
+
+static const char *LogLevelTag(LOG_LEVEL level) {
+  switch (level) {
+  case LOG_DEBUG:
+    return "DEBUG";
+  case LOG_INFO:
+    return "INFO";
+  case LOG_WARNING:
+    return "WARN";
+  case LOG_ERROR:
+    return "ERROR";
+  default:
+    return NULL;
+  }
+}
+
+static const char *LogBaseName(const char *path) {
+  const char *base = path;
+  const char *slash = NULL;
+  const char *backslash = NULL;
+
+  if (path == NULL) {
+    return "(null)";
+  }
+
+  slash = strrchr(path, '/');
+  backslash = strrchr(path, '\\');
+  if (slash != NULL && slash[1] != '\0') {
+    base = slash + 1;
+  }
+  if (backslash != NULL && backslash[1] != '\0' && backslash + 1 > base) {
+    base = backslash + 1;
+  }
+  return base;
+}
+
+static size_t LogAppendText(char *buf, size_t buf_size, size_t offset,
+                            const char *text) {
+  size_t available = 0;
+  size_t copy_len = 0;
+
+  if (buf == NULL || buf_size == 0) {
+    return 0;
+  }
+
+  if (offset >= buf_size - 1) {
+    buf[buf_size - 1] = '\0';
+    return buf_size - 1;
+  }
+
+  if (text == NULL) {
+    text = "(null)";
+  }
+
+  available = buf_size - offset - 1;
+  copy_len = strlen(text);
+  if (copy_len > available) {
+    copy_len = available;
+  }
+
+  memcpy(buf + offset, text, copy_len);
+  buf[offset + copy_len] = '\0';
+  return offset + copy_len;
+}
+
+static size_t LogAppendInt(char *buf, size_t buf_size, size_t offset,
+                           int value) {
+  char line_buf[16];
+  int written = snprintf(line_buf, sizeof(line_buf), "%d", value);
+
+  if (written < 0) {
+    return offset;
+  }
+
+  return LogAppendText(buf, buf_size, offset, line_buf);
+}
 
 /**
  * @brief          注册LOG实例
@@ -57,33 +134,35 @@ void LogInit(UART_HandleTypeDef *log_config)
 void LOG_PROTO(const char *fmt, LOG_LEVEL level, const char *file,
                int line, const char *func, ...)
 {
+  const char *level_tag = LogLevelTag(level);
   char tmp[LOG_BUFFER_SIZE];
   char buf[LOG_BUFFER_SIZE];
-  memset(tmp, 0, sizeof(tmp));
-  memset(buf, 0, sizeof(buf));
+  size_t used = 0;
+
+  if (level_tag == NULL || log_usart_instance == NULL) {
+    return;
+  }
+
+  tmp[0] = '\0';
+  buf[0] = '\0';
 
   va_list args;
   va_start(args, func);
-  vsnprintf(tmp, sizeof(tmp) - 1, fmt, args);
+  vsnprintf(tmp, sizeof(tmp), fmt, args);
   va_end(args);
 
-  switch (level)
-  {
-  case LOG_DEBUG:
-    snprintf(buf, sizeof(buf), "[DEBUG] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
-    break;
-  case LOG_INFO:
-    snprintf(buf, sizeof(buf), "[INFO] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
-    break;
-  case LOG_WARNING:
-    snprintf(buf, sizeof(buf), "[WARN] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
-    break;
-  case LOG_ERROR:
-    snprintf(buf, sizeof(buf), "[ERROR] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
-    break;
-  default:
-    return;
-  }
+  used = LogAppendText(buf, sizeof(buf), used, "[");
+  used = LogAppendText(buf, sizeof(buf), used, level_tag);
+  used = LogAppendText(buf, sizeof(buf), used, "] <");
+  used = LogAppendText(buf, sizeof(buf), used, LogBaseName(file));
+  used = LogAppendText(buf, sizeof(buf), used, "> | <");
+  used = LogAppendInt(buf, sizeof(buf), used, line);
+  used = LogAppendText(buf, sizeof(buf), used, "> | <");
+  used = LogAppendText(buf, sizeof(buf), used, func);
+  used = LogAppendText(buf, sizeof(buf), used, ">: ");
+  used = LogAppendText(buf, sizeof(buf), used, tmp);
+  used = LogAppendText(buf, sizeof(buf), used, "\r\n");
+  (void)used;
 
   USARTSend(log_usart_instance, (uint8_t *)buf, strlen(buf), USART_TRANSFER_IT);
 }

@@ -123,9 +123,6 @@ void FOC_Algorithm_CurrentLoop(const FOC_AlgorithmInput_t *input,
   output->Vd = Vd_raw + Vd_ff;
   output->Vq = Vq_raw + Vq_ff;
 
-  float Vd_unlim = output->Vd;
-  float Vq_unlim = output->Vq;
-
   // Step 7: 电压矢量限幅
   // 限制电压矢量在逆变器可输出的六边形内切圆内
   // V_max = (Vbus / sqrt(3)) * 0.95f (留出 5% 安全裕度)

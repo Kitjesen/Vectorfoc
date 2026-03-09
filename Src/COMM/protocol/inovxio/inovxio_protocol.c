@@ -222,7 +222,6 @@ bool ProtocolPrivate_BuildFeedback(const MotorStatus *status,
                                    CAN_Frame *frame) {
   if (!status || !frame)
     return false;
-  uint16_t master_id = 0xFD; // ID
   // ID (Bit 23-8)
   // MinerU MD:
   // Bit 23-22: Mode (0:Reset, 1:Cali, 2:Motor)
@@ -254,8 +253,6 @@ bool ProtocolPrivate_BuildFeedback(const MotorStatus *status,
   // Cmd: 0x02
   // Info: Mode(2) + Faults(6) + Master(8)
   // Target: HostID (0xFF/0xFD?) -> MD Feedback Frame defines Target as Host ID
-  uint32_t info = (mode << 14) | (fault_bits << 8) |
-                  0xFD; // 0xFD as MasterID in high byte of low word?
   uint32_t id = (0x02 << 24) | (mode << 22) | (fault_bits << 16) |
                 (status->can_id << 8) | 0xFD; // Host ID
   frame->id = id;

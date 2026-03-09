@@ -28,8 +28,14 @@
 /* ==========================================================================
    1. Clock Configuration
    ========================================================================== */
+#ifndef SYS_CLOCK_HZ
+#ifndef SYS_CLOCK_MHZ
 #define SYS_CLOCK_MHZ           168
+#endif
 #define SYS_CLOCK_HZ            (SYS_CLOCK_MHZ * 1000000UL)
+#elif !defined(SYS_CLOCK_MHZ)
+#define SYS_CLOCK_MHZ           (SYS_CLOCK_HZ / 1000000UL)
+#endif
 
 /* ==========================================================================
    2. Motor PWM - TIM1 (Advanced Timer, center-aligned)

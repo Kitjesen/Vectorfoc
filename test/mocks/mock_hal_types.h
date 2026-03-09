@@ -16,7 +16,9 @@
 #define M_PI 3.14159265358979323846f
 #endif
 
+#ifndef M_2PI
 #define M_2PI (2.0f * M_PI)
+#endif
 
 /* Mock HAL types */
 typedef struct {

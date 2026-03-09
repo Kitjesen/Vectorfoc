@@ -8,7 +8,7 @@
 #include <string.h>
 
 // Helper macro to access concrete encoder
-#define ENC ((MT6816_Handle_t *)motor->components.encoder)
+#define ENCODER_HANDLE ((MT6816_Handle_t *)motor->components.encoder)
 #define CW MT6816_DIR_CW
 #define CCW MT6816_DIR_CCW
 #define ENCODER_CPR_F MT6816_CPR_F
@@ -43,7 +43,7 @@ CalibResult DirectionPoleCalib_Update(MOTOR_DATA *motor,
                 ctx->phase_set);
 
     if (time >= 2.0f) {
-      ctx->start_count = (float)ENC->shadow_count;
+      ctx->start_count = (float)ENCODER_HANDLE->shadow_count;
       motor->state.Cs_State = CS_DIR_PP_LOOP;
     }
 
@@ -63,13 +63,13 @@ CalibResult DirectionPoleCalib_Update(MOTOR_DATA *motor,
     return CALIB_IN_PROGRESS;
 
   case CS_DIR_PP_END: {
-    int32_t diff = ENC->shadow_count - (int32_t)ctx->start_count;
+    int32_t diff = ENCODER_HANDLE->shadow_count - (int32_t)ctx->start_count;
 
     // Detect direction
     if (diff > 0) {
-      ENC->dir = CW;
+      ENCODER_HANDLE->dir = CW;
     } else {
-      ENC->dir = CCW;
+      ENCODER_HANDLE->dir = CCW;
     }
 
 // --- Pole Pair Identification (Robust) ---
@@ -112,7 +112,7 @@ CalibResult DirectionPoleCalib_Update(MOTOR_DATA *motor,
 
     if (estimated_pp == 0)
       estimated_pp = 1; // Should be caught by range check, but safety first
-    ENC->pole_pairs = estimated_pp;
+    ENCODER_HANDLE->pole_pairs = estimated_pp;
 
     // Next step: Encoder Calibration
     motor->state.Cs_State = CS_ENCODER_START;
@@ -152,7 +152,7 @@ CalibResult EncoderCalib_Update(MOTOR_DATA *motor, EncoderCalibContext *ctx) {
     return CALIB_IN_PROGRESS;
 
   case CS_ENCODER_CW_LOOP: {
-    int total_samples = ENC->pole_pairs * SAMPLES_PER_POLE_PAIR;
+    int total_samples = ENCODER_HANDLE->pole_pairs * SAMPLES_PER_POLE_PAIR;
 
     if (ctx->sample_count < total_samples) {
       if (time > ctx->next_sample_time) {
@@ -160,8 +160,8 @@ CalibResult EncoderCalib_Update(MOTOR_DATA *motor, EncoderCalibContext *ctx) {
             M_2PI / ((float)SAMPLES_PER_POLE_PAIR * CALIB_PHASE_VEL);
 
         int count_ref = (int)((ctx->phase_set * ENCODER_CPR_F) /
-                              (M_2PI * (float)ENC->pole_pairs));
-        int error = ENC->count_in_cpr - count_ref;
+                              (M_2PI * (float)ENCODER_HANDLE->pole_pairs));
+        int error = ENCODER_HANDLE->count_in_cpr - count_ref;
         error += ENCODER_CPR * (error < 0);
 
         if (ctx->sample_count < ctx->error_array_size) {
@@ -192,8 +192,8 @@ CalibResult EncoderCalib_Update(MOTOR_DATA *motor, EncoderCalibContext *ctx) {
             M_2PI / ((float)SAMPLES_PER_POLE_PAIR * CALIB_PHASE_VEL);
 
         int count_ref = (int)((ctx->phase_set * ENCODER_CPR_F) /
-                              (M_2PI * (float)ENC->pole_pairs));
-        int error = ENC->count_in_cpr - count_ref;
+                              (M_2PI * (float)ENCODER_HANDLE->pole_pairs));
+        int error = ENCODER_HANDLE->count_in_cpr - count_ref;
         error += ENCODER_CPR * (error < 0);
 
         if (ctx->sample_count < ctx->error_array_size) {
@@ -218,13 +218,13 @@ CalibResult EncoderCalib_Update(MOTOR_DATA *motor, EncoderCalibContext *ctx) {
   case CS_ENCODER_END: {
     // Calculate average offset
     int64_t moving_avg = 0;
-    int total_samples = ENC->pole_pairs * SAMPLES_PER_POLE_PAIR;
+    int total_samples = ENCODER_HANDLE->pole_pairs * SAMPLES_PER_POLE_PAIR;
 
     for (int i = 0; i < total_samples; i++) {
       if (i < ctx->error_array_size)
         moving_avg += ctx->error_array[i];
     }
-    ENC->offset_counts = (int)(moving_avg / total_samples);
+    ENCODER_HANDLE->offset_counts = (int)(moving_avg / total_samples);
 
     // Generate lookup table (FIR filter)
     int window = SAMPLES_PER_POLE_PAIR;
@@ -236,13 +236,15 @@ CalibResult EncoderCalib_Update(MOTOR_DATA *motor, EncoderCalibContext *ctx) {
       moving_avg = 0;
       for (int j = (-window) / 2; j < (window) / 2; j++) {
         int index =
-            i * ENC->pole_pairs * SAMPLES_PER_POLE_PAIR / OFFSET_LUT_NUM + j;
+            i * ENCODER_HANDLE->pole_pairs * SAMPLES_PER_POLE_PAIR /
+            OFFSET_LUT_NUM + j;
 
         // Boundary handling
         if (index < 0) {
-          index += (SAMPLES_PER_POLE_PAIR * ENC->pole_pairs);
-        } else if (index > (SAMPLES_PER_POLE_PAIR * ENC->pole_pairs - 1)) {
-          index -= (SAMPLES_PER_POLE_PAIR * ENC->pole_pairs);
+          index += (SAMPLES_PER_POLE_PAIR * ENCODER_HANDLE->pole_pairs);
+        } else if (index >
+                   (SAMPLES_PER_POLE_PAIR * ENCODER_HANDLE->pole_pairs - 1)) {
+          index -= (SAMPLES_PER_POLE_PAIR * ENCODER_HANDLE->pole_pairs);
         }
 
         if (index < ctx->error_array_size)
@@ -255,7 +257,8 @@ CalibResult EncoderCalib_Update(MOTOR_DATA *motor, EncoderCalibContext *ctx) {
         lut_index -= OFFSET_LUT_NUM;
       }
 
-      ENC->offset_lut[lut_index] = (int16_t)(moving_avg - ENC->offset_counts);
+      ENCODER_HANDLE->offset_lut[lut_index] =
+          (int16_t)(moving_avg - ENCODER_HANDLE->offset_counts);
     }
 
     motor->state.Cs_State = CS_REPORT_OFFSET_LUT;
@@ -275,7 +278,7 @@ CalibResult EncoderCalib_Update(MOTOR_DATA *motor, EncoderCalibContext *ctx) {
       return CALIB_IN_PROGRESS;
     } else {
       // Calibration fully completed
-      ENC->calib_valid = true;
+      ENCODER_HANDLE->calib_valid = true;
 
       // Clear PID state
       PID_clear(&motor->IqPID);
