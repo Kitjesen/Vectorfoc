@@ -22,6 +22,13 @@ include_directories(
     ${PROJ_ROOT}/Src/ALGO/control
     ${PROJ_ROOT}/Src/ALGO/observer
     ${PROJ_ROOT}/Src/ALGO/trajectory
+    ${PROJ_ROOT}/Src/COMM
+    ${PROJ_ROOT}/Src/COMM/manager
+    ${PROJ_ROOT}/Src/COMM/protocol
+    ${PROJ_ROOT}/Src/COMM/protocol/canopen
+    ${PROJ_ROOT}/Src/COMM/protocol/inovxio
+    ${PROJ_ROOT}/Src/COMM/protocol/mit
+    ${PROJ_ROOT}/Src/UI/vofa
 )
 
 # Mock definitions for test environment
@@ -98,6 +105,21 @@ add_executable(test_runner_integration
     ${PROJ_ROOT}/Src/ALGO/pid/pid.c
 )
 register_test_target(test_runner_integration)
+
+# --- Target: Protocol Parser Tests ---
+add_executable(test_runner_protocols
+    test_protocols.c
+    ${PROJ_ROOT}/Src/COMM/protocol/mit/mit_protocol.c
+    ${PROJ_ROOT}/Src/COMM/protocol/canopen/canopen_protocol.c
+)
+register_test_target(test_runner_protocols)
+
+# --- Target: VOFA bus scan helper tests ---
+add_executable(test_runner_vofa_scan
+    test_vofa_bus_scan.c
+    ${PROJ_ROOT}/Src/UI/vofa/vofa_bus_scan.c
+)
+register_test_target(test_runner_vofa_scan)
 
 # Note: Full motor/fsm tests require more extensive mocking
 # and are better run on target hardware or with a full simulation environment

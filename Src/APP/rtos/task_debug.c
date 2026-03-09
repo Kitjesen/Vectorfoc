@@ -13,9 +13,10 @@
 __attribute__((noreturn)) void StartDefaultTask(void const *argument) {
   (void)argument;
   MX_USB_Device_Init();
+  Scope_Init();
 
   for (;;) {
-    Scope_Process();
+    Vofa_Process();
     osDelay(1);
   }
 }

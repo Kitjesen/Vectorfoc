@@ -58,6 +58,7 @@ static volatile uint8_t s_rx_head = 0;
 static volatile uint8_t s_rx_tail = 0;
 static volatile uint32_t s_rx_dropped = 0;
 static volatile bool s_rx_overflow = false;
+static ProtocolRxObserver s_rx_observer = NULL;
 
 /* Communication statistics */
 static CommStats_t s_comm_stats = {0};
@@ -85,6 +86,10 @@ static bool Protocol_DequeueRxFrame(CAN_Frame *out) {
  */
 void Protocol_RegisterTransport(const TransportInterface *transport) {
   s_transport = transport;
+}
+
+void Protocol_RegisterRxObserver(ProtocolRxObserver observer) {
+  s_rx_observer = observer;
 }
 
 /**
@@ -314,6 +319,10 @@ void Protocol_ProcessQueuedFrames(void) {
 void Protocol_ProcessRxFrame(const CAN_Frame *frame) {
   if (frame == NULL)
     return;
+
+  if (s_rx_observer != NULL) {
+    s_rx_observer(frame);
+  }
 
 #ifdef DEBUG
   static uint32_t start_cnt = 0;

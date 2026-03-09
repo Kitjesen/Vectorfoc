@@ -1,0 +1,4 @@
+#ifndef TEST_MOCK_PARAM_TABLE_H
+#define TEST_MOCK_PARAM_TABLE_H
+
+#endif

@@ -28,6 +28,7 @@
 
 // Forward declaration to avoid circular dependency
 typedef struct MOTOR_DATA_s MOTOR_DATA;
+typedef void (*ProtocolRxObserver)(const CAN_Frame *frame);
 
 /**
  * @brief  注册传输层接口
@@ -35,6 +36,12 @@ typedef struct MOTOR_DATA_s MOTOR_DATA;
  * @note   应在 Protocol_Init() 之前调用
  */
 void Protocol_RegisterTransport(const TransportInterface *transport);
+
+/**
+ * @brief Register an observer for fully received CAN frames.
+ * @param observer Callback invoked before protocol-specific processing.
+ */
+void Protocol_RegisterRxObserver(ProtocolRxObserver observer);
 
 /**
  * @brief  Initialize protocol manager.

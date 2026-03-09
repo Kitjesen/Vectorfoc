@@ -26,6 +26,7 @@ typedef struct {
 void Scope_Init(void);
 void Scope_Update(void);
 void Scope_Process(void);
+void Vofa_Process(void);
 
 void vofa_start(void);
 void vofa_send_data(uint8_t num, float data);
