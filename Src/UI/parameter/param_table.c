@@ -456,6 +456,66 @@ static const ParamEntry s_param_table[] = {
 
      .default_val = 0.0f,
      .need_save = false},
+    {.index = PARAM_LADRC_ENABLE,
+     .type = PARAM_TYPE_FLOAT,
+     .attr = PARAM_ATTR_PERSISTENT,
+     .access = PARAM_ACCESS_RW,
+     .name = "ladrc_en",
+     .ptr = &motor_data.ladrc_enable,
+
+     .min = 0.0f,
+     .max = 1.0f,
+
+     .default_val = (float)DEFAULT_LADRC_ENABLE,
+     .need_save = true},
+    {.index = PARAM_LADRC_OMEGA_O,
+     .type = PARAM_TYPE_FLOAT,
+     .attr = PARAM_ATTR_PERSISTENT,
+     .access = PARAM_ACCESS_RW,
+     .name = "ladrc_wo",
+     .ptr = &motor_data.ladrc_config.omega_o,
+
+     .min = 10.0f,
+     .max = 5000.0f,
+
+     .default_val = DEFAULT_LADRC_OMEGA_O,
+     .need_save = true},
+    {.index = PARAM_LADRC_OMEGA_C,
+     .type = PARAM_TYPE_FLOAT,
+     .attr = PARAM_ATTR_PERSISTENT,
+     .access = PARAM_ACCESS_RW,
+     .name = "ladrc_wc",
+     .ptr = &motor_data.ladrc_config.omega_c,
+
+     .min = 5.0f,
+     .max = 2000.0f,
+
+     .default_val = DEFAULT_LADRC_OMEGA_C,
+     .need_save = true},
+    {.index = PARAM_LADRC_B0,
+     .type = PARAM_TYPE_FLOAT,
+     .attr = PARAM_ATTR_PERSISTENT,
+     .access = PARAM_ACCESS_RW,
+     .name = "ladrc_b0",
+     .ptr = &motor_data.ladrc_config.b0,
+
+     .min = 0.1f,
+     .max = 10000.0f,
+
+     .default_val = DEFAULT_LADRC_B0,
+     .need_save = true},
+    {.index = PARAM_LADRC_MAX_OUT,
+     .type = PARAM_TYPE_FLOAT,
+     .attr = PARAM_ATTR_PERSISTENT,
+     .access = PARAM_ACCESS_RW,
+     .name = "ladrc_max",
+     .ptr = &motor_data.ladrc_config.max_output,
+
+     .min = 0.1f,
+     .max = 200.0f,
+
+     .default_val = DEFAULT_LADRC_MAX_OUT,
+     .need_save = true},
 
     /* ===================================================================
      * 鍙傛暟琛ㄥ畬鏁存�ц鏄?

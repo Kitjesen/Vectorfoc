@@ -96,6 +96,8 @@ bool CoggingComp_IsCalibrating(void) { return s_calib.active; }
 
 bool CoggingComp_IsValid(void) { return s_map_valid; }
 
+uint16_t CoggingComp_GetCalibStep(void) { return s_calib.index; }
+
 float CoggingComp_GetCurrent(const MOTOR_DATA *motor) {
   if (!motor) {
     return 0.0f;

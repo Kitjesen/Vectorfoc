@@ -26,7 +26,7 @@
 
 /* 参数存储魔术字 */
 #define FLASH_MAGIC_WORD          0x464F4331  // "FOC1"
-#define FLASH_PARAM_VERSION       0x00010000  // v1.0.0
+#define FLASH_PARAM_VERSION       0x00010001  // v1.0.1 param layout
 
 /* Flash存储数据结构 */
 typedef struct {
@@ -86,9 +86,14 @@ typedef struct {
     float fw_max_current;              // 弱磁最大电流 [A]
     float fw_start_velocity;           // 弱磁起始速度 [rad/s]
     float cogging_comp_enabled;        // 齿槽转矩补偿使能 (0.0/1.0)
+    float ladrc_enable;                // LADRC speed loop enable
+    float ladrc_omega_o;               // LADRC observer bandwidth
+    float ladrc_omega_c;               // LADRC controller bandwidth
+    float ladrc_b0;                    // LADRC nominal plant gain
+    float ladrc_max_output;            // LADRC output limit
     
     /* 预留空间供将来扩展 (总共不超过2KB) */
-    uint8_t reserved_data[1576];
+    uint8_t reserved_data[1556];
     
 } __attribute__((packed)) FlashParamData;
 

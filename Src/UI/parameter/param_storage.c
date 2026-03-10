@@ -5,11 +5,27 @@
 
 #include "param_storage.h"
 #include "bsp_flash.h"
+#include "config.h"
 #include <string.h>
 
 /* CRC32查找表 (STM32硬件CRC使用) */
 static uint32_t s_write_count = 0;
 static uint32_t s_last_crc = 0;
+
+static void ParamStorage_Migrate(FlashParamData *data)
+{
+    if (data == NULL) {
+        return;
+    }
+
+    if (data->version == 0x00010000UL) {
+        data->ladrc_enable = (float)DEFAULT_LADRC_ENABLE;
+        data->ladrc_omega_o = DEFAULT_LADRC_OMEGA_O;
+        data->ladrc_omega_c = DEFAULT_LADRC_OMEGA_C;
+        data->ladrc_b0 = DEFAULT_LADRC_B0;
+        data->ladrc_max_output = DEFAULT_LADRC_MAX_OUT;
+    }
+}
 
 /**
  * @brief 写入Flash (64位对齐)
@@ -154,6 +170,9 @@ FlashStorageResult ParamStorage_Load(FlashParamData *data)
     }
     
     // 恢复CRC值
+    if (flash_data.version != FLASH_PARAM_VERSION) {
+        ParamStorage_Migrate(&flash_data);
+    }
     flash_data.crc32 = stored_crc;
     
     // 复制数据

@@ -49,9 +49,10 @@ typedef struct {
   float position_ref; /**< [rad] Position setpoint */
 
   /* Control flags */
-  uint8_t control_mode; /**< Control mode */
-  bool enable_motor;    /**< Motor enable flag */
-  bool set_zero;        /**< Set zero position flag */
+  uint8_t control_mode;    /**< Control mode */
+  bool has_enable_command; /**< True when enable_motor is meaningful */
+  bool enable_motor;       /**< Motor enable flag */
+  bool set_zero;           /**< Set zero position flag */
 
   /* Protocol switching */
   bool is_protocol_switch; /**< Protocol switch request flag */

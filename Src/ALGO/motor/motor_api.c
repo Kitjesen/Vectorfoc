@@ -4,6 +4,7 @@
 #include "control/cogging.h"
 #include "control/feedforward.h"
 #include "control/field_weakening.h"
+#include "control/ladrc.h"
 #include "hal_pwm.h" // For MHAL_PWM_Brake (统一 HAL)
 #include "observer/smo_observer.h"
 #include "param_access.h"
@@ -41,6 +42,7 @@ void Init_Motor_No_Calib(MOTOR_DATA *motor) {
 
   // 5. 根据加载的参数更新电流环增益
   CurrentLoop_UpdateGain(motor);
+  LADRC_Init(&motor->ladrc_state, &motor->ladrc_config);
 
   // 6. 标记参数已更新 (确保内环首次加载)
   motor->params_updated = true;
@@ -62,6 +64,7 @@ void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type) {
   PID_clear(&motor->IdPID);
   PID_clear(&motor->VelPID);
   PID_clear(&motor->PosPID);
+  LADRC_Reset(&motor->ladrc_state);
 
   // 3. 重置FOC状态
   FOC_Algorithm_ResetState(&motor->algo_state);
@@ -99,6 +102,7 @@ void Motor_ClearFaults(MOTOR_DATA *motor) {
     PID_clear(&motor->IdPID);
     PID_clear(&motor->VelPID);
     PID_clear(&motor->PosPID);
+    LADRC_Reset(&motor->ladrc_state);
 
     // 3. 恢复为 IDLE 状态
     motor->state.State_Mode = STATE_MODE_IDLE;

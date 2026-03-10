@@ -79,6 +79,11 @@ typedef enum {
   PARAM_FW_START_VEL = 0x3044, ///< 弱磁起始速度 [rad/s]
   PARAM_COGGING_EN = 0x3045,   ///< 齿槽转矩补偿使能 (0.0/1.0)
   PARAM_COGGING_CALIB = 0x3046, ///< Anticogging calibration trigger (0/1)
+  PARAM_LADRC_ENABLE = 0x3050,  ///< LADRC enable (0.0=PID, 1.0=LADRC)
+  PARAM_LADRC_OMEGA_O = 0x3051, ///< LADRC observer bandwidth [rad/s]
+  PARAM_LADRC_OMEGA_C = 0x3052, ///< LADRC controller bandwidth [rad/s]
+  PARAM_LADRC_B0 = 0x3053,      ///< LADRC nominal plant gain
+  PARAM_LADRC_MAX_OUT = 0x3054, ///< LADRC output limit [A]
 
 } ParamIndex;
 

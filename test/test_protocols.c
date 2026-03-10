@@ -76,6 +76,7 @@ static void test_mit_parse_control_frame(void) {
 
   assert(ProtocolMIT_Parse(&frame, &cmd) == PARSE_OK);
   assert(cmd.control_mode == CONTROL_MODE_MIT);
+  assert(cmd.has_enable_command);
   assert(cmd.enable_motor);
   ASSERT_FLOAT_NEAR(cmd.pos_setpoint, 1.25f, 0.02f);
   ASSERT_FLOAT_NEAR(cmd.vel_setpoint, -3.0f, 0.05f);

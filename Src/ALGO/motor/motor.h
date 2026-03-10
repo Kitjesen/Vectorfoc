@@ -10,6 +10,7 @@
 
 #include "calibration_context.h"
 #include "common.h"
+#include "control/ladrc.h"
 #include "foc/foc_algorithm.h"
 #include "fsm.h"
 #include "motor_hal_api.h"
@@ -213,6 +214,9 @@ typedef struct MOTOR_DATA_s {
   FOC_AlgorithmConfig_t algo_config; /**< FOC算法配置 (增益, 限制) */
   FOC_AlgorithmInput_t algo_input;   /**< FOC算法输入 (传感器, 参考值) */
   FOC_AlgorithmOutput_t algo_output; /**< FOC算法输出 (PWM, 中间变量) */
+  LADRC_Config_t ladrc_config;
+  LADRC_State_t ladrc_state;
+  float ladrc_enable;
 
   /* Advanced Control Configs - Persisted parameters map here */
   struct {

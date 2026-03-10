@@ -9,5 +9,6 @@ void CoggingComp_StartCalibration(MOTOR_DATA *motor);
 void CoggingComp_StopCalibration(MOTOR_DATA *motor);
 bool CoggingComp_IsCalibrating(void);
 bool CoggingComp_IsValid(void);
+uint16_t CoggingComp_GetCalibStep(void);
 
 #endif // COGGING_H

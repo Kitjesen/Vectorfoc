@@ -121,4 +121,24 @@ MOTOR_DATA motor_data = {
     .algo_config = {0},
     .algo_input = {0},
     .algo_output = {0},
+    .ladrc_config =
+        {
+            .omega_o = DEFAULT_LADRC_OMEGA_O,
+            .omega_c = DEFAULT_LADRC_OMEGA_C,
+            .b0 = DEFAULT_LADRC_B0,
+            .max_output = DEFAULT_LADRC_MAX_OUT,
+        },
+    .ladrc_state = {0},
+    .ladrc_enable = (float)DEFAULT_LADRC_ENABLE,
+    .advanced =
+        {
+            .smo_alpha = 0.0f,
+            .smo_beta = 0.0f,
+            .ff_friction = 0.0f,
+            .fw_max_current = 0.0f,
+            .fw_start_velocity = 0.0f,
+            .cogging_comp_enabled = 0.0f,
+            .cogging_calib_request = 0.0f,
+        },
+    .params_updated = true,
 };

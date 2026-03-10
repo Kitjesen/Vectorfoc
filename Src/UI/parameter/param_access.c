@@ -316,6 +316,16 @@ static void CollectParamsToFlashData(FlashParamData *flash_data) {
     flash_data->fw_start_velocity = tmp_float;
   if (Param_ReadFloat(PARAM_COGGING_EN, &tmp_float) == PARAM_OK)
     flash_data->cogging_comp_enabled = tmp_float;
+  if (Param_ReadFloat(PARAM_LADRC_ENABLE, &tmp_float) == PARAM_OK)
+    flash_data->ladrc_enable = tmp_float;
+  if (Param_ReadFloat(PARAM_LADRC_OMEGA_O, &tmp_float) == PARAM_OK)
+    flash_data->ladrc_omega_o = tmp_float;
+  if (Param_ReadFloat(PARAM_LADRC_OMEGA_C, &tmp_float) == PARAM_OK)
+    flash_data->ladrc_omega_c = tmp_float;
+  if (Param_ReadFloat(PARAM_LADRC_B0, &tmp_float) == PARAM_OK)
+    flash_data->ladrc_b0 = tmp_float;
+  if (Param_ReadFloat(PARAM_LADRC_MAX_OUT, &tmp_float) == PARAM_OK)
+    flash_data->ladrc_max_output = tmp_float;
 }
 
 /**
@@ -383,6 +393,11 @@ static void RestoreParamsFromFlashData(const FlashParamData *flash_data) {
   Param_WriteFloat(PARAM_FW_MAX_CUR, flash_data->fw_max_current);
   Param_WriteFloat(PARAM_FW_START_VEL, flash_data->fw_start_velocity);
   Param_WriteFloat(PARAM_COGGING_EN, flash_data->cogging_comp_enabled);
+  Param_WriteFloat(PARAM_LADRC_ENABLE, flash_data->ladrc_enable);
+  Param_WriteFloat(PARAM_LADRC_OMEGA_O, flash_data->ladrc_omega_o);
+  Param_WriteFloat(PARAM_LADRC_OMEGA_C, flash_data->ladrc_omega_c);
+  Param_WriteFloat(PARAM_LADRC_B0, flash_data->ladrc_b0);
+  Param_WriteFloat(PARAM_LADRC_MAX_OUT, flash_data->ladrc_max_output);
 }
 
 ParamResult Param_SaveToFlash(void) {
