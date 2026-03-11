@@ -73,7 +73,7 @@ static ParseResult ParseMotorCtrl(const CAN_Frame *frame, MotorCommand *cmd) {
 
 static ParseResult ParseParamCommand(const CAN_Frame *frame, MotorCommand *cmd,
                                      bool is_write) {
-  if (frame->dlc < 4) {
+  if (frame->dlc < 2) {
     return PARSE_ERR_INVALID_FRAME;
   }
 

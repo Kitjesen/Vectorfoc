@@ -28,6 +28,7 @@ StateMachine g_ds402_state_machine = {0};
 static CAN_Frame s_last_sent_frame = {0};
 static int s_send_count = 0;
 static int s_private_init_count = 0;
+static int s_private_parse_count = 0;
 static int s_executor_call_count = 0;
 static int s_observer_call_count = 0;
 static int s_error_report_count = 0;
@@ -41,6 +42,7 @@ static void reset_test_state(void) {
   memset(&s_next_cmd, 0, sizeof(s_next_cmd));
   s_send_count = 0;
   s_private_init_count = 0;
+  s_private_parse_count = 0;
   s_executor_call_count = 0;
   s_observer_call_count = 0;
   s_error_report_count = 0;
@@ -62,6 +64,7 @@ void ProtocolMIT_Init(void) {}
 
 ParseResult ProtocolPrivate_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   (void)frame;
+  s_private_parse_count++;
   *cmd = s_next_cmd;
   return s_parse_result;
 }
@@ -174,6 +177,7 @@ static void test_get_id_broadcast_sends_uid_response_and_observer_runs(void) {
   Protocol_ProcessRxFrame(&frame);
 
   assert(s_private_init_count == 1);
+  assert(s_private_parse_count == 0);
   assert(s_observer_call_count == 1);
   assert(s_observed_frame.id == frame.id);
   assert(s_send_count == 1);
@@ -187,6 +191,35 @@ static void test_get_id_broadcast_sends_uid_response_and_observer_runs(void) {
   assert(s_last_sent_frame.data[3] == 0x11U);
 }
 
+static void test_get_id_target_match_sends_uid_response_without_parse(void) {
+  CAN_Frame frame = {0};
+
+  frame.id = ((uint32_t)PRIVATE_CMD_GET_ID << 24) | g_can_id;
+  frame.is_extended = true;
+  frame.dlc = 0;
+
+  Protocol_ProcessRxFrame(&frame);
+
+  assert(s_private_parse_count == 0);
+  assert(s_send_count == 1);
+  assert(s_executor_call_count == 0);
+}
+
+static void test_get_id_other_target_is_ignored(void) {
+  CAN_Frame frame = {0};
+
+  frame.id = ((uint32_t)PRIVATE_CMD_GET_ID << 24) | 0x09U;
+  frame.is_extended = true;
+  frame.dlc = 0;
+
+  Protocol_ProcessRxFrame(&frame);
+
+  assert(s_private_parse_count == 0);
+  assert(s_send_count == 0);
+  assert(s_executor_call_count == 0);
+  assert(s_error_report_count == 0);
+}
+
 static void test_parse_ok_path_executes_command(void) {
   CAN_Frame frame = {0};
 
@@ -194,12 +227,13 @@ static void test_parse_ok_path_executes_command(void) {
   s_next_cmd.has_enable_command = true;
   s_next_cmd.enable_motor = true;
 
-  frame.id = 0x123U;
+  frame.id = ((uint32_t)PRIVATE_CMD_MOTOR_ENABLE << 24) | g_can_id;
   frame.is_extended = true;
-  frame.dlc = 8;
+  frame.dlc = 0;
 
   Protocol_ProcessRxFrame(&frame);
 
+  assert(s_private_parse_count == 1);
   assert(s_executor_call_count == 1);
   assert(s_next_cmd.enable_motor);
 }
@@ -208,6 +242,8 @@ int main(void) {
   printf("Running manager tests...\n");
 
   TEST(get_id_broadcast_sends_uid_response_and_observer_runs);
+  TEST(get_id_target_match_sends_uid_response_without_parse);
+  TEST(get_id_other_target_is_ignored);
   TEST(parse_ok_path_executes_command);
 
   printf("All %d manager tests passed.\n", tests_passed);

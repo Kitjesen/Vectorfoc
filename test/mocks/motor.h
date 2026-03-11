@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "fsm.h"
 
 extern uint8_t g_can_id;
 extern uint8_t g_can_baudrate;
@@ -119,5 +120,9 @@ typedef struct MOTOR_DATA_s {
 } MOTOR_DATA;
 
 extern MOTOR_DATA motor_data;
+extern StateMachine g_ds402_state_machine;
+
+void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calib_type);
+void Motor_ClearFaults(MOTOR_DATA *motor);
 
 #endif

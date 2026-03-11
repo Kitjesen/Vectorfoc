@@ -118,6 +118,13 @@ add_executable(test_runner_protocols
 )
 register_test_target(test_runner_protocols)
 
+# --- Target: Inovxio private protocol tests ---
+add_executable(test_runner_inovxio_protocol
+    test_inovxio_protocol.c
+    ${PROJ_ROOT}/Src/COMM/protocol/inovxio/inovxio_protocol.c
+)
+register_test_target(test_runner_inovxio_protocol)
+
 # --- Target: VOFA bus scan helper tests ---
 add_executable(test_runner_vofa_scan
     test_vofa_bus_scan.c

@@ -353,8 +353,9 @@ void Protocol_ProcessRxFrame(const CAN_Frame *frame) {
         memcpy(tx_frame.data, &uid, 8); // 发送前8字节 (word0 + word1)
 
         Protocol_SendFrame(&tx_frame);
-        return; // 处理完毕直接返回，不解析为常规命令
       }
+
+      return; // GET_ID requests are handled here and ignored by other nodes.
     }
   }
 
