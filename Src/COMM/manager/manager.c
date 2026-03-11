@@ -336,8 +336,8 @@ void Protocol_ProcessRxFrame(const CAN_Frame *frame) {
   // 这是协议外的广播命令，用于上位机发现总线上的所有电机
   if (s_current_protocol == PROTOCOL_INOVXIO) {
     uint8_t cmd_type = (frame->id >> 24) & 0x1F;
+    uint8_t target = frame->id & 0xFF;
     if (cmd_type == INOVXIO_CMD_GET_ID) {
-      uint8_t target = frame->id & 0xFF;
       // 仅响应广播或匹配ID的命令
       if (target == g_can_id || target == CAN_BROADCAST_ADDR) {
         CAN_Frame tx_frame;
@@ -356,6 +356,10 @@ void Protocol_ProcessRxFrame(const CAN_Frame *frame) {
       }
 
       return; // GET_ID requests are handled here and ignored by other nodes.
+    }
+
+    if (target != g_can_id) {
+      return;
     }
   }
 

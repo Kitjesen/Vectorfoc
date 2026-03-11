@@ -567,6 +567,10 @@ static void test_build_fault_encodes_fault_code(void) {
   assert(frame.data[1] == 0x34U);
   assert(frame.data[2] == 0x56U);
   assert(frame.data[3] == 0x78U);
+  assert(frame.data[4] == 0x00U);
+  assert(frame.data[5] == 0x00U);
+  assert(frame.data[6] == 0x00U);
+  assert(frame.data[7] == 0x00U);
 }
 
 static void test_build_param_response_encodes_payload(void) {

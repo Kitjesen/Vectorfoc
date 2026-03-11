@@ -238,6 +238,24 @@ static void test_parse_ok_path_executes_command(void) {
   assert(s_next_cmd.enable_motor);
 }
 
+static void test_non_target_private_command_is_ignored(void) {
+  CAN_Frame frame = {0};
+
+  s_parse_result = PARSE_OK;
+  s_next_cmd.has_enable_command = true;
+  s_next_cmd.enable_motor = true;
+
+  frame.id = ((uint32_t)PRIVATE_CMD_MOTOR_ENABLE << 24) | 0x09U;
+  frame.is_extended = true;
+  frame.dlc = 0;
+
+  Protocol_ProcessRxFrame(&frame);
+
+  assert(s_private_parse_count == 0);
+  assert(s_executor_call_count == 0);
+  assert(s_error_report_count == 0);
+}
+
 int main(void) {
   printf("Running manager tests...\n");
 
@@ -245,6 +263,7 @@ int main(void) {
   TEST(get_id_target_match_sends_uid_response_without_parse);
   TEST(get_id_other_target_is_ignored);
   TEST(parse_ok_path_executes_command);
+  TEST(non_target_private_command_is_ignored);
 
   printf("All %d manager tests passed.\n", tests_passed);
   return 0;

@@ -280,6 +280,10 @@ bool ProtocolPrivate_BuildFault(uint32_t fault_code, uint32_t warning_code,
   frame->data[1] = (uint8_t)((fault_code >> 16) & 0xFF);
   frame->data[2] = (uint8_t)((fault_code >> 8) & 0xFF);
   frame->data[3] = (uint8_t)(fault_code & 0xFF);
+  frame->data[4] = 0;
+  frame->data[5] = 0;
+  frame->data[6] = 0;
+  frame->data[7] = 0;
   return true;
 }
 
