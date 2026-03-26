@@ -1,103 +1,86 @@
 /**
  * @file param_storage.h
- * @brief 参数Flash存储 - 双页备份机制
- * 
- * 职责:
- *   - Flash双页备份(Page1主+Page2备份)
- *   - CRC32数据完整性校验
- *   - 掉电保护和数据恢复
- * 
- * 存储机制:
- *   - 魔术字验证: 0x464F4331 ("FOC1")
- *   - CRC32校验确保数据完整性
- *   - 双页冗余,主页损坏自动从备份页恢复
+ * @brief paramFlash -
+ *
+ * :
+ *   - Flash(Page1+Page2)
+ *   - CRC32
+ *   - protection
+ *
+ * :
+ *   - : 0x464F4331 ("FOC1")
+ *   - CRC32
+ *   - ,
  */
-
 #ifndef PARAM_STORAGE_H
 #define PARAM_STORAGE_H
-
 #include <stdint.h>
 #include <stdbool.h>
-
-/* Flash地址定义 (STM32G4系列，最后两页用于参数存储) */
-#define FLASH_PARAM_PAGE1_ADDR    0x0801F800  // 倒数第2页 (2KB)
-#define FLASH_PARAM_PAGE2_ADDR    0x0801FC00  // 倒数第1页 (2KB, 备份)
+/* Flash (STM32G4，param) */
+#define FLASH_PARAM_PAGE1_ADDR    0x0801F800  // 2 (2KB)
+#define FLASH_PARAM_PAGE2_ADDR    0x0801FC00  // 1 (2KB, )
 #define FLASH_PARAM_PAGE_SIZE     2048
-
-/* 参数存储魔术字 */
+/* param */
 #define FLASH_MAGIC_WORD          0x464F4331  // "FOC1"
-#define FLASH_PARAM_VERSION       0x00010001  // v1.0.1 param layout
-
-/* Flash存储数据结构 */
+#define FLASH_MAGIC_WORD_V2       0x464F4332  // "FOC2"
+#define FLASH_PARAM_VERSION       0x00010000  // v1.0.0
+typedef uint8_t FlashPageIndex;  // 0=Page1, 1=Page2
+/* Flash */
 typedef struct {
-    uint32_t magic;           // 魔术字，用于识别有效数据
-    uint32_t version;         // 参数版本号
-    uint32_t crc32;           // CRC32校验值
-    uint32_t reserved;        // 预留字段
-    
-    /* 电机参数 */
-    float motor_rs;           // 定子电阻 [Ω]
-    float motor_ls;           // 定子电感 [H]
-    float motor_flux;         // 磁链 [Wb]
-    uint8_t motor_pole_pairs; // 极对数
-    
-    /* PID参数 */
-    float cur_kp;             // 电流环Kp
-    float cur_ki;             // 电流环Ki
-    float spd_kp;             // 速度环Kp
-    float spd_ki;             // 速度环Ki
-    float pos_kp;             // 位置环Kp
-    float cur_filt_gain;      // 电流滤波系数 (已废弃，保留兼容)
-    float spd_filt_gain;      // 速度滤波系数 (已废弃，保留兼容)
-    
-    /* 限制参数 */
-    float limit_torque;       // 转矩限制 [Nm]
-    float limit_current;      // 电流限制 [A]
-    float limit_speed;        // 速度限制 [rad/s]
-    
-    /* 位置/速度模式参数 */
-    float vel_max;            // PP模式最大速度
-    float acc_set;            // PP模式加速度
-    float acc_rad;            // 速度模式加速度
-    float inertia;            // 转动惯量 [kg·m²]
-    
-    /* CAN配置 */
+    uint32_t magic;           // ，
+    uint32_t version;         // param
+    uint32_t crc32;           // CRC32
+    uint32_t reserved;        //
+    uint32_t generation;      // monotonically increasing write counter
+    uint32_t committed;       // 0=write in progress, 1=write complete
+    /* motorparam */
+    float motor_rs;           //  [Ω]
+    float motor_ls;           //  [H]
+    float motor_flux;         // flux [Wb]
+    uint8_t motor_pole_pairs; // pole pairs
+    /* PIDparam */
+    float cur_kp;             // currentKp
+    float cur_ki;             // currentKi
+    float spd_kp;             // speed/velocityKp
+    float spd_ki;             // speed/velocityKi
+    float pos_kp;             // positionKp
+    float cur_filt_gain;      // currentfilter (，)
+    float spd_filt_gain;      // speed/velocityfilter (，)
+    /* limitparam */
+    float limit_torque;       // limit [Nm]
+    float limit_current;      // currentlimit [A]
+    float limit_speed;        // speed/velocitylimit [rad/s]
+    /* position/speed/velocitymodeparam */
+    float vel_max;            // PPmodespeed/velocity
+    float acc_set;            // PPmodespeed/velocity
+    float acc_rad;            // speed/velocitymodespeed/velocity
+    float inertia;            //  [kg·m²]
+    /* CANconfig */
     uint8_t can_id;           // CAN ID
-    uint8_t can_baudrate;     // CAN波特率标志位 (0=1M, 1=500K, 2=250K)
-    uint8_t protocol_type;    // 协议类型 (0=私有, 1=CANopen, 2=MIT)
-    
-    /* 功能配置 */
-    uint8_t zero_sta;         // 零点标志位 (0: 0~2π, 1: -π~π)
-    float add_offset;         // 零位偏置 [rad]
-    uint8_t damper;           // 阻尼开关
-    uint32_t can_timeout;     // CAN超时阈值 [ms]
-    uint8_t run_mode;         // 运行模式
-    
-    /* 保护配置 */
-    float over_voltage_threshold;      // 过压阈值
-    float under_voltage_threshold;     // 欠压阈值
-    float over_current_threshold;      // 过流阈值
-    float over_temp_threshold;         // 过温阈值
-    
-    /* 高级控制配置 */
-    float smo_alpha;                   // SMO Alpha增益
-    float smo_beta;                    // SMO Beta增益
-    float ff_friction;                 // 前馈摩擦系数
-    float fw_max_current;              // 弱磁最大电流 [A]
-    float fw_start_velocity;           // 弱磁起始速度 [rad/s]
-    float cogging_comp_enabled;        // 齿槽转矩补偿使能 (0.0/1.0)
-    float ladrc_enable;                // LADRC speed loop enable
-    float ladrc_omega_o;               // LADRC observer bandwidth
-    float ladrc_omega_c;               // LADRC controller bandwidth
-    float ladrc_b0;                    // LADRC nominal plant gain
-    float ladrc_max_output;            // LADRC output limit
-    
-    /* 预留空间供将来扩展 (总共不超过2KB) */
-    uint8_t reserved_data[1556];
-    
+    uint8_t can_baudrate;     // CAN (0=1M, 1=500K, 2=250K)
+    uint8_t protocol_type;    //  (0=, 1=CANopen, 2=MIT)
+    /* config */
+    uint8_t zero_sta;         //  (0: 0~2π, 1: -π~π)
+    float add_offset;         //  [rad]
+    uint8_t damper;           //
+    uint32_t can_timeout;     // CANtimeoutthreshold [ms]
+    uint8_t run_mode;         // runningmode
+    /* protectionconfig */
+    float over_voltage_threshold;      // threshold
+    float under_voltage_threshold;     // threshold
+    float over_current_threshold;      // threshold
+    float over_temp_threshold;         // threshold
+    /* config */
+    float smo_alpha;                   // SMO Alphagain
+    float smo_beta;                    // SMO Betagain
+    float ff_friction;                 // feedforward
+    float fw_max_current;              // current [A]
+    float fw_start_velocity;           // speed/velocity [rad/s]
+    float cogging_comp_enabled;        // enable (0.0/1.0)
+    /*  (2KB) */
+    uint8_t reserved_data[1568];
 } __attribute__((packed)) FlashParamData;
-
-/* 存储结果 */
+/*  */
 typedef enum {
     FLASH_STORAGE_OK = 0,
     FLASH_STORAGE_ERR_ERASE,
@@ -107,44 +90,41 @@ typedef enum {
     FLASH_STORAGE_ERR_MAGIC,
     FLASH_STORAGE_ERR_VERSION,
     FLASH_STORAGE_ERR_LOCKED,
+    FLASH_STORAGE_ERR_CORRUPT,
 } FlashStorageResult;
-
 /**
- * @brief 初始化参数存储模块
+ * @brief initparam
  */
 void ParamStorage_Init(void);
-
 /**
- * @brief 保存参数到Flash
- * @param data 参数数据结构
- * @return FlashStorageResult 存储结果
+ * @brief paramFlash
+ * @param data param
+ * @return FlashStorageResult
  */
 FlashStorageResult ParamStorage_Save(const FlashParamData *data);
-
 /**
- * @brief 从Flash加载参数
- * @param data 输出参数数据结构
- * @return FlashStorageResult 加载结果
+ * @brief Flashparam
+ * @param data outputparam
+ * @return FlashStorageResult
  */
 FlashStorageResult ParamStorage_Load(FlashParamData *data);
-
 /**
- * @brief 擦除Flash中的参数
- * @return FlashStorageResult 操作结果
+ * @brief Flashparam
+ * @return FlashStorageResult
  */
 FlashStorageResult ParamStorage_Erase(void);
-
 /**
- * @brief 检查Flash中是否有有效参数
- * @return true=有效, false=无效
+ * @brief checkFlashparam
+ * @return true=, false=
  */
 bool ParamStorage_HasValidData(void);
-
 /**
- * @brief 获取存储统计信息
- * @param write_count 输出写入次数
- * @param last_crc 输出最后一次CRC值
+ * @brief get
+ * @param write_count output
+ * @param last_crc outputCRC
  */
 void ParamStorage_GetStats(uint32_t *write_count, uint32_t *last_crc);
-
+FlashStorageResult ParamStorage_Save_v2(const FlashParamData *data);
+FlashStorageResult ParamStorage_Load_v2(FlashParamData *data);
+FlashPageIndex ParamStorage_GetActivePage(void);
 #endif /* PARAM_STORAGE_H */

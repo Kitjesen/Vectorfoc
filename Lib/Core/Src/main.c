@@ -6,8 +6,13 @@
  */
 
 #include "main.h"
-#include "adc.h"
 #include "cmsis_os.h"
+#include "init/app_init.h"
+
+#ifdef BOARD_XSTAR
+#include "xstar_bsp.h"
+#else
+#include "adc.h"
 #include "crc.h"
 #include "dma.h"
 #include "fdcan.h"
@@ -17,11 +22,10 @@
 #include "tim.h"
 #include "usart.h"
 #include "usb_device.h"
-
-#include "init/app_init.h"
-
-/* Forward declarations */
+/* Forward declarations (VectorFOC 板 CubeMX 生成) */
 void SystemClock_Config(void);
+#endif /* BOARD_XSTAR */
+
 void MX_FREERTOS_Init(void);
 
 /**
@@ -30,9 +34,20 @@ void MX_FREERTOS_Init(void);
  */
 int main(void) {
   HAL_Init();
-  SystemClock_Config();
 
-  /* Initialize all configured peripherals */
+#ifdef BOARD_XSTAR
+  /* X-STAR-S：BSP 内含时钟+外设初始化，无需 CubeMX 生成的 MX_* */
+  XStar_BSP_Init();
+
+  /* ---- 开机 PB5 LED 诊断：快闪 3 次证明 MCU 已启动 ---- */
+  for (int i = 0; i < 6; i++) {
+    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
+    HAL_Delay(150);  /* 150ms on/off = 明显可见 */
+  }
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET); /* 闪完保持亮 */
+#else
+  /* VectorFOC：CubeMX 生成的标准初始化序列 */
+  SystemClock_Config();
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_ADC1_Init();
@@ -45,9 +60,9 @@ int main(void) {
   MX_USART1_UART_Init();
   MX_CRC_Init();
   MX_RNG_Init();
-
   void MX_IWDG_Init(void);
   MX_IWDG_Init();
+#endif /* BOARD_XSTAR */
 
   /* Application-level initialization (motor, comm, safety, etc.) */
   App_Init();

@@ -1,117 +1,37 @@
 /********************************************************************************
  * @file        : log.c
  * @author      : INOVXIO
- * @brief       : 该文件实现了日志记录功能，包括日志初始化、不同级别日志输出等功能。
+ * @brief       : ，init、output。
  * @version     : V1.0
  * @date        : 2025 - 1 - 11
  *
  * @details:
- *  - 本文件定义了日志记录相关的函数，通过 `LogInit` 函数初始化日志系统，使其与特定的串口实例相关联。
- *  - `LOG_PROTO` 函数是核心的日志输出函数，它根据传入的日志级别（如 `LOG_DEBUG`、`LOG_INFO`、`LOG_WARNING`、`LOG_ERROR`），
- *    格式化日志信息，并通过串口以DMA模式发送出去。
- *  - 同时，通过宏定义 `LOGDEBUG`、`LOGINFO`、`LOGWARNING` 和 `LOGERROR` 为不同级别的日志输出提供了便捷的调用方式。
+ *  - phase， `LogInit` init，phase。
+ *  - `LOG_PROTO` output，（ `LOG_DEBUG`、`LOG_INFO`、`LOG_WARNING`、`LOG_ERROR`），
+ *    ，DMAmode。
+ *  - ， `LOGDEBUG`、`LOGINFO`、`LOGWARNING`  `LOGERROR` output。
  *
  * @note:
- *  - 在使用本日志模块前，需确保相关串口驱动及配置已正确初始化，特别是与 `log_usart_instance` 相关的串口配置。
- *  - 日志缓冲区大小由 `LOG_BUFFER_SIZE` 宏定义，当前设置为1024字节。若日志信息过长，可能会导致数据截断，使用时需注意。
- *  - 对于 `USARTSend` 函数，假设其已正确实现且在DMA模式下能可靠地发送数据。若该函数返回错误，当前代码仅预留了错误处理位置，
- *    实际应用中需根据需求完善错误处理逻辑。
+ *  - ，phasedriverconfiginit， `log_usart_instance` phaseconfig。
+ *  -  `LOG_BUFFER_SIZE` ，set1024。，，。
+ *  -  `USARTSend` ，DMAmode。error，errorposition，
+ *    actualerror。
  *
  * @history:
  *  V1.0:
- *    - 修改注释，完善功能。对函数功能、使用注意事项等进行了详细说明，提高代码的可读性和可维护性。
+ *    - ，。、，。
  *
  * Copyright (c) 2025 INOVXIO. All rights reserved.
  ********************************************************************************/
-
 #include "bsp_log.h"
-#include <stddef.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
-
 static USARTInstance *log_usart_instance;
-
-static const char *LogLevelTag(LOG_LEVEL level) {
-  switch (level) {
-  case LOG_DEBUG:
-    return "DEBUG";
-  case LOG_INFO:
-    return "INFO";
-  case LOG_WARNING:
-    return "WARN";
-  case LOG_ERROR:
-    return "ERROR";
-  default:
-    return NULL;
-  }
-}
-
-static const char *LogBaseName(const char *path) {
-  const char *base = path;
-  const char *slash = NULL;
-  const char *backslash = NULL;
-
-  if (path == NULL) {
-    return "(null)";
-  }
-
-  slash = strrchr(path, '/');
-  backslash = strrchr(path, '\\');
-  if (slash != NULL && slash[1] != '\0') {
-    base = slash + 1;
-  }
-  if (backslash != NULL && backslash[1] != '\0' && backslash + 1 > base) {
-    base = backslash + 1;
-  }
-  return base;
-}
-
-static size_t LogAppendText(char *buf, size_t buf_size, size_t offset,
-                            const char *text) {
-  size_t available = 0;
-  size_t copy_len = 0;
-
-  if (buf == NULL || buf_size == 0) {
-    return 0;
-  }
-
-  if (offset >= buf_size - 1) {
-    buf[buf_size - 1] = '\0';
-    return buf_size - 1;
-  }
-
-  if (text == NULL) {
-    text = "(null)";
-  }
-
-  available = buf_size - offset - 1;
-  copy_len = strlen(text);
-  if (copy_len > available) {
-    copy_len = available;
-  }
-
-  memcpy(buf + offset, text, copy_len);
-  buf[offset + copy_len] = '\0';
-  return offset + copy_len;
-}
-
-static size_t LogAppendInt(char *buf, size_t buf_size, size_t offset,
-                           int value) {
-  char line_buf[16];
-  int written = snprintf(line_buf, sizeof(line_buf), "%d", value);
-
-  if (written < 0) {
-    return offset;
-  }
-
-  return LogAppendText(buf, buf_size, offset, line_buf);
-}
-
 /**
- * @brief          注册LOG实例
- * @param[in]      log_config: LOG实例配置
- * @retval         LOG实例
+ * @brief          LOG
+ * @param[in]      log_config: LOGconfig
+ * @retval         LOG
  */
 void LogInit(UART_HandleTypeDef *log_config)
 {
@@ -119,50 +39,44 @@ void LogInit(UART_HandleTypeDef *log_config)
   config.usart_handle = log_config;
   log_usart_instance = USARTRegister(&config);
 }
-
 /**
- * @brief          日志输出函数
+ * @brief          output
  *
- * @param[in]      fmt:          待发送的数据格式
- * @param[in]      level:        待发送的日志级别
- * @param[in]      file:         待发送的数据文件名
- * @param[in]      line:         待发送的数据行号
- * @param[in]      func:         待发送的数据函数名
+ * @param[in]      fmt:
+ * @param[in]      level:
+ * @param[in]      file:
+ * @param[in]      line:
+ * @param[in]      func:
  *
  * @retval         note
  */
 void LOG_PROTO(const char *fmt, LOG_LEVEL level, const char *file,
                int line, const char *func, ...)
 {
-  const char *level_tag = LogLevelTag(level);
   char tmp[LOG_BUFFER_SIZE];
   char buf[LOG_BUFFER_SIZE];
-  size_t used = 0;
-
-  if (level_tag == NULL || log_usart_instance == NULL) {
-    return;
-  }
-
-  tmp[0] = '\0';
-  buf[0] = '\0';
-
+  memset(tmp, 0, sizeof(tmp));
+  memset(buf, 0, sizeof(buf));
   va_list args;
   va_start(args, func);
-  vsnprintf(tmp, sizeof(tmp), fmt, args);
+  vsnprintf(tmp, sizeof(tmp) - 1, fmt, args);
   va_end(args);
-
-  used = LogAppendText(buf, sizeof(buf), used, "[");
-  used = LogAppendText(buf, sizeof(buf), used, level_tag);
-  used = LogAppendText(buf, sizeof(buf), used, "] <");
-  used = LogAppendText(buf, sizeof(buf), used, LogBaseName(file));
-  used = LogAppendText(buf, sizeof(buf), used, "> | <");
-  used = LogAppendInt(buf, sizeof(buf), used, line);
-  used = LogAppendText(buf, sizeof(buf), used, "> | <");
-  used = LogAppendText(buf, sizeof(buf), used, func);
-  used = LogAppendText(buf, sizeof(buf), used, ">: ");
-  used = LogAppendText(buf, sizeof(buf), used, tmp);
-  used = LogAppendText(buf, sizeof(buf), used, "\r\n");
-  (void)used;
-
-  USARTSend(log_usart_instance, (uint8_t *)buf, strlen(buf), USART_TRANSFER_IT);
+  switch (level)
+  {
+  case LOG_DEBUG:
+    snprintf(buf, sizeof(buf), "[DEBUG] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
+    break;
+  case LOG_INFO:
+    snprintf(buf, sizeof(buf), "[INFO] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
+    break;
+  case LOG_WARNING:
+    snprintf(buf, sizeof(buf), "[WARN] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
+    break;
+  case LOG_ERROR:
+    snprintf(buf, sizeof(buf), "[ERROR] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
+    break;
+  default:
+    return;
+  }
+  USARTSend(log_usart_instance, (uint8_t *)buf, strlen(buf), USART_TRANSFER_BLOCKING);
 }

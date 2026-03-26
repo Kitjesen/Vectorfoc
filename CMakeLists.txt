@@ -80,6 +80,15 @@ add_definitions(
 set(MCU_FLAGS "-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb")
 add_definitions(-DSTM32G431xx -DUSE_HAL_DRIVER -DSTM32G4xx)
 
+# ---- Board selection ----
+option(BOARD_XSTAR "Build firmware for X-STAR-S STM32G431RBT6 board" OFF)
+if(BOARD_XSTAR)
+    add_definitions(-DBOARD_XSTAR)
+    message(STATUS "Target board: X-STAR-S (STM32G431RBT6, 170MHz, Hall sensor)")
+else()
+    message(STATUS "Target board: VectorFOC (STM32G431CBU6, 168MHz, MT6816 encoder)")
+endif()
+
 # Build types
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
@@ -122,6 +131,7 @@ include_directories(
     Src/HAL/interface
     Src/HAL/stm32g4
     Src/HAL/bsp
+    Src/HAL/bsp/xstar
     Src/HAL/encoder
     Src/ALGO
     Src/ALGO/motor
@@ -176,8 +186,16 @@ list(APPEND SOURCES
 # Startup file
 list(APPEND SOURCES "Lib/startup_stm32g431xx.s")
 
-# Linker script (use App linker script with bootloader support)
-set(LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/Lib/stm32g431xx_app.ld")
+# Linker script
+# BOARD_XSTAR: X-STAR-S 无自定义 bootloader，从 0x08000000 直接烧录
+# 默认 VectorFOC: 使用 bootloader，app 从 0x08004000 起始
+if(BOARD_XSTAR)
+    set(LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/Lib/stm32g431xx_flash.ld")
+    message(STATUS "Linker script: stm32g431xx_flash.ld (standalone, 0x08000000)")
+else()
+    set(LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/Lib/stm32g431xx_app.ld")
+    message(STATUS "Linker script: stm32g431xx_app.ld (app with bootloader, 0x08004000)")
+endif()
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${MCU_FLAGS} -T${LINKER_SCRIPT} -Wl,--gc-sections -Wl,--print-memory-usage -Wl,-Map=${CMAKE_PROJECT_NAME}.map")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --specs=nano.specs --specs=nosys.specs")

@@ -6,19 +6,25 @@
 #include "app_init.h"
 #include "board_config.h"
 #include "bsp_adc.h"
+#ifdef BOARD_XSTAR
+#include "hall_encoder.h"
+#include "abz_encoder.h"
+#include "xstar_bsp.h"
+#endif
 #include "bsp_can.h"
-#include "can_transport.h" // Transport layer adapter
+#include "can_transport.h"
 #include "bsp_init.h"
 #include "bsp_log.h"
 #include "error_manager.h"
 #include "error_types.h"
 #include "hal_abstraction.h"
-#include "hal_pwm.h" // For MHAL_PWM_Enable
+#include "hal_encoder.h"
+#include "hal_pwm.h"
 #include "led.h"
 #include "manager.h"
 #include "motor.h"
-#include "safety_control.h"
 #include "param_access.h"
+#include "safety_control.h"
 
 static bool App_ReportFaultCallback(uint32_t fault_bits, void *motor) {
   return Protocol_ReportFaultCallback(fault_bits, (MOTOR_DATA *)motor);
@@ -33,34 +39,48 @@ static ProtocolType App_GetBootProtocol(void) {
 }
 
 void App_Init(void) {
-  // interrupt,initinterrupt
   __disable_irq();
-  DWT_Delay(0.016f); // MT681616msoutput
-  BSPInit();         // initDWT
-  LogInit(&HW_UART_DEBUG);  // Initialize debug log
-  // errorinit
+#ifdef BOARD_XSTAR
+  DWT_Delay(0.001f);
+#else
+  DWT_Delay(0.016f);
+#endif
+  BSPInit();
+  LogInit(&HW_UART_DEBUG);
   ErrorManager_Init();
-  adc_bsp_init(); // initADC
+  adc_bsp_init();
   if (MHAL_PWM_Enable() != 0) {
     ERROR_REPORT(ERROR_HW_PWM_INIT, "PWM start failed");
     Error_Handler();
   }
+
   RGB_DisplayColorById(0);
-  /* ===== System Initialization ===== */
-  // 0. Safety & Detection System
   Detection_Init(NULL);
   Safety_Init(NULL);
   Safety_RegisterFaultCallback(App_ReportFaultCallback);
-  // 1. Parameter System
+
   Param_SystemInitOnce();
-  // 2. Communication: CAN BSP + Transport + Protocol Manager
   BSP_CAN_Init();
   CAN_Transport_Init();
   Protocol_RegisterTransport(CAN_Transport_GetInterface());
   Protocol_Init(App_GetBootProtocol());
-  // 3. DS402 State Machine
   StateMachine_Init(&g_ds402_state_machine);
-  // 4. Motor Initialization
+
+#ifdef BOARD_XSTAR
+  if (MHAL_Encoder_Init() != 0) {
+    ERROR_REPORT(ERROR_MOTOR_ENCODER_SPI, "X-STAR encoder init failed");
+    Error_Handler();
+  }
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
+  Hall_SetPolePairs((uint8_t)motor_data.parameters.pole_pairs);
+#else
+  Abz_SetPolePairs((uint8_t)motor_data.parameters.pole_pairs);
+#endif
+#endif
+
   Init_Motor_No_Calib(&motor_data);
+  /* Open-loop from the start: prevents false encoder/voltage faults
+   * before Hall signals stabilise and Vbus filter ramps up. */
+  motor_data.state.Control_Mode = CONTROL_MODE_OPEN;
   __enable_irq();
 }

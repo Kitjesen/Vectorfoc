@@ -2,41 +2,53 @@
  * @file motor_data.c
  * @brief Global motor data and state definitions
  */
-
 #include "fsm.h"
 #include "motor.h"
 #include "config.h"
 #include "foc/foc_algorithm.h"
 #include "motor_hal_api.h"
-
+#ifdef BOARD_XSTAR
+#include "board_config_xstar.h"
+#include "hall_encoder.h"
+#include "abz_encoder.h"
+extern Motor_HAL_Handle_t xstar_hal_handle;
+#else
 #include "mt6816_encoder.h"
-
 extern Motor_HAL_Handle_t g431_hal_handle;
 extern MT6816_Handle_t encoder_data;
-
-/* 定义全局DS402状态机实例 */
+#endif
+/* DS402state */
 StateMachine g_ds402_state_machine;
-
-/* 定义全局CAN配置 */
+/* CANconfig */
 uint8_t g_can_id = DEFAULT_CAN_ID;
 uint8_t g_can_baudrate = DEFAULT_CAN_BAUDRATE;
 uint8_t g_protocol_type = DEFAULT_PROTOCOL_TYPE;
 uint32_t g_can_timeout_ms = DEFAULT_CAN_TIMEOUT_MS;
-
-/* 定义全局功能配置 */
+/* config */
 uint8_t g_zero_sta = DEFAULT_ZERO_STA;
 float g_add_offset = DEFAULT_ADD_OFFSET;
 uint8_t g_damper_enable = DEFAULT_DAMPER_ENABLE;
 uint8_t g_run_mode = DEFAULT_RUN_MODE;
-
 /**
- * @brief 全局电机数据结构
+ * @brief motor
  */
 MOTOR_DATA motor_data = {
     .components =
         {
+#ifdef BOARD_XSTAR
+            .hal = &xstar_hal_handle,
+#else
             .hal = &g431_hal_handle,
+#endif
+#ifdef BOARD_XSTAR
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
+            .encoder = &hall_data,
+#else
+            .encoder = &abz_data,
+#endif
+#else
             .encoder = &encoder_data,
+#endif
         },
     .state =
         {
@@ -118,9 +130,29 @@ MOTOR_DATA motor_data = {
         },
     // New Architecture Initialization
     .algo_state = {0},
-    .algo_config = {0},
+    .algo_config =
+        {
+            .Rs = DEFAULT_RS,
+            .Ls = DEFAULT_LS,
+            .flux = DEFAULT_FLUX,
+            .pole_pairs = DEFAULT_POLE_PAIRS,
+            .Kp_current_d = DEFAULT_CURRENT_P_GAIN,
+            .Ki_current_d = DEFAULT_CURRENT_I_GAIN,
+            .Kp_current_q = DEFAULT_CURRENT_P_GAIN,
+            .Ki_current_q = DEFAULT_CURRENT_I_GAIN,
+            .Ts_current = CURRENT_MEASURE_PERIOD,
+            .voltage_limit = DEFAULT_VOLTAGE_LIMIT,
+            .current_limit = DEFAULT_CURRENT_LIMIT,
+            .enable_decoupling = true,
+            .decoupling_gain = 1.0f,
+            .Kb_current = 1.0f,                  /* Back-calculation gain */
+            .current_filter_fc = 0.0f,           /* Disabled: avoid phase lag, rely on hardware RC filter */
+            .deadtime_i_thresh = 0.2f,           /* 电流过零阈值 [A]，ADC 噪声的 2~3 倍 */
+            .deadtime_Vdiode = 0.7f,             /* 体二极管压降 [V] */
+        },
     .algo_input = {0},
     .algo_output = {0},
+    // [FIX] 初始化 LADRC 配置
     .ladrc_config =
         {
             .omega_o = DEFAULT_LADRC_OMEGA_O,
@@ -130,6 +162,7 @@ MOTOR_DATA motor_data = {
         },
     .ladrc_state = {0},
     .ladrc_enable = (float)DEFAULT_LADRC_ENABLE,
+    // [FIX] 初始化高级控制参数
     .advanced =
         {
             .smo_alpha = 0.0f,
@@ -140,5 +173,6 @@ MOTOR_DATA motor_data = {
             .cogging_comp_enabled = 0.0f,
             .cogging_calib_request = 0.0f,
         },
+    .calib_ctx = {0},
     .params_updated = true,
 };

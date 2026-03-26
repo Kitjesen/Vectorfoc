@@ -22,7 +22,11 @@
 #include "usbd_cdc_if.h"
 
 /* USER CODE BEGIN INCLUDE */
+#ifdef BOOTLOADER_BUILD
+#include "boot_protocol.h"
+#else
 #include "vofa.h"
+#endif
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -266,9 +270,13 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
   // Ensure the buffer is not empty
   if (*Len != 0 && *Buf != 0)
   {
-    // Convert uint32_t to uint16_t and pass it to vofa_Receive
+    // Convert uint32_t to uint16_t and pass it to handler
     uint16_t len16 = (*Len > UINT16_MAX) ? UINT16_MAX : (uint16_t)*Len;
+#ifdef BOOTLOADER_BUILD
+    BootProto_ProcessData(Buf, len16);
+#else
     vofa_Receive(Buf, len16);
+#endif
   }
 
   return (USBD_OK);

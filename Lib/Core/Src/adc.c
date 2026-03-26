@@ -123,8 +123,12 @@ void MX_ADC2_Init(void) {
 }
 
 /* Shared ADC12 clock enable reference count */
+#ifndef BOARD_XSTAR
 static uint32_t HAL_RCC_ADC12_CLK_ENABLED = 0;
+#endif
 
+/* X-STAR-S 使用 xstar_bsp.c 中的 HAL_ADC_MspInit，此处跳过 */
+#ifndef BOARD_XSTAR
 void HAL_ADC_MspInit(ADC_HandleTypeDef *adcHandle) {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
@@ -212,3 +216,4 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef *adcHandle) {
     HAL_DMA_DeInit(adcHandle->DMA_Handle);
   }
 }
+#endif /* BOARD_XSTAR */

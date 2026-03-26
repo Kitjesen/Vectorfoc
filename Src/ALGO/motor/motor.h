@@ -1,103 +1,96 @@
 /**
  * @file motor.h
- * @brief 电机核心控制模块头文件
+ * @brief motor
  *
- * 定义了电机控制相关的数据结构、状态枚举和核心函数接口。
+ * motorphase、state。
  */
-
 #ifndef MOTOR_H
 #define MOTOR_H
-
 #include "calibration_context.h"
 #include "common.h"
-#include "control/ladrc.h"
 #include "foc/foc_algorithm.h"
 #include "fsm.h"
 #include "motor_hal_api.h"
-
+#include "control/ladrc.h"
 #include "pid.h"
+#ifndef BOARD_XSTAR
+#include "mt6816_encoder.h"
+#endif
 #include <math.h>
-
 /**
- * @brief 全局 CAN ID
+ * @brief  CAN ID
  */
-/* 全局CAN配置 */
+/* CANconfig */
 extern uint8_t g_can_id;
 extern uint8_t g_can_baudrate;
 extern uint8_t g_protocol_type;
 extern uint32_t g_can_timeout_ms;
-
-/* 全局功能配置 */
+/* config */
 extern uint8_t g_zero_sta;
 extern float g_add_offset;
 extern uint8_t g_damper_enable;
 extern uint8_t g_run_mode;
-
 /**
- * @brief 控制模式枚举
+ * @brief mode
  *
- * 定义电机的各种控制模式，包括开环、力矩、速度、位置及其组合模式。
+ * motormode，open loop、、speed/velocity、positionmode。
  */
 typedef enum {
-  CONTROL_MODE_OPEN = 0,          /**< 开环模式 */
-  CONTROL_MODE_TORQUE = 1,        /**< 力矩控制模式 */
-  CONTROL_MODE_VELOCITY = 2,      /**< 速度控制模式 */
-  CONTROL_MODE_POSITION = 3,      /**< 位置控制模式 */
-  CONTROL_MODE_VELOCITY_RAMP = 4, /**< 速度斜坡控制模式 */
-  CONTROL_MODE_POSITION_RAMP = 5, /**< 位置斜坡控制模式 */
-  CONTROL_MODE_MIT = 6,           /**< MIT阻抗控制模式 */
+  CONTROL_MODE_OPEN = 0,          /**< open loopmode */
+  CONTROL_MODE_TORQUE = 1,        /**< mode */
+  CONTROL_MODE_VELOCITY = 2,      /**< speed/velocitymode */
+  CONTROL_MODE_POSITION = 3,      /**< positionmode */
+  CONTROL_MODE_VELOCITY_RAMP = 4, /**< speed/velocitymode */
+  CONTROL_MODE_POSITION_RAMP = 5, /**< positionmode */
+  CONTROL_MODE_MIT = 6,           /**< MITmode */
 } CONTROL_MODE;
-
 /**
- * @brief 校准子状态枚举
+ * @brief calibrationstate
  *
- * 定义电机校准过程中的各个子状态。
+ * motorcalibrationstate。
  */
 typedef enum {
-  SUB_STATE_IDLE = 0,  /**< 空闲状态 */
-  CURRENT_CALIBRATING, /**< 电流校准状态 */
-  RSLS_CALIBRATING,    /**< 电阻电感校准状态 */
-  FLUX_CALIBRATING,    /**< 磁链校准状态 */
+  SUB_STATE_IDLE = 0,  /**< idlestate */
+  CURRENT_CALIBRATING, /**< currentcalibrationstate */
+  RSLS_CALIBRATING,    /**< calibrationstate */
+  FLUX_CALIBRATING,    /**< fluxcalibrationstate */
 } SUB_STATE;
-
 /**
- * @brief 校准状态机详细状态
+ * @brief calibrationstatestate
  */
 typedef enum {
   CS_STATE_IDLE = 0,
-  CS_MOTOR_R_START,     /**< 电阻校准开始 */
-  CS_MOTOR_R_LOOP,      /**< 电阻校准循环 */
-  CS_MOTOR_R_END,       /**< 电阻校准结束 */
-  CS_MOTOR_L_START,     /**< 电感校准开始 */
-  CS_MOTOR_L_LOOP,      /**< 电感校准循环 */
-  CS_MOTOR_L_END,       /**< 电感校准结束 */
-  CS_DIR_PP_START,      /**< 方向/极对数校准开始 */
-  CS_DIR_PP_LOOP,       /**< 方向/极对数校准循环 */
-  CS_DIR_PP_END,        /**< 方向/极对数校准结束 */
-  CS_ENCODER_START,     /**< 编码器校准开始 */
-  CS_ENCODER_CW_LOOP,   /**< 编码器顺时针旋转循环 */
-  CS_ENCODER_CCW_LOOP,  /**< 编码器逆时针旋转循环 */
-  CS_ENCODER_END,       /**< 编码器校准结束 */
-  CS_FLUX_START,        /**< 磁链校准开始 */
-  CS_FLUX_LOOP,         /**< 磁链校准循环 */
-  CS_FLUX_END,          /**< 磁链校准结束 */
-  CS_REPORT_OFFSET_LUT, /**< 上报偏移量查找表 */
+  CS_MOTOR_R_START,     /**< calibration */
+  CS_MOTOR_R_LOOP,      /**< calibration */
+  CS_MOTOR_R_END,       /**< calibration */
+  CS_MOTOR_L_START,     /**< calibration */
+  CS_MOTOR_L_LOOP,      /**< calibration */
+  CS_MOTOR_L_END,       /**< calibration */
+  CS_DIR_PP_START,      /**< /pole pairscalibration */
+  CS_DIR_PP_LOOP,       /**< /pole pairscalibration */
+  CS_DIR_PP_END,        /**< /pole pairscalibration */
+  CS_ENCODER_START,     /**< encodercalibration */
+  CS_ENCODER_CW_LOOP,   /**< encoder */
+  CS_ENCODER_CCW_LOOP,  /**< encoder */
+  CS_ENCODER_END,       /**< encodercalibration */
+  CS_FLUX_START,        /**< fluxcalibration */
+  CS_FLUX_LOOP,         /**< fluxcalibration */
+  CS_FLUX_END,          /**< fluxcalibration */
+  CS_REPORT_OFFSET_LUT, /**< offset */
 } CS_STATE;
-
 /**
- * @brief 电机运行状态模式
+ * @brief motorrunningstatemode
  */
 typedef enum {
-  STATE_MODE_IDLE = 0,  /**< 空闲模式 */
-  STATE_MODE_DETECTING, /**< 检测模式 */
-  STATE_MODE_RUNNING,   /**< 运行模式 */
-  STATE_MODE_GUARD,     /**< 保护模式 */
+  STATE_MODE_IDLE = 0,  /**< idlemode */
+  STATE_MODE_DETECTING, /**< mode */
+  STATE_MODE_RUNNING,   /**< runningmode */
+  STATE_MODE_GUARD,     /**< protectionmode */
 } STATE_MODE;
-
 /**
- * @brief 故障状态枚举
- * @deprecated 请使用 Safety_GetActiveFaultBits() 获取完整故障位掩码
- * @note 此枚举只能表示单一故障，已废弃但保留用于兼容旧代码
+ * @brief faultstate
+ * @deprecated  Safety_GetActiveFaultBits() getfault
+ * @note fault，
  */
 typedef enum {
   FAULT_STATE_NORMAL = 0,
@@ -108,116 +101,103 @@ typedef enum {
   FAULT_STATE_SPEEDING,
   FAULT_STATE_ENCODER_LOSS,
 } FAULT_STATE;
-
 /**
- * @brief 电机组件结构体：HAL 与编码器句柄
+ * @brief motor：HAL encoder
  */
 typedef struct {
-  const Motor_HAL_Handle_t *hal; /**< 硬件抽象层句柄 */
-  void *encoder;                 /**< 具体编码器句柄 (用于校准等特有操作) */
+  const Motor_HAL_Handle_t *hal; /**<  */
+  void *encoder;                 /**< encoder (calibration) */
 } MOTOR_COMPONENTS;
-
 /**
- * @brief 宏定义：将组件中的编码器转换为 MT6816_Handle_t 类型
- * @warning 假设编码器类型为 MT6816_Handle_t*
+ * @brief ：encoder MT6816_Handle_t
+ * @warning encoder MT6816_Handle_t*
  */
 #define ENC(m) ((MT6816_Handle_t *)((m)->components.encoder))
-
 /**
- * @brief 电机物理参数结构体
+ * @brief motorparam
  */
 typedef struct {
-  float Rs;       /**< 电阻 [Ohm] */
-  float Ls;       /**< 电感 [H] */
-  float flux;     /**< 磁链 [V·s] */
-  int pole_pairs; /**< 极对数 */
+  float Rs;       /**<  [Ohm] */
+  float Ls;       /**<  [H] */
+  float flux;     /**< flux [V·s] */
+  int pole_pairs; /**< pole pairs */
 } MOTOR_PARAMETERS;
-
 /**
- * @brief 电机控制器参数结构体
+ * @brief motorparam
  */
 typedef struct {
-  float inertia;              /**<转动惯量 [A/(turn/s^2)] */
-  float torque_ramp_rate;     /**< 力矩斜率 [Nm/s] */
-  float vel_ramp_rate;        /**< 速度斜率 [(turn/s)/s] */
-  float traj_vel;             /**< 轨迹速度 [turn/s] */
-  float traj_accel;           /**< 轨迹加速度 [(turn/s)/s] */
-  float traj_decel;           /**< 轨迹减速度 [(turn/s)/s] */
-  float vel_limit;            /**< 速度限制 [turn/s] */
-  float torque_const;         /**< 力矩常数 [Nm/A] */
-  float torque_limit;         /**< 力矩限制 [Nm] */
-  float current_limit;        /**< 电流限制 [A] */
-  float voltage_limit;        /**< 电压限制 [V] */
-  float current_ctrl_p_gain;  /**< (自动) 电流环 P 增益 */
-  float current_ctrl_i_gain;  /**< (自动) 电流环 I 增益 */
-  int current_ctrl_bandwidth; /**< 电流环带宽 [rad/s] (100~2000) */
-
-  float input_position; /**< 输入位置 */
-  float input_velocity; /**< 输入速度 */
-  float input_torque;   /**< 输入力矩 */
-  float input_current;  /**< 输入电流 */
-
-  float pos_setpoint;    /**< 位置设定值 */
-  float vel_setpoint;    /**< 速度设定值 */
-  float torque_setpoint; /**< 力矩设定值 */
-
-  // MIT阻抗控制参数
-  float mit_kp;      /**< MIT位置刚度 [Nm/rad] */
-  float mit_kd;      /**< MIT阻尼系数 [Nm·s/rad] */
-  float mit_pos_des; /**< MIT期望位置 [rad] */
-  float mit_vel_des; /**< MIT期望速度 [rad/s] */
-
-  volatile bool input_updated; /**< 输入参数更新标志 */
+  float inertia;              /**< [A/(turn/s^2)] */
+  float torque_ramp_rate;     /**<  [Nm/s] */
+  float vel_ramp_rate;        /**< speed/velocity [(turn/s)/s] */
+  float traj_vel;             /**< speed/velocity [turn/s] */
+  float traj_accel;           /**< speed/velocity [(turn/s)/s] */
+  float traj_decel;           /**< speed/velocity [(turn/s)/s] */
+  float vel_limit;            /**< speed/velocitylimit [turn/s] */
+  float torque_const;         /**<  [Nm/A] */
+  float torque_limit;         /**< limit [Nm] */
+  float current_limit;        /**< currentlimit [A] */
+  float voltage_limit;        /**< voltagelimit [V] */
+  float current_ctrl_p_gain;  /**< () current P gain */
+  float current_ctrl_i_gain;  /**< () current I gain */
+  int current_ctrl_bandwidth; /**< current [rad/s] (100~2000) */
+  float input_position; /**< inputposition */
+  float input_velocity; /**< inputspeed/velocity */
+  float input_torque;   /**< input */
+  float input_current;  /**< inputcurrent */
+  float pos_setpoint;    /**< position */
+  float vel_setpoint;    /**< speed/velocity */
+  float torque_setpoint; /**<  */
+  // MITparam
+  float mit_kp;      /**< MITposition [Nm/rad] */
+  float mit_kd;      /**< MIT [Nm·s/rad] */
+  float mit_pos_des; /**< MITposition [rad] */
+  float mit_vel_des; /**< MITspeed/velocity [rad/s] */
+  volatile bool input_updated; /**< inputparamupdate */
 } MOTOR_CONTROLLER;
-
 /**
- * @brief 电机状态结构体
+ * @brief motorstate
  */
 typedef struct {
-  STATE_MODE State_Mode;     /**< 电机主状态 */
-  CONTROL_MODE Control_Mode; /**< 控制模式 */
-  SUB_STATE Sub_State;       /**< 校准子状态 */
-  CS_STATE Cs_State;         /**< 详细校准状态 */
-  FAULT_STATE Fault_State;   /**< @deprecated 故障状态（已废弃，仅用于兼容） */
+  STATE_MODE State_Mode;     /**< motorstate */
+  CONTROL_MODE Control_Mode; /**< mode */
+  SUB_STATE Sub_State;       /**< calibrationstate */
+  CS_STATE Cs_State;         /**< calibrationstate */
+  FAULT_STATE Fault_State;   /**< @deprecated faultstate（，） */
 } MOTOR_STATE;
-
 /**
- * @brief 电机反馈数据结构体
+ * @brief motorfeedback
  */
 typedef struct {
-  float position;          /**< 机械位置 [rad] */
-  float velocity;          /**< 机械速度 [rad/s] */
-  float phase_angle;       /**< 电角度 [rad] */
-  float temperature;       /**< 温度 [degC] */
-  float observer_angle;    /**< 观测器估算角度 [rad] */
-  float observer_velocity; /**< 观测器估算速度 [rad/s] */
+  float position;          /**< position [rad] */
+  float velocity;          /**< speed/velocity [rad/s] */
+  float phase_angle;       /**< angle [rad] */
+  float temperature;       /**< temperature [degC] */
+  float observer_angle;    /**< observerangle [rad] */
+  float observer_velocity; /**< observerspeed/velocity [rad/s] */
 } MOTOR_FEEDBACK;
-
 /**
- * @brief 电机数据主结构体
- * 包含组件、状态、参数、控制器、反馈及PID控制器。
+ * @brief motor
+ * 、state、param、、feedbackPID。
  */
 typedef struct MOTOR_DATA_s {
-  MOTOR_COMPONENTS components; /**< 硬件组件 */
-  MOTOR_STATE state;           /**< 运行状态 */
-  MOTOR_PARAMETERS parameters; /**< 电机参数 */
-  MOTOR_CONTROLLER Controller; /**< 控制器参数 */
-  MOTOR_FEEDBACK feedback;     /**< 传感器反馈 */
-
-  PidTypeDef IqPID;  /**< 电流环 IQ 轴 PID */
-  PidTypeDef IdPID;  /**< 电流环 ID 轴 PID */
-  PidTypeDef VelPID; /**< 速度环 PID */
-  PidTypeDef PosPID; /**< 位置环 PID */
-
+  MOTOR_COMPONENTS components; /**<  */
+  MOTOR_STATE state;           /**< runningstate */
+  MOTOR_PARAMETERS parameters; /**< motorparam */
+  MOTOR_CONTROLLER Controller; /**< param */
+  MOTOR_FEEDBACK feedback;     /**< feedback */
+  PidTypeDef IqPID;  /**< current IQ axis PID */
+  PidTypeDef IdPID;  /**< current ID axis PID */
+  PidTypeDef VelPID; /**< speed/velocity PID */
+  PidTypeDef PosPID; /**< position PID */
   /* === FOC Core Data (New Architecture) === */
-  FOC_AlgorithmState_t algo_state;   /**< FOC算法状态 (积分项, 滤波器) */
-  FOC_AlgorithmConfig_t algo_config; /**< FOC算法配置 (增益, 限制) */
-  FOC_AlgorithmInput_t algo_input;   /**< FOC算法输入 (传感器, 参考值) */
-  FOC_AlgorithmOutput_t algo_output; /**< FOC算法输出 (PWM, 中间变量) */
-  LADRC_Config_t ladrc_config;
-  LADRC_State_t ladrc_state;
-  float ladrc_enable;
-
+  FOC_AlgorithmState_t algo_state;   /**< FOCstate (integral, filter) */
+  FOC_AlgorithmConfig_t algo_config; /**< FOCconfig (gain, limit) */
+  FOC_AlgorithmInput_t algo_input;   /**< FOCinput (, reference) */
+  FOC_AlgorithmOutput_t algo_output; /**< FOCoutput (PWM, ) */
+  /* === LADRC speed/velocity === */
+  LADRC_Config_t ladrc_config;   /**< LADRC configparam */
+  LADRC_State_t ladrc_state;     /**< LADRC state */
+  float ladrc_enable;            /**< LADRC enable (0.0=PID, 1.0=LADRC) */
   /* Advanced Control Configs - Persisted parameters map here */
   struct {
     float smo_alpha;
@@ -229,57 +209,46 @@ typedef struct MOTOR_DATA_s {
                                  // cast
     float cogging_calib_request; // 1.0f triggers anticogging calibration
   } advanced;
-
-  CalibrationContext calib_ctx; /**< 校准过程上下文 */
-
-  volatile bool params_updated; /**< 参数变更标志 (用于内环参数同步) */
+  CalibrationContext calib_ctx; /**< calibration */
+  volatile bool params_updated; /**< param (inner loopparam) */
 } MOTOR_DATA;
-
 extern MOTOR_DATA motor_data;
-
 /**
- * @brief 无需校准的电机初始化
- * @param motor 电机数据结构体指针
+ * @brief calibrationmotorinit
+ * @param motor motor
  */
 void Init_Motor_No_Calib(MOTOR_DATA *motor);
-
 /**
- * @brief 包含校准的电机初始化
- * @param motor 电机数据结构体指针
+ * @brief calibrationmotorinit
+ * @param motor motor
  */
 void Init_Motor_Calib(MOTOR_DATA *motor);
-
 /**
- * @brief FOC主状态机任务
- * @param motor 电机数据结构体指针
+ * @brief FOCstate
+ * @param motor motor
  */
 void MotorStateTask(MOTOR_DATA *motor);
-
 /**
- * @brief FOC保护任务
- * @param motor 电机数据结构体指针
+ * @brief FOCprotection
+ * @param motor motor
  */
 void MotorGuardTask(MOTOR_DATA *motor);
-
 /**
- * @brief 请求电机校准
- * @param motor 电机数据结构体指针
- * @param calibration_type 校准类型
+ * @brief motorcalibration
+ * @param motor motor
+ * @param calibration_type calibration
  */
 void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type);
-
 /**
- * @brief 清除电机故障状态
- * @param motor 电机数据结构体指针
+ * @brief motorfaultstate
+ * @param motor motor
  */
 void Motor_ClearFaults(MOTOR_DATA *motor);
-
 /**
- * @brief 全局DS402状态机
+ * @brief DS402state
  *
- * 用于CANopen DS402协议的标准状态管理。
- * 在 app_init.c 中初始化，在 task_guard.c 和保护系统中使用。
+ * CANopen DS402state。
+ *  app_init.c init， task_guard.c protection。
  */
 extern StateMachine g_ds402_state_machine;
-
 #endif // MOTOR_H

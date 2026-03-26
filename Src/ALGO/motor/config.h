@@ -98,7 +98,7 @@
 /*  */
 #define VELOCITY_ACCEL_MULTIPLIER 2.0f  // speed/velocityspeed/velocity
 #define OPEN_MODE_DEFAULT_VELOCITY 5.0f // open loopmodespeed/velocity
-#define OPEN_MODE_FIXED_VOLTAGE 0.5f    // open loopmodevoltage
+#define OPEN_MODE_FIXED_VOLTAGE 3.0f    // open loopmodevoltage
 /* MIT mode */
 #define MIT_MODE_DECAY_FACTOR 0.95f
 #define MIT_POSITION_STABILITY_THRESH (2.0f * M_PI)

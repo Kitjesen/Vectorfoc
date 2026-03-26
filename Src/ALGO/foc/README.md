@@ -574,4 +574,4 @@ config.Ki_current_q = Ki;
 ---
 
 **最后更新**：2026-01-31  
-**维护者**：FalconFoc Project Team
+**维护者**：VectorFOC Project Team

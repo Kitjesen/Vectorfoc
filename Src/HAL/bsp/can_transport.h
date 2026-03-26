@@ -1,32 +1,25 @@
 /**
  * @file can_transport.h
- * @brief CAN 传输层适配器
- * @note 实现 TransportInterface，将 CAN BSP 适配为统一的传输接口
+ * @brief CAN
+ * @note  TransportInterface， CAN BSP
  */
-
 #ifndef CAN_TRANSPORT_H
 #define CAN_TRANSPORT_H
-
 #include "transport.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 /**
- * @brief 获取 CAN 传输接口
- * @return TransportInterface 指针
+ * @brief get CAN
+ * @return TransportInterface
  */
 const TransportInterface *CAN_Transport_GetInterface(void);
-
 /**
- * @brief 初始化 CAN 传输适配器
- * @note 应在 BSP_CAN_Init() 之后调用
+ * @brief init CAN
+ * @note  BSP_CAN_Init()
  */
 void CAN_Transport_Init(void);
-
 #ifdef __cplusplus
 }
 #endif
-
 #endif /* CAN_TRANSPORT_H */

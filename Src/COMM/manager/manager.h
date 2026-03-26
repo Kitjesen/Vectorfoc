@@ -15,52 +15,37 @@
  * - Protocol_QueueRxFrame(): Queue CAN frame from ISR
  * - Protocol_ProcessQueuedFrames(): Drain queued frames in task context
  *
- * 传输层抽象:
- *   协议层通过 TransportInterface 发送数据，不直接依赖 BSP_CAN_SendFrame。
- *   使用 Protocol_RegisterTransport() 注册具体的传输实现。
+ * :
+ *    TransportInterface ， BSP_CAN_SendFrame。
+ *    Protocol_RegisterTransport() 。
  */
-
 #ifndef COMM_MANAGER_H
 #define COMM_MANAGER_H
-
 #include "protocol_types.h"
 #include "transport.h"
-
 // Forward declaration to avoid circular dependency
 typedef struct MOTOR_DATA_s MOTOR_DATA;
-typedef void (*ProtocolRxObserver)(const CAN_Frame *frame);
-
 /**
- * @brief  注册传输层接口
- * @param  transport 传输接口指针
- * @note   应在 Protocol_Init() 之前调用
+ * @brief
+ * @param  transport
+ * @note    Protocol_Init()
  */
 void Protocol_RegisterTransport(const TransportInterface *transport);
-
-/**
- * @brief Register an observer for fully received CAN frames.
- * @param observer Callback invoked before protocol-specific processing.
- */
-void Protocol_RegisterRxObserver(ProtocolRxObserver observer);
-
 /**
  * @brief  Initialize protocol manager.
  * @param  default_protocol Default protocol type.
  */
 void Protocol_Init(ProtocolType default_protocol);
-
 /**
  * @brief  Set active protocol type.
  * @param  protocol Protocol type.
  */
 void Protocol_SetType(ProtocolType protocol);
-
 /**
  * @brief  Get current active protocol.
  * @return Current protocol type.
  */
 ProtocolType Protocol_GetType(void);
-
 /**
  * @brief  Parse CAN frame.
  * @param  frame CAN frame.
@@ -68,7 +53,6 @@ ProtocolType Protocol_GetType(void);
  * @return Parse result.
  */
 ParseResult Protocol_ParseFrame(const CAN_Frame *frame, MotorCommand *cmd);
-
 /**
  * @brief  Build feedback frame.
  * @param  status Motor status.
@@ -76,7 +60,6 @@ ParseResult Protocol_ParseFrame(const CAN_Frame *frame, MotorCommand *cmd);
  * @return true on success, false on failure.
  */
 bool Protocol_BuildFeedback(const MotorStatus *status, CAN_Frame *frame);
-
 /**
  * @brief  Build fault frame.
  * @param  fault_code Fault code.
@@ -84,7 +67,6 @@ bool Protocol_BuildFeedback(const MotorStatus *status, CAN_Frame *frame);
  * @return true on success, false on failure.
  */
 bool Protocol_BuildFault(uint32_t fault_code, CAN_Frame *frame);
-
 /**
  * @brief  Build parameter response frame.
  * @param  param_index Parameter index.
@@ -94,34 +76,29 @@ bool Protocol_BuildFault(uint32_t fault_code, CAN_Frame *frame);
  */
 bool Protocol_BuildParamResponse(uint16_t param_index, float value,
                                  CAN_Frame *frame);
-
 /**
  * @brief  Send CAN frame.
  * @param  frame CAN frame.
  * @return true on success, false on failure.
  */
 bool Protocol_SendFrame(const CAN_Frame *frame);
-
 /**
  * @brief  Process received CAN frame (integrated application logic).
  * @param  frame Received CAN frame.
  * @note   Call from task context; ISR should only call Protocol_QueueRxFrame().
  */
 void Protocol_ProcessRxFrame(const CAN_Frame *frame);
-
 /**
  * @brief  Queue received CAN frame from ISR (non-blocking).
  * @param  frame Received CAN frame.
  * @return true if queued, false if dropped.
  */
 bool Protocol_QueueRxFrame(const CAN_Frame *frame);
-
 /**
  * @brief  Process queued CAN frames in task context.
  * @note   Call from a periodic task (e.g. customTask).
  */
 void Protocol_ProcessQueuedFrames(void);
-
 /**
  * @brief  Callback for Safety Module to report faults via CAN.
  * @param  fault_bits Fault code.
@@ -129,14 +106,12 @@ void Protocol_ProcessQueuedFrames(void);
  * @return true on success, false on failure (needs retry).
  */
 bool Protocol_ReportFaultCallback(uint32_t fault_bits, MOTOR_DATA *motor);
-
 /**
  * @brief Periodic protocol maintenance (heartbeat, keepalive, etc).
  * @param now_ms Current system tick in ms.
  * @param status Motor status snapshot.
  */
 void Protocol_PeriodicUpdate(uint32_t now_ms, const MotorStatus *status);
-
 /**
  * @brief Communication statistics structure.
  */
@@ -151,16 +126,13 @@ typedef struct {
   uint32_t parse_errors;        ///< Parse errors
   uint32_t exec_time_max_us;    ///< Max frame processing time (microseconds)
 } CommStats_t;
-
 /**
  * @brief  Get communication statistics.
  * @param  stats [out] Statistics structure.
  */
 void Protocol_GetStats(CommStats_t *stats);
-
 /**
  * @brief  Reset communication statistics.
  */
 void Protocol_ResetStats(void);
-
 #endif /* COMM_MANAGER_H */

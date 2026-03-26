@@ -37,7 +37,11 @@ jobs:
 
       - name: Run tests (host)
         run: |
-          ctest --test-dir test/build-ci --output-on-failure
+          ./test/build-ci/test_runner_core
+          ./test/build-ci/test_runner_state
+          ./test/build-ci/test_runner_closed_loop
+          ./test/build-ci/test_runner_fault
+          ./test/build-ci/test_runner_traj
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

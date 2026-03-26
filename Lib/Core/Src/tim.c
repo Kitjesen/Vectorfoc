@@ -121,6 +121,8 @@ void MX_TIM3_Init(void) {
   HAL_TIM_MspPostInit(&htim3);
 }
 
+/* X-STAR-S 使用 xstar_tim.c 中的 MspInit，此处跳过 */
+#ifndef BOARD_XSTAR
 void HAL_TIM_PWM_MspInit(TIM_HandleTypeDef *tim_pwmHandle) {
   if (tim_pwmHandle->Instance == TIM1) {
     __HAL_RCC_TIM1_CLK_ENABLE();
@@ -196,3 +198,4 @@ void HAL_TIM_PWM_MspDeInit(TIM_HandleTypeDef *tim_pwmHandle) {
     HAL_DMA_DeInit(tim_pwmHandle->hdma[TIM_DMA_ID_CC2]);
   }
 }
+#endif /* BOARD_XSTAR */

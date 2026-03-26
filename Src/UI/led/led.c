@@ -1,6 +1,42 @@
 #include "led.h"
 #include "board_config.h"
 
+#ifdef BOARD_XSTAR
+/* ---- X-STAR-S: single GPIO LED on HW_STATUS_LED_PIN (PB5) ---- */
+const RGB_Color_TypeDef RED    = {255,   0,   0};
+const RGB_Color_TypeDef GREEN  = {  0, 255,   0};
+const RGB_Color_TypeDef BLUE   = {  0,   0, 255};
+const RGB_Color_TypeDef SKY    = {  0, 255, 255};
+const RGB_Color_TypeDef MAGENTA= {255,   0, 220};
+const RGB_Color_TypeDef YELLOW = {127, 216,   0};
+const RGB_Color_TypeDef ORANGE = {127, 106,   0};
+const RGB_Color_TypeDef BLACK  = {  0,   0,   0};
+const RGB_Color_TypeDef WHITE  = {255, 255, 255};
+const RGB_Color_TypeDef PURPLE = {128,   0, 128};
+const RGB_Color_TypeDef BROWN  = {165,  42,  42};
+const RGB_Color_TypeDef GRAY   = {128, 128, 128};
+const RGB_Color_TypeDef PINK   = {255, 192, 203};
+const RGB_Color_TypeDef GOLD   = {255, 215,   0};
+const RGB_Color_TypeDef SILVER = {192, 192, 192};
+
+void RGB_SetColor(uint8_t LedId, RGB_Color_TypeDef Color) { (void)LedId; (void)Color; }
+void Reset_Load(void) {}
+void RGB_SendArray(void) {}
+void RGB_DMA_CompleteCallback(void) {}
+
+void RGB_DisplayColor(RGB_Color_TypeDef color) {
+    GPIO_PinState state = (color.R || color.G || color.B) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+    HAL_GPIO_WritePin(HW_STATUS_LED_PORT, HW_STATUS_LED_PIN, state);
+}
+
+void RGB_DisplayColorById(uint8_t color_id) {
+    /* color_id 7 = BLACK → LED off; all others → LED on */
+    GPIO_PinState state = (color_id == 7) ? GPIO_PIN_RESET : GPIO_PIN_SET;
+    HAL_GPIO_WritePin(HW_STATUS_LED_PORT, HW_STATUS_LED_PIN, state);
+}
+
+#else /* original VectorFOC RGB DMA implementation */
+
 /* ?????????????? */
 const RGB_Color_TypeDef RED = {255, 0, 0};        // ???
 const RGB_Color_TypeDef GREEN = {0, 255, 0};      // ???
@@ -159,3 +195,5 @@ void RGB_DMA_CompleteCallback(void)
 {
     HAL_TIM_PWM_Stop_DMA(&HW_LED_TIMER, HW_LED_CHANNEL); // ?? DMA PWM ???
 }
+
+#endif /* BOARD_XSTAR */

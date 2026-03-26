@@ -6,6 +6,8 @@
 #ifndef FOC_MATH_COMMON_H
 #define FOC_MATH_COMMON_H
 
+#include <math.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -22,13 +24,19 @@ extern "C" {
  * @brief  Normalize angle to [-π, π].
  * @param  angle [rad] Input angle.
  * @return [rad] Normalized angle.
+ * @note   Uses fmodf for O(1) complexity instead of while loops.
  */
 static inline float Math_NormalizeAngle(float angle) {
-  while (angle > MATH_PI)
-    angle -= MATH_2PI;
-  while (angle < -MATH_PI)
+  /* Fast path for common case */
+  if (angle >= -MATH_PI && angle <= MATH_PI) {
+    return angle;
+  }
+  /* Use fmodf for O(1) normalization */
+  angle = fmodf(angle + MATH_PI, MATH_2PI);
+  if (angle < 0.0f) {
     angle += MATH_2PI;
-  return angle;
+  }
+  return angle - MATH_PI;
 }
 
 /**

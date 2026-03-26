@@ -20,8 +20,6 @@ typedef struct {
   float vel_set; // Internal velocity setpoint cache
   float iq_setpoint_cache;
   float id_setpoint_cache;
-  float vel_feedback_filtered;
-  bool vel_filter_initialized;
 
   // Trajectory planning state
   bool trajectory_active;

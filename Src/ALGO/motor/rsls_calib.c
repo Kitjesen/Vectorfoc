@@ -2,7 +2,11 @@
 #include "calib_encoder.h"
 #include "calib_inductance.h"
 #include "calib_resistance.h"
+#ifdef BOARD_XSTAR
+#include "board_config_xstar.h"
+#else
 #include "mt6816_encoder.h"
+#endif
 
 #include "config.h"
 #include <malloc.h>
@@ -37,8 +41,10 @@ CalibResult RSLSCalib_Start(MOTOR_DATA *motor, CalibrationContext *ctx) {
   ctx->inductance.voltages[1] = +VOLTAGE_MAX_CALIB;
 
   // Set initial direction
+#ifndef BOARD_XSTAR
   MT6816_Handle_t *enc = (MT6816_Handle_t *)motor->components.encoder;
   enc->dir = MT6816_DIR_CW;
+#endif
 
   // State machine starting point
   motor->state.Cs_State = CS_MOTOR_R_START;

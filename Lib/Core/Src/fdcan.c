@@ -30,14 +30,16 @@ void MX_FDCAN1_Init(void) {
   hfdcan1.Init.DataSyncJumpWidth = 7;
   hfdcan1.Init.DataTimeSeg1 = 20;
   hfdcan1.Init.DataTimeSeg2 = 7;
-  hfdcan1.Init.StdFiltersNbr = 1;
-  hfdcan1.Init.ExtFiltersNbr = 0;
+  hfdcan1.Init.StdFiltersNbr = 0;
+  hfdcan1.Init.ExtFiltersNbr = 1;  /* Protocol uses 29-bit extended IDs */
   hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
   if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK) {
     Error_Handler();
   }
 }
 
+/* X-STAR-S 使用 xstar_bsp.c 中的 MspInit，此处跳过 */
+#ifndef BOARD_XSTAR
 void HAL_FDCAN_MspInit(FDCAN_HandleTypeDef *fdcanHandle) {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
@@ -75,3 +77,4 @@ void HAL_FDCAN_MspDeInit(FDCAN_HandleTypeDef *fdcanHandle) {
     HAL_NVIC_DisableIRQ(FDCAN1_IT1_IRQn);
   }
 }
+#endif /* BOARD_XSTAR */

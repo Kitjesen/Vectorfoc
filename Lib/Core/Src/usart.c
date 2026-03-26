@@ -37,6 +37,8 @@ void MX_USART1_UART_Init(void) {
   }
 }
 
+/* X-STAR-S 使用 xstar_bsp.c 中的 MspInit（USART2），此处跳过 */
+#ifndef BOARD_XSTAR
 void HAL_UART_MspInit(UART_HandleTypeDef *uartHandle) {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
@@ -103,3 +105,4 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef *uartHandle) {
     HAL_NVIC_DisableIRQ(USART1_IRQn);
   }
 }
+#endif /* BOARD_XSTAR */

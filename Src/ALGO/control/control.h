@@ -1,18 +1,14 @@
 #ifndef MOTOR_CONTROL_H
 #define MOTOR_CONTROL_H
-
 #include "motor.h"
-
 // Forward declaration if motor.h inclusion is guarded
 struct MOTOR_DATA_s;
 // typedef struct MOTOR_DATA_s MOTOR_DATA; // Removed to avoid redefinition
-
 /**
  * @brief  Initialize Motor Control Context
  * @param  motor Motor Control Data
  */
 void Control_Init(MOTOR_DATA *motor);
-
 /**
  * @brief Motor Control Main Dispatch Entry
  *
@@ -25,17 +21,14 @@ void Control_Init(MOTOR_DATA *motor);
  * @param motor Motor Control Data
  */
 void MotorControl_Run(MOTOR_DATA *motor);
-
 /**
- * @brief 设置 PID 控制器限幅
+ * @brief set PID
  */
 void SetPIDLimit(MOTOR_DATA *motor, float current_max_out,
                  float current_max_iout, float vel_max_out, float vel_max_iout,
                  float pos_limit);
-
 /**
- * @brief 更新电流环控制参数 (增益与限幅)
+ * @brief updatecurrentparam (gain)
  */
 void CurrentLoop_UpdateGain(MOTOR_DATA *motor);
-
 #endif // MOTOR_CONTROL_H

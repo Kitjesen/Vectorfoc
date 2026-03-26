@@ -1,0 +1,108 @@
+cmake_minimum_required(VERSION 3.20)
+
+# Bootloader Project
+project(VectorFoc_Bootloader C CXX ASM)
+
+# MCU specific definitions
+set(MCU_FLAGS "-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb")
+add_definitions(-DSTM32G431xx -DUSE_HAL_DRIVER -DSTM32G4xx -DBOOTLOADER_BUILD)
+
+# Build type - always optimize for size
+set(CMAKE_BUILD_TYPE Release)
+
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${MCU_FLAGS} -Wall -fdata-sections -ffunction-sections -Os")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MCU_FLAGS} -Wall -fdata-sections -ffunction-sections -Os")
+set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} ${MCU_FLAGS}")
+
+# Include directories
+include_directories(
+    # Lib - HAL/CMSIS
+    ${CMAKE_SOURCE_DIR}/Lib/Core/Inc
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Inc
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Inc/Legacy
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/CMSIS/Device/ST/STM32G4xx/Include
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/CMSIS/Include
+    # USB
+    ${CMAKE_SOURCE_DIR}/Lib/Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+    ${CMAKE_SOURCE_DIR}/Lib/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
+    ${CMAKE_SOURCE_DIR}/Lib/USB_Device/App
+    ${CMAKE_SOURCE_DIR}/Lib/USB_Device/Target
+    # Bootloader
+    ${CMAKE_SOURCE_DIR}/Src/BOOT
+)
+
+# Bootloader source files
+set(BOOT_SOURCES
+    ${CMAKE_SOURCE_DIR}/Src/BOOT/boot_main.c
+    ${CMAKE_SOURCE_DIR}/Src/BOOT/bootloader.c
+    ${CMAKE_SOURCE_DIR}/Src/BOOT/flash_ops.c
+    ${CMAKE_SOURCE_DIR}/Src/BOOT/boot_protocol.c
+)
+
+# HAL sources (minimal set for bootloader)
+set(HAL_SOURCES
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal.c
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_cortex.c
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_rcc.c
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_rcc_ex.c
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_gpio.c
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_flash.c
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_flash_ex.c
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_pwr.c
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_pwr_ex.c
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_pcd.c
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_pcd_ex.c
+    ${CMAKE_SOURCE_DIR}/Lib/Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_ll_usb.c
+)
+
+# USB sources
+set(USB_SOURCES
+    ${CMAKE_SOURCE_DIR}/Lib/USB_Device/App/usbd_cdc_if.c
+    ${CMAKE_SOURCE_DIR}/Lib/USB_Device/App/usbd_desc.c
+    ${CMAKE_SOURCE_DIR}/Lib/USB_Device/App/usb_device.c
+    ${CMAKE_SOURCE_DIR}/Lib/USB_Device/Target/usbd_conf.c
+    ${CMAKE_SOURCE_DIR}/Lib/Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c
+    ${CMAKE_SOURCE_DIR}/Lib/Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_ctlreq.c
+    ${CMAKE_SOURCE_DIR}/Lib/Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_ioreq.c
+    ${CMAKE_SOURCE_DIR}/Lib/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Src/usbd_cdc.c
+)
+
+# System sources
+set(SYSTEM_SOURCES
+    ${CMAKE_SOURCE_DIR}/Lib/Core/Src/system_stm32g4xx.c
+    ${CMAKE_SOURCE_DIR}/Lib/Core/Src/stm32g4xx_hal_msp.c
+)
+
+# Startup file
+set(STARTUP_SOURCE "${CMAKE_SOURCE_DIR}/Lib/startup_stm32g431xx.s")
+
+# All sources
+set(ALL_SOURCES
+    ${BOOT_SOURCES}
+    ${HAL_SOURCES}
+    ${USB_SOURCES}
+    ${SYSTEM_SOURCES}
+    ${STARTUP_SOURCE}
+)
+
+# Linker script
+set(LINKER_SCRIPT "${CMAKE_SOURCE_DIR}/Lib/stm32g431xx_bootloader.ld")
+
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${MCU_FLAGS} -T${LINKER_SCRIPT} -Wl,--gc-sections -Wl,--print-memory-usage -Wl,-Map=${CMAKE_PROJECT_NAME}.map")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --specs=nano.specs --specs=nosys.specs")
+
+# Executable
+add_executable(${CMAKE_PROJECT_NAME}.elf ${ALL_SOURCES})
+
+# Hex and Bin generation
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex ${CMAKE_PROJECT_NAME}.elf ${CMAKE_PROJECT_NAME}.hex
+    COMMAND ${CMAKE_OBJCOPY} -O binary ${CMAKE_PROJECT_NAME}.elf ${CMAKE_PROJECT_NAME}.bin
+    COMMENT "Building ${CMAKE_PROJECT_NAME}.hex and ${CMAKE_PROJECT_NAME}.bin"
+)
+
+# Print size
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
+    COMMAND ${CMAKE_SIZE} ${CMAKE_PROJECT_NAME}.elf
+    COMMENT "Firmware size:"
+)

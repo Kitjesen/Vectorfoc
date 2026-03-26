@@ -30,6 +30,7 @@ static float CoggingComp_Lookup(float phase) {
   int idx0 = (int)idx_f;
   float frac = idx_f - (float)idx0;
 
+  // [FIX] 改进边界检查，确保索引在有效范围内
   if (idx0 < 0) {
     idx0 = 0;
     frac = 0.0f;
@@ -40,11 +41,15 @@ static float CoggingComp_Lookup(float phase) {
 
   int idx1 = idx0 + 1;
   if (idx1 >= COGGING_MAP_SIZE) {
-    idx1 = 0;
+    idx1 = 0;  // 环绕到开头
   }
 
   float a = s_cogging_map[idx0];
   float b = s_cogging_map[idx1];
+  
+  // [FIX] 限制 frac 范围
+  frac = CLAMP(frac, 0.0f, 1.0f);
+  
   return a + (b - a) * frac;
 }
 

@@ -1,4 +1,4 @@
-cd D:\robot\FOC\FalconFoc-main\2.Firmware\FalconFoc
+cd D:\robot\FOC\VectorFOC-main\2.Firmware\VectorFOC
 
 # 1) 彻底清理旧缓存（非常关键）
 
@@ -22,3 +22,17 @@ cmake -S . -B build -G "MinGW Makefiles" `  --toolchain cmake/gcc-arm-none-eabi.
 cmake --build build -j 8
 
 cmake --build build --clean-first
+
+# ============================================================================
+# OTA Bootloader 编译
+# ============================================================================
+
+# 编译 Bootloader (16KB, 位于 0x08000000)
+# 详见 docs/OTA_BOOTLOADER.md
+
+# 首次烧录需要通过 SWD:
+# st-flash write build_boot/VectorFoc_Bootloader.bin 0x08000000
+# st-flash write build/VectorFoc.bin 0x08004000
+
+# 后续可通过 USB OTA 升级:
+# python scripts/ota_upload.py build/VectorFoc.bin --port COM3

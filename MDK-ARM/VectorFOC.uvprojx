@@ -2036,6 +2036,11 @@
               <FilePath>..\Src\ALGO\control\outer.c</FilePath>
             </File>
             <File>
+              <FileName>ladrc.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\ALGO\control\ladrc.c</FilePath>
+            </File>
+            <File>
               <FileName>cogging.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\ALGO\control\cogging.c</FilePath>

@@ -22,11 +22,14 @@ void Feedforward_Update(MOTOR_DATA *motor, const Feedforward_Params_t *params) {
   float velocity_ref = motor->Controller.vel_setpoint;
 
   float dt = 1.0f / (float)ADV_CONTROL_HZ;
+  // [FIX] 静态变量在多电机实例下会有问题，但当前只有单电机
+  // 更好的做法是将 last_velocity_ref 存储在 motor 结构体中
   static float last_velocity_ref = 0.0f;
   static bool has_last = false;
 
   float accel = 0.0f;
-  if (has_last && dt > 0.0f) {
+  // [FIX] 添加 dt 有效性检查，避免除零
+  if (has_last && dt > 1e-6f) {
     accel = (velocity_ref - last_velocity_ref) / dt;
   }
   last_velocity_ref = velocity_ref;

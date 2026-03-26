@@ -78,7 +78,7 @@ void Control_InjectVoltage(MOTOR_DATA *motor, float Vd, float Vq, float angle) {
   MHAL_PWM_SetDuty(motor->algo_output.Ta, motor->algo_output.Tb,
                    motor->algo_output.Tc);
 }
-void ControlImpl_Open(MOTOR_DATA *motor) { OpenControlMode(motor, 5); }
+void ControlImpl_Open(MOTOR_DATA *motor) { OpenControlMode(motor, 40); }
 void ControlImpl_Torque(MOTOR_DATA *motor, MotorControlCtx *ctx) {
   ControlImpl_SetThetaFromEncoder(motor);
 #if TORQUE_AND_CURRENT

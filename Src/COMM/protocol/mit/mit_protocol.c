@@ -72,7 +72,6 @@ static ParseResult ParseMITControl(const CAN_Frame *frame, MotorCommand *cmd) {
   uint16_t torque_raw = ((frame->data[6] & 0x0F) << 8) | frame->data[7];
   cmd->torque_ff = Uint12ToFloat(torque_raw, MIT_T_MIN, MIT_T_MAX);
   cmd->control_mode = CONTROL_MODE_MIT;
-  cmd->has_enable_command = true;
   cmd->enable_motor = true;
   return PARSE_OK;
 }

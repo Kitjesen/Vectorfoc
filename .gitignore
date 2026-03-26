@@ -1,10 +1,20 @@
+# Build outputs
 build/
+build-*/
 test/build/
-test/build-ci/
+test/build-*/
+
+# Keil / MDK-ARM
 MDK-ARM/DebugConfig/
 MDK-ARM/VectorFOC/
 MDK-ARM/.vscode/
+*.uvguix.*
+*.uvoptx
 
+# Tooling
+.omc/
+
+# Compiled objects & intermediates
 *.o
 *.obj
 *.d
@@ -20,7 +30,8 @@ MDK-ARM/.vscode/
 *.idb
 *.ilk
 *.exp
-
-# Keil user-specific files
-*.uvguix.*
-*.uvoptx
+*.elf
+*.bin
+*.hex
+*.map
+*.lst

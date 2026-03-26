@@ -133,11 +133,22 @@ void MT6816_ResetCount(MT6816_Handle_t *encoder);
 void GetMotor_Angle(ENCODER_DATA *encoder, float dt);
 
 /**
- * @brief  Normalize angle to [-π, π].
+ * @brief  Normalize angle to [0, 2π).
  * @param  angle [rad] Input angle.
  * @return [rad] Normalized angle.
  */
+#ifdef BOARD_XSTAR
+#include <math.h>
+#ifndef M_2PI
+#define M_2PI 6.28318530717959f
+#endif
+static inline float normalize_angle(float angle) {
+    float a = fmodf(angle, M_2PI);
+    return a >= 0.0f ? a : (a + M_2PI);
+}
+#else
 float normalize_angle(float angle);
+#endif
 
 #ifdef __cplusplus
 }

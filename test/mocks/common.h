@@ -17,9 +17,7 @@ typedef unsigned char bool_t;
 #ifndef M_PI
 #define M_PI (3.14159265358979323846f)
 #endif
-#ifndef M_2PI
 #define M_2PI (6.28318530717958647692f)
-#endif
 #define M_3PI_2 (4.71238898038469f)
 
 #define SQ(x) ((x) * (x))
