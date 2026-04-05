@@ -6,38 +6,31 @@
 #ifndef MOTOR_CONFIG_H
 #define MOTOR_CONFIG_H
 #include "common.h"
+#include "board_config.h"  // 硬件参数来源：HW_SHUNT_RESISTANCE, HW_OPAMP_GAIN, HW_FAC_CURRENT …
 /* ==============================================================================
-   1.  (Hardware Configuration)
+   1. 硬件参数 — 全部从 board_config.h 推导，禁止在此处硬编码
    ==============================================================================
  */
-// : SYS_CLOCK_HZ  Src/config/board_config.h
-// calc
-#ifndef SYS_CLOCK_HZ
-#define SYS_CLOCK_HZ 168000000UL  //  168MHz
-#endif
-#define SYS_CLOCK_HZ_F ((float)SYS_CLOCK_HZ)
-#define TIMER1_CLK_MHz (SYS_CLOCK_HZ / 1000000UL)
-/* PWM config */
-#define PWM_FREQUENCY 20000 // PWM frequency [Hz]
-#define PWM_FREQUENCY_HZ ((float)PWM_FREQUENCY)
-// PWM periodcalc: (TIMER_CLK / PWM_FREQ)
-// : ，mode
-#define PWM_PERIOD_CYCLES                                                      \
-  (uint16_t)((TIMER1_CLK_MHz * 1000000u / PWM_FREQUENCY) & 0xFFFE)
-#define PWM_ARR (uint16_t)(PWM_PERIOD_CYCLES / 2u)
-#define MCPWM_DEADTIME_CLOCKS 20            //  (period)
-#define DEADTIME_COMP MCPWM_DEADTIME_CLOCKS //
-/* ADC sampleconfig */
-#define V_REG 1.65f             // Vref/2 (voltage)
-#define CURRENT_SHUNT_RES 0.02f // sample [Ohm]
-#define CURRENT_AMP_GAIN 50.0f  // current
-#define VIN_R1 1000.0f          // voltagesample R1
-#define VIN_R2 10000.0f         // voltagesample R2
-// ADC
-// current: 3.3V / 4096 / (R_shunt * Gain)
-#define FAC_CURRENT ((3.3f / 4095.0f) / (CURRENT_SHUNT_RES * CURRENT_AMP_GAIN))
-// voltage: ((R1+R2)/R1) * (3.3V / 4096)
-#define VOLTAGE_TO_ADC_FACTOR (((VIN_R2 + VIN_R1) / VIN_R1) * (3.3f / 4095.0f))
+#define SYS_CLOCK_HZ_F          ((float)SYS_CLOCK_HZ)
+#define TIMER1_CLK_MHz          (SYS_CLOCK_HZ / 1000000UL)
+
+/* PWM */
+#define PWM_FREQUENCY           HW_PWM_FREQ_HZ
+#define PWM_FREQUENCY_HZ        ((float)PWM_FREQUENCY)
+#define PWM_PERIOD_CYCLES       (uint16_t)((TIMER1_CLK_MHz * 1000000u / PWM_FREQUENCY) & 0xFFFE)
+#define PWM_ARR                 (uint16_t)(PWM_PERIOD_CYCLES / 2u)
+#define MCPWM_DEADTIME_CLOCKS   HW_PWM_DEADTIME_CLKS
+#define DEADTIME_COMP           MCPWM_DEADTIME_CLOCKS
+
+/* ADC 转换系数 — 直接引用 board_config.h 中由硬件参数推导的宏 */
+#define V_REG                   HW_ADC_MIDPOINT          /* Vref/2 零点偏置 [V]  */
+#define FAC_CURRENT             HW_FAC_CURRENT           /* [A/LSB]              */
+#define VOLTAGE_TO_ADC_FACTOR   HW_VOLTAGE_FACTOR        /* [V/LSB]              */
+/* 向后兼容别名（旧代码仍可编译） */
+#define CURRENT_SHUNT_RES       HW_SHUNT_RESISTANCE
+#define CURRENT_AMP_GAIN        HW_OPAMP_GAIN
+#define VIN_R1                  HW_VBUS_R_LOW
+#define VIN_R2                  HW_VBUS_R_HIGH
 /* ==============================================================================
    2.  (System Timing)
    ==============================================================================

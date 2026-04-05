@@ -2,9 +2,9 @@
 #include "hal_abstraction.h"
 #include "hal_encoder.h"
 #include "motor.h"
-#include "config.h"
-#ifdef BOARD_XSTAR
-#include "board_config_xstar.h"
+#include "config.h"   // 间接包含 board_config.h → HW_POSITION_SENSOR_MODE
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL || \
+    HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
 #include "hall_encoder.h"
 #include "abz_encoder.h"
 #else
@@ -180,7 +180,6 @@ static inline uint32_t Detection_CheckEncoder(MOTOR_DATA *m) {
     s_state.encoder_err_consecutive = 0;
     return FAULT_NONE;
   }
-#ifdef BOARD_XSTAR
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
   if (!hall_data.signal_valid || hall_data.hall_state == 0u || hall_data.hall_state == 7u) {
     if (s_state.encoder_err_consecutive < 0xFFFFFFFFu) {
@@ -194,13 +193,12 @@ static inline uint32_t Detection_CheckEncoder(MOTOR_DATA *m) {
     return FAULT_ENCODER_LOSS;
   }
   return FAULT_NONE;
-#else
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
   (void)m;
   s_state.encoder_err_consecutive = 0;
   s_state.encoder_err_count = 0;
   return FAULT_NONE;
-#endif
-#else
+#else  /* HW_POSITION_SENSOR_MT6816 */
   MT6816_Handle_t *enc = ENC(m);
   if (enc->last_status != MT6816_OK) {
     if (s_state.encoder_err_consecutive < 0xFFFFFFFFu) {

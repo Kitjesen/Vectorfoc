@@ -1,10 +1,9 @@
 #include "current_calib.h"
-#include "config.h"
+#include "config.h"       // 间接包含 board_config.h，提供 HW_ADC_Ix_HANDLE/JDR 宏
 #include "motor_adc.h"
-#include "hal_pwm.h" // For MHAL_PWM_Brake ( HAL)
+#include "hal_pwm.h"
 #include "error_manager.h"
 #include "error_types.h"
-#include "board_config.h" // Board-specific ADC register macros
 /**
  * @file current_calib.c
  * @brief Current offset calibration implementation
@@ -38,18 +37,11 @@ CalibResult CurrentCalib_Update(MOTOR_DATA *motor, CalibrationContext *ctx) {
     return CurrentCalib_Start(motor, ctx);
   }
   CurrentCalibContext *curr = &ctx->current;
-  // Accumulate ADC samples using board-portable register macros.
-  // VectorFOC G431: all three phases on ADC1 injected group.
-  // X-STAR-S: Iu and Iw on ADC1, Iv on ADC2 injected group.
-#ifndef BOARD_XSTAR
-  curr->offset_sum_a += (float)(HW_ADC_CURRENT.Instance->HW_ADC_JDR_IA);
-  curr->offset_sum_b += (float)(HW_ADC_CURRENT.Instance->HW_ADC_JDR_IB);
-  curr->offset_sum_c += (float)(HW_ADC_CURRENT.Instance->HW_ADC_JDR_IC);
-#else
-  curr->offset_sum_a += (float)(HW_ADC_CURRENT.Instance->HW_ADC1_JDR_IU);
-  curr->offset_sum_b += (float)(HW_ADC2_CURRENT.Instance->HW_ADC2_JDR_IV);
-  curr->offset_sum_c += (float)(HW_ADC_CURRENT.Instance->HW_ADC1_JDR_IW);
-#endif
+  // 统一 ADC 采样：HW_ADC_Ix_HANDLE / HW_ADC_Ix_JDR 由 board_config.h 定义，
+  // VectorFOC 三相均在 ADC1；X-STAR IB 在 ADC2，通过宏透明处理，此处无 #ifdef。
+  curr->offset_sum_a += (float)(HW_ADC_IA_HANDLE.Instance->HW_ADC_IA_JDR);
+  curr->offset_sum_b += (float)(HW_ADC_IB_HANDLE.Instance->HW_ADC_IB_JDR);
+  curr->offset_sum_c += (float)(HW_ADC_IC_HANDLE.Instance->HW_ADC_IC_JDR);
   curr->loop_count++;
   // Check if complete
   if (curr->loop_count >= CURRENT_CALIB_CYCLES) {
