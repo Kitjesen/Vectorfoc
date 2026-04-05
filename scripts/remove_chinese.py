@@ -42,7 +42,18 @@ def process_file(filepath):
     return False
 
 def main():
-    src_dir = r"D:\inovxio\modules\foc\Src"
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Remove Chinese characters from comments in VectorFOC source files."
+    )
+    parser.add_argument(
+        "src_dir",
+        nargs="?",
+        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Src"),
+        help="Path to source directory (default: ../Src relative to this script)",
+    )
+    args = parser.parse_args()
+    src_dir = os.path.abspath(args.src_dir)
     
     modified_count = 0
     total_count = 0
