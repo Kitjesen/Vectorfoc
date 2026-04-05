@@ -64,22 +64,23 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
   ISR_UpdateSensors(&motor_data);
   // 3. updateencoder
   ISR_UpdateEncoder(&motor_data);
-  // 4. observerupdate
-  Motor_API_Observer_Update(&motor_data);
-  // 5. safety (20kHz)
+  // 4. safety (20kHz)
   Safety_Update_Fast(&motor_data, &g_ds402_state_machine);
-  // 6. stateupdate
+  // 5. stateupdate
   if (++s_fsm_counter >= FSM_UPDATE_DIV) {
     s_fsm_counter = 0;
     StateMachine_Update(&g_ds402_state_machine);
   }
-  // 7.
+  // 6.
   if (++s_adv_counter >= ADV_CONTROL_DIV) {
     s_adv_counter = 0;
     ISR_RunAdvancedControl(&motor_data);
   }
-  // 8. FOC
+  // 7. FOC (produces this cycle's Valpha/Vbeta)
   MotorStateTask(&motor_data);
+  // 8. Observer update after FOC so it uses the current cycle's Valpha/Vbeta,
+  //    eliminating the one-cycle delay that degraded SMO angle estimation at speed.
+  Motor_API_Observer_Update(&motor_data);
   // 9.
 #if HS_LOG_ENABLE
   if (++s_log_counter >= HS_LOG_DIV) {
