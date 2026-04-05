@@ -6,31 +6,48 @@
 #ifndef MOTOR_CONFIG_H
 #define MOTOR_CONFIG_H
 #include "common.h"
-#include "board_config.h"  // 硬件参数来源：HW_SHUNT_RESISTANCE, HW_OPAMP_GAIN, HW_FAC_CURRENT …
 /* ==============================================================================
-   1. 硬件参数 — 全部从 board_config.h 推导，禁止在此处硬编码
+   1. 硬件参数
+   固件构建：从 board_config.h 推导（依赖 STM32 HAL 头文件，不适合 host 测试）
+   测试构建：使用 VectorFOC G431 默认值（TEST_ENV 由 test/CMakeLists.txt 定义）
    ==============================================================================
  */
+#ifndef TEST_ENV
+#include "board_config.h"  // HW_SHUNT_RESISTANCE, HW_OPAMP_GAIN, HW_FAC_CURRENT …
 #define SYS_CLOCK_HZ_F          ((float)SYS_CLOCK_HZ)
 #define TIMER1_CLK_MHz          (SYS_CLOCK_HZ / 1000000UL)
-
-/* PWM */
 #define PWM_FREQUENCY           HW_PWM_FREQ_HZ
-#define PWM_FREQUENCY_HZ        ((float)PWM_FREQUENCY)
-#define PWM_PERIOD_CYCLES       (uint16_t)((TIMER1_CLK_MHz * 1000000u / PWM_FREQUENCY) & 0xFFFE)
-#define PWM_ARR                 (uint16_t)(PWM_PERIOD_CYCLES / 2u)
 #define MCPWM_DEADTIME_CLOCKS   HW_PWM_DEADTIME_CLKS
-#define DEADTIME_COMP           MCPWM_DEADTIME_CLOCKS
-
-/* ADC 转换系数 — 直接引用 board_config.h 中由硬件参数推导的宏 */
-#define V_REG                   HW_ADC_MIDPOINT          /* Vref/2 零点偏置 [V]  */
-#define FAC_CURRENT             HW_FAC_CURRENT           /* [A/LSB]              */
-#define VOLTAGE_TO_ADC_FACTOR   HW_VOLTAGE_FACTOR        /* [V/LSB]              */
-/* 向后兼容别名（旧代码仍可编译） */
+#define V_REG                   HW_ADC_MIDPOINT
+#define FAC_CURRENT             HW_FAC_CURRENT
+#define VOLTAGE_TO_ADC_FACTOR   HW_VOLTAGE_FACTOR
 #define CURRENT_SHUNT_RES       HW_SHUNT_RESISTANCE
 #define CURRENT_AMP_GAIN        HW_OPAMP_GAIN
 #define VIN_R1                  HW_VBUS_R_LOW
 #define VIN_R2                  HW_VBUS_R_HIGH
+#else
+/* host 测试环境：使用 VectorFOC G431 固定值，不依赖 HAL 头文件 */
+#ifndef SYS_CLOCK_HZ
+#define SYS_CLOCK_HZ            168000000UL
+#endif
+#define SYS_CLOCK_HZ_F          ((float)SYS_CLOCK_HZ)
+#define TIMER1_CLK_MHz          (SYS_CLOCK_HZ / 1000000UL)
+#define PWM_FREQUENCY           20000
+#define MCPWM_DEADTIME_CLOCKS   20
+#define V_REG                   1.65f
+#define CURRENT_SHUNT_RES       0.02f
+#define CURRENT_AMP_GAIN        50.0f
+#define VIN_R1                  1000.0f
+#define VIN_R2                  10000.0f
+#define FAC_CURRENT             ((3.3f / 4095.0f) / (CURRENT_SHUNT_RES * CURRENT_AMP_GAIN))
+#define VOLTAGE_TO_ADC_FACTOR   (((VIN_R2 + VIN_R1) / VIN_R1) * (3.3f / 4095.0f))
+#endif /* TEST_ENV */
+
+/* PWM 辅助宏（两种环境通用） */
+#define PWM_FREQUENCY_HZ        ((float)PWM_FREQUENCY)
+#define PWM_PERIOD_CYCLES       (uint16_t)((TIMER1_CLK_MHz * 1000000u / PWM_FREQUENCY) & 0xFFFE)
+#define PWM_ARR                 (uint16_t)(PWM_PERIOD_CYCLES / 2u)
+#define DEADTIME_COMP           MCPWM_DEADTIME_CLOCKS
 /* ==============================================================================
    2.  (System Timing)
    ==============================================================================
