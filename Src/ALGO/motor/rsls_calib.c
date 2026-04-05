@@ -2,13 +2,10 @@
 #include "calib_encoder.h"
 #include "calib_inductance.h"
 #include "calib_resistance.h"
-#ifdef BOARD_XSTAR
-#include "board_config_xstar.h"
-#else
+#include "config.h"   // 间接包含 board_config.h → HW_POSITION_SENSOR_MODE
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
 #include "mt6816_encoder.h"
 #endif
-
-#include "config.h"
 #include <malloc.h>
 #include <string.h>
 
@@ -40,8 +37,8 @@ CalibResult RSLSCalib_Start(MOTOR_DATA *motor, CalibrationContext *ctx) {
   ctx->inductance.voltages[0] = -VOLTAGE_MAX_CALIB;
   ctx->inductance.voltages[1] = +VOLTAGE_MAX_CALIB;
 
-  // Set initial direction
-#ifndef BOARD_XSTAR
+  // MT6816 需要设置初始旋转方向；Hall/ABZ 不需要
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
   MT6816_Handle_t *enc = (MT6816_Handle_t *)motor->components.encoder;
   enc->dir = MT6816_DIR_CW;
 #endif

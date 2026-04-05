@@ -19,12 +19,12 @@
  ********************************************************************************/
 #include "bsp_usart.h"
 #include "bsp_log.h"
-#include <stdlib.h>
 #include <string.h>
 /* usart service instance, modules' info would be recoreded here using
  * USARTRegister() */
 /* usart,usart */
 static uint8_t idx;
+static USARTInstance  usart_pool[DEVICE_USART_CNT];
 static USARTInstance *usart_instance[DEVICE_USART_CNT] = {NULL};
 /**
  * @brief
@@ -67,7 +67,7 @@ USARTInstance *USARTRegister(USART_Init_Config_s *USART_config) {
         LOGERROR("[bsp_usart] USART instance already registered!");
     }
   }
-  USARTInstance *usart = (USARTInstance *)malloc(sizeof(USARTInstance));
+  USARTInstance *usart = &usart_pool[idx];
   memset(usart, 0, sizeof(USARTInstance));
   usart->usart_handle = USART_config->usart_handle;
   usart->recv_buff_size = USART_config->recv_buff_size;

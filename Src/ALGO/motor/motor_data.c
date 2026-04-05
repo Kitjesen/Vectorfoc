@@ -4,19 +4,22 @@
  */
 #include "fsm.h"
 #include "motor.h"
-#include "config.h"
+#include "config.h"   // 间接包含 board_config.h → HW_POSITION_SENSOR_MODE / HW_MOTOR_HAL_HANDLE
 #include "foc/foc_algorithm.h"
 #include "motor_hal_api.h"
-#ifdef BOARD_XSTAR
-#include "board_config_xstar.h"
+/* 根据位置传感器类型引入对应驱动头文件及实例声明 */
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
 #include "hall_encoder.h"
+extern Motor_HAL_Handle_t xstar_hal_handle;
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
 #include "abz_encoder.h"
 extern Motor_HAL_Handle_t xstar_hal_handle;
-#else
+#else  /* HW_POSITION_SENSOR_MT6816 */
 #include "mt6816_encoder.h"
 extern Motor_HAL_Handle_t g431_hal_handle;
 extern MT6816_Handle_t encoder_data;
 #endif
+extern Motor_HAL_Handle_t HW_MOTOR_HAL_HANDLE;
 /* DS402state */
 StateMachine g_ds402_state_machine;
 /* CANconfig */
@@ -35,18 +38,12 @@ uint8_t g_run_mode = DEFAULT_RUN_MODE;
 MOTOR_DATA motor_data = {
     .components =
         {
-#ifdef BOARD_XSTAR
-            .hal = &xstar_hal_handle,
-#else
-            .hal = &g431_hal_handle,
-#endif
-#ifdef BOARD_XSTAR
+            .hal = &HW_MOTOR_HAL_HANDLE,
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
             .encoder = &hall_data,
-#else
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
             .encoder = &abz_data,
-#endif
-#else
+#else  /* HW_POSITION_SENSOR_MT6816 */
             .encoder = &encoder_data,
 #endif
         },
