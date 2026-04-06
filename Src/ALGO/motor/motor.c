@@ -20,18 +20,13 @@
 #include "config.h"
 #include "control/control.h"
 #include "hal_pwm.h" // For MHAL_PWM_Brake ( HAL)
-#include "mt6816_encoder.h"
 #include "param_access.h"
 #include "param_table.h"
 #include "pid.h"
 #include "rsls_calib.h"
 #include "safety_control.h"
 #include <stdlib.h>
-#ifdef BOARD_XSTAR
-extern Motor_HAL_Handle_t xstar_hal_handle;
-#else
-extern Motor_HAL_Handle_t g431_hal_handle;
-#endif
+extern Motor_HAL_Handle_t HW_MOTOR_HAL_HANDLE;
 /* DS402state */
 extern StateMachine g_ds402_state_machine;
 extern uint8_t g_can_id;

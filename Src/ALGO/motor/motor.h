@@ -27,7 +27,8 @@
 #include "motor_hal_api.h"
 #include "control/ladrc.h"
 #include "pid.h"
-#ifndef BOARD_XSTAR
+#include "board_config.h"
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
 #include "mt6816_encoder.h"
 #endif
 #include <math.h>

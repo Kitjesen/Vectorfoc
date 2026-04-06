@@ -19,12 +19,11 @@
 #include "foc/clarke.h"
 #include "foc/park.h"
 #include "hal_encoder.h"
-#ifdef BOARD_XSTAR
-#include "board_config_xstar.h"
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
+#include "mt6816_encoder.h"
+#else
 #include "hall_encoder.h"
 #include "abz_encoder.h"
-#else
-#include "mt6816_encoder.h"
 #endif
 #include <math.h>
 
@@ -125,14 +124,12 @@ CalibResult FluxCalib_Finish(MOTOR_DATA *motor, CalibrationContext *ctx) {
   motor->state.Sub_State = SUB_STATE_IDLE;
   motor->state.State_Mode = STATE_MODE_RUNNING;
 
-#ifdef BOARD_XSTAR
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
+  ((MT6816_Handle_t *)motor->components.encoder)->calib_valid = true;
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
   hall_data.calib_valid = true;
 #else
   abz_data.calib_valid = true;
-#endif
-#else
-  ((MT6816_Handle_t *)motor->components.encoder)->calib_valid = true;
 #endif
 
   PID_clear(&motor->IqPID);

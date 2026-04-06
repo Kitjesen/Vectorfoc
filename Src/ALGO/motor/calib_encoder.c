@@ -13,20 +13,19 @@
 // limitations under the License.
 
 #include "calib_encoder.h"
-#include "control/impl.h" // For Control_InjectVoltage
-#include "hal_pwm.h" // For MHAL_PWM_Brake ( HAL)
-#ifdef BOARD_XSTAR
-#include "board_config_xstar.h"
+#include "config.h"          /* provides HW_POSITION_SENSOR_MODE — must come first */
+#include "control/impl.h"    /* Control_InjectVoltage */
+#include "hal_pwm.h"         /* MHAL_PWM_Brake */
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
+#include "mt6816_encoder.h"
+#else
 #include "hall_encoder.h"
 #include "abz_encoder.h"
-#else
-#include "mt6816_encoder.h"           // Include specific encoder header
 #endif
-#include "config.h" // For calibration constants
 #include <math.h>
 #include <string.h>
-// Helper macro to access concrete encoder
-#ifndef BOARD_XSTAR
+/* Helper macros to access concrete MT6816 encoder — undefined on Hall/ABZ boards */
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
 #define ENC ((MT6816_Handle_t *)motor->components.encoder)
 #define CW MT6816_DIR_CW
 #define CCW MT6816_DIR_CCW
@@ -45,7 +44,8 @@ CalibResult DirectionPoleCalib_Update(MOTOR_DATA *motor,
                                       DirectionPoleCalibContext *ctx) {
   if (motor == NULL || ctx == NULL)
     return CALIB_FAILED_INVALID_PARAMS;
-#ifdef BOARD_XSTAR
+#if HW_POSITION_SENSOR_MODE != HW_POSITION_SENSOR_MT6816
+  /* Hall/ABZ: no mechanical calibration needed, mark as valid immediately */
   (void)ctx;
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
   hall_data.calib_valid = true;
@@ -136,7 +136,8 @@ CalibResult DirectionPoleCalib_Update(MOTOR_DATA *motor,
 CalibResult EncoderCalib_Update(MOTOR_DATA *motor, EncoderCalibContext *ctx) {
   if (motor == NULL || ctx == NULL)
     return CALIB_FAILED_INVALID_PARAMS;
-#ifdef BOARD_XSTAR
+#if HW_POSITION_SENSOR_MODE != HW_POSITION_SENSOR_MT6816
+  /* Hall/ABZ: no LUT calibration needed, mark valid and clear PID state */
   (void)ctx;
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
   hall_data.calib_valid = true;
