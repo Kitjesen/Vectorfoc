@@ -17,10 +17,15 @@
 #include "config.h"
 #include "board_config.h"
 #include "motor_hal_api.h"
-#include "mt6816_encoder.h"
 #include "hal_abstraction.h" // For HAL_GetTemperature()
 #include <math.h>
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#include "tmr3109_encoder.h"
+extern TMR3109_Handle_t tmr3109_encoder_data;
+#else
+#include "mt6816_encoder.h"
 extern MT6816_Handle_t encoder_data;
+#endif
 extern CURRENT_DATA current_data;
 /* ============================================================================
  * PWM Interface Implementation
@@ -152,24 +157,35 @@ static const Motor_HAL_AdcInterface_t g431_adc = {
  * ============================================================================
  */
 static void G431_Encoder_Update(void) {
-  // Call the MT6816 update function
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  TMR3109_Update(&tmr3109_encoder_data, CURRENT_MEASURE_PERIOD);
+#else
   MT6816_Update(&encoder_data, CURRENT_MEASURE_PERIOD);
+#endif
 }
 static void G431_Encoder_GetData(Motor_HAL_EncoderData_t *data) {
-  data->angle_rad = encoder_data.mec_angle_rad;
-  // Wait, check MT6816 struct. It has mec_angle_rad?
-  // Checking Step 1089... yes: float mec_angle_rad;
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  data->angle_rad    = tmr3109_encoder_data.mec_angle_rad;
+  data->velocity_rad = tmr3109_encoder_data.velocity_rad_s;
+  data->elec_angle   = tmr3109_encoder_data.elec_angle_rad;
+  data->raw_value    = (int32_t)tmr3109_encoder_data.raw_angle;
+#else
+  data->angle_rad    = encoder_data.mec_angle_rad;
   data->velocity_rad = encoder_data.velocity_rad_s;
-  data->elec_angle = encoder_data.elec_angle_rad;
-  data->raw_value = encoder_data.raw_angle;
+  data->elec_angle   = encoder_data.elec_angle_rad;
+  data->raw_value    = encoder_data.raw_angle;
+#endif
 }
 static void G431_Encoder_SetOffset(float offset) {
-  encoder_data.offset_rev =
-      offset; // Assuming offset_rev is the mechanical zero offset
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  tmr3109_encoder_data.offset_rev = offset;
+#else
+  encoder_data.offset_rev = offset;
+#endif
 }
 static const Motor_HAL_EncoderInterface_t g431_encoder = {
-    .update = G431_Encoder_Update,
-    .get_data = G431_Encoder_GetData,
+    .update    = G431_Encoder_Update,
+    .get_data  = G431_Encoder_GetData,
     .set_offset = G431_Encoder_SetOffset};
 /* ============================================================================
  * Main Handle Construction

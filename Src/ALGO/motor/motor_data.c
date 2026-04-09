@@ -28,7 +28,11 @@ extern Motor_HAL_Handle_t xstar_hal_handle;
 #elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
 #include "abz_encoder.h"
 extern Motor_HAL_Handle_t xstar_hal_handle;
-#else  /* HW_POSITION_SENSOR_MT6816 */
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#include "tmr3109_encoder.h"
+extern Motor_HAL_Handle_t g431_hal_handle;
+extern TMR3109_Handle_t tmr3109_encoder_data;
+#else  /* HW_POSITION_SENSOR_MT6816（默认）*/
 #include "mt6816_encoder.h"
 extern Motor_HAL_Handle_t g431_hal_handle;
 extern MT6816_Handle_t encoder_data;
@@ -57,7 +61,9 @@ MOTOR_DATA motor_data = {
             .encoder = &hall_data,
 #elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
             .encoder = &abz_data,
-#else  /* HW_POSITION_SENSOR_MT6816 */
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+            .encoder = &tmr3109_encoder_data,
+#else  /* HW_POSITION_SENSOR_MT6816（默认）*/
             .encoder = &encoder_data,
 #endif
         },

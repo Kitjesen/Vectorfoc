@@ -30,6 +30,8 @@
 #include "board_config.h"
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
 #include "mt6816_encoder.h"
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#include "tmr3109_encoder.h"
 #endif
 #include <math.h>
 /**
@@ -124,10 +126,14 @@ typedef struct {
   void *encoder;                 /**< encoder (calibration) */
 } MOTOR_COMPONENTS;
 /**
- * @brief ：encoder MT6816_Handle_t
- * @warning encoder MT6816_Handle_t*
+ * @brief 访问具体编码器句柄（标定代码使用）
+ * @note  仅在 HW_POSITION_SENSOR_MODE 为 MT6816 或 TMR3109 时有效
  */
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#define ENC(m) ((TMR3109_Handle_t *)((m)->components.encoder))
+#else
 #define ENC(m) ((MT6816_Handle_t *)((m)->components.encoder))
+#endif
 /**
  * @brief motorparam
  */
