@@ -19,43 +19,19 @@
  * @date 2026-01-20
  */
 #include "mit_protocol.h"
-#include "motor.h" // For g_can_id
+#include "motor.h"         /* g_can_id */
+#include "protocol_utils.h" /* Proto_Uint16ToFloat / FloatToUint16 / Uint12 */
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
 static uint8_t s_motor_can_id = 1;
-/**
- * @brief uintfloat (16bit)
- */
-static float Uint16ToFloat(uint16_t x, float min_val, float max_val) {
-  float span = max_val - min_val;
-  return ((float)x / 65535.0f) * span + min_val;
-}
-static uint16_t FloatToUint16(float x, float min_val, float max_val) {
-  float span = max_val - min_val;
-  float scaled = (x - min_val) / span;
-  if (scaled < 0.0f)
-    scaled = 0.0f;
-  if (scaled > 1.0f)
-    scaled = 1.0f;
-  return (uint16_t)(scaled * 65535.0f);
-}
-static float Uint12ToFloat(uint16_t x, float min_val, float max_val) {
-  float span = max_val - min_val;
-  return ((float)x / 4095.0f) * span + min_val;
-}
-/**
- * @brief floatuint (12bit)
- */
-static uint16_t FloatToUint12(float x, float min_val, float max_val) {
-  float span = max_val - min_val;
-  float scaled = (x - min_val) / span;
-  if (scaled < 0.0f)
-    scaled = 0.0f;
-  if (scaled > 1.0f)
-    scaled = 1.0f;
-  return (uint16_t)(scaled * 4095.0f);
-}
+
+/* 量化工具函数由 protocol_utils.h 提供，本地名称别名 */
+#define Uint16ToFloat  Proto_Uint16ToFloat
+#define FloatToUint16  Proto_FloatToUint16
+#define Uint12ToFloat  Proto_Uint12ToFloat
+#define FloatToUint12  Proto_FloatToUint12
 /**
  * @brief initMIT
  */

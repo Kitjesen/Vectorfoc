@@ -663,9 +663,9 @@ void vofa_Receive(uint8_t *buf, uint16_t len) {
   }
   /* ── CAN  () ── */
   if (strstr(recvStr, "scan_bus=1")) {
+    /* 单节点设备直接上报自身 CAN ID（无总线扫描硬件支持）；
+     * 如需多节点枚举，应通过 CAN 广播帧由各节点自报。 */
     Studio_SendText("bus_scan_start");
-    // TODO: actual， CAN ID
-    //
     Studio_SendTextf("bus_node=%d,online,%.0f", g_can_id,
                      motor_data.feedback.temperature);
     Studio_SendText("bus_scan_done");

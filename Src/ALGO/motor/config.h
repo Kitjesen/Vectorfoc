@@ -113,7 +113,8 @@
    4.  (Control Loop Configuration)
    ==============================================================================
  */
-#define VEL_LIMIT_DEFAULT 1000.0f // speed/velocitylimit [rpm]
+/* VEL_LIMIT_DEFAULT 已由 DEFAULT_VEL_LIMIT 替代，保留别名兼容旧引用 */
+#define VEL_LIMIT_DEFAULT DEFAULT_VEL_LIMIT
 /* PID output */
 #define CURRENT_PID_MAX_OUT 58.0f // currentoutputvoltage [V] (14S)
 #define VEL_PID_MAX_OUT 80.0f     // speed/velocityoutputcurrent [A]
@@ -158,7 +159,7 @@
 #define DEFAULT_TORQUE_CONST 0.05f // [Nm/A]
 /* limitparam */
 #define DEFAULT_TORQUE_LIMIT 2.0f   // [Nm]
-#define DEFAULT_VEL_LIMIT 1000.0f   // [rpm] (redefined from VEL_LIMIT_DEFAULT)
+#define DEFAULT_VEL_LIMIT 1000.0f   // 速度限制 [turn/s]（控制层单位）
 #define DEFAULT_VOLTAGE_LIMIT 58.0f // [V] (14S Battery Max)
 #define DEFAULT_CURRENT_LIMIT 10.0f // [A]
 /*  */

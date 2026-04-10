@@ -28,6 +28,7 @@ include_directories(
     ${PROJ_ROOT}/Src/UI/led
     ${PROJ_ROOT}/Src/COMM
     ${PROJ_ROOT}/Src/COMM/manager
+    ${PROJ_ROOT}/Src/COMM/protocol
     ${PROJ_ROOT}/Src/COMM/protocol/vector
     ${PROJ_ROOT}/Src/COMM/transport
     ${PROJ_ROOT}/Src/COMM/executor
