@@ -161,18 +161,21 @@ typedef struct {
   float current_ctrl_p_gain;  /**< () current P gain */
   float current_ctrl_i_gain;  /**< () current I gain */
   int current_ctrl_bandwidth; /**< current [rad/s] (100~2000) */
-  float input_position; /**< inputposition */
-  float input_velocity; /**< inputspeed/velocity */
-  float input_torque;   /**< input */
-  float input_current;  /**< inputcurrent */
-  float pos_setpoint;    /**< position */
-  float vel_setpoint;    /**< speed/velocity */
-  float torque_setpoint; /**<  */
-  // MITparam
-  float mit_kp;      /**< MITposition [Nm/rad] */
-  float mit_kd;      /**< MIT [Nm·s/rad] */
-  float mit_pos_des; /**< MITposition [rad] */
-  float mit_vel_des; /**< MITspeed/velocity [rad/s] */
+  float input_position; /**< 位置设定值 [turn] — 圈数，与 feedback.position 同单位 */
+  float input_velocity; /**< 速度设定值 [turn/s] — 圈/秒，与 feedback.velocity 同单位 */
+  float input_torque;   /**< 力矩设定值 [Nm] */
+  float input_current;  /**< 电流设定值 [A] */
+  float pos_setpoint;    /**< 位置设定点 [turn] */
+  float vel_setpoint;    /**< 速度设定点 [turn/s] */
+  float torque_setpoint; /**< 力矩设定点 [Nm] */
+  /* MIT 阻抗控制参数
+   * 注意：mit_kp/kd 的单位是 Nm/rad 和 Nm·s/rad（弧度制）。
+   * impl.c 中读取 feedback.position/velocity（圈数）后乘 2π 还原为弧度，
+   * 再与 mit_pos_des/vel_des（弧度）做差，保证量纲一致。 */
+  float mit_kp;      /**< MIT 位置刚度 [Nm/rad] */
+  float mit_kd;      /**< MIT 阻尼 [Nm·s/rad] */
+  float mit_pos_des; /**< MIT 期望位置 [rad] */
+  float mit_vel_des; /**< MIT 期望速度 [rad/s] */
   volatile bool input_updated; /**< inputparamupdate */
 } MOTOR_CONTROLLER;
 /**
@@ -189,12 +192,12 @@ typedef struct {
  * @brief motorfeedback
  */
 typedef struct {
-  float position;          /**< position [rad] */
-  float velocity;          /**< speed/velocity [rad/s] */
-  float phase_angle;       /**< angle [rad] */
-  float temperature;       /**< temperature [degC] */
-  float observer_angle;    /**< observerangle [rad] */
-  float observer_velocity; /**< observerspeed/velocity [rad/s] */
+  float position;          /**< 机械位置 [turn] — 圈数，0~1 per rev；控制层用时乘 2π 得 [rad] */
+  float velocity;          /**< 机械速度 [turn/s] — 圈/秒；控制层用时乘 2π 得 [rad/s] */
+  float phase_angle;       /**< 电角度 [rad]，范围 (-π, π] */
+  float temperature;       /**< 温度 [degC] */
+  float observer_angle;    /**< SMO 估计电角度 [rad] */
+  float observer_velocity; /**< SMO 估计速度 [rad/s] */
 } MOTOR_FEEDBACK;
 /**
  * @brief motor

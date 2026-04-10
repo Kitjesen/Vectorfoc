@@ -72,10 +72,10 @@ void Control_InnerCurrentLoop(MOTOR_DATA *motor, MotorControlCtx *ctx) {
   float Ib = motor->algo_input.Ib;
   float Ic = motor->algo_input.Ic;
   
-  // 电流过零阈值：应略大于 ADC 噪声的 2~3 倍
-  // TODO: 从 config 读取，或通过标定自动估算
+  /* 电流过零阈值：从 algo_config 读取（由标定写入，或 motor_data 初始化时
+   * 设为 0.2A 作为安全默认值，略大于 ADC 噪声 ~2-3 倍）。 */
   float i_thresh = motor->algo_config.deadtime_i_thresh;
-  if (i_thresh <= 0.0f) i_thresh = 0.2f;  // 默认 0.2A（假设 ADC 噪声 ~0.1A）
+  if (i_thresh <= 0.0f) i_thresh = 0.2f;
   
   // 根据电流方向确定补偿符号
   // 电流为正时，上管导通时间不足，需要增加占空比 (+)

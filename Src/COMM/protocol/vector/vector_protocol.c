@@ -22,6 +22,7 @@
 #include "rtos/cmd_service.h" // For CmdService_SetReportEnable
 #include "safety_control.h"
 #include "stm32g4xx_hal.h"
+#include "version.h"           // FW_VERSION_MAJOR / FW_VERSION_MINOR
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -142,6 +143,18 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   memset(cmd, 0, sizeof(MotorCommand));
   VectorCmdType type = (VectorCmdType)GET_CMD_TYPE(frame->id);
   switch (type) {
+  case VECTOR_CMD_GET_ID: { // 0 — query device CAN ID
+    CAN_Frame rsp;
+    rsp.id = (0x00u << 24) | ((uint32_t)g_can_id << 8) | 0xFDu;
+    rsp.is_extended = true;
+    rsp.dlc = 4;
+    rsp.data[0] = g_can_id;          /* CAN ID */
+    rsp.data[1] = g_protocol_type;   /* active protocol */
+    rsp.data[2] = FW_VERSION_MAJOR;
+    rsp.data[3] = FW_VERSION_MINOR;
+    Protocol_SendFrame(&rsp);
+    return PARSE_OK;
+  }
   case VECTOR_CMD_MOTOR_CTRL: // 1
     return ParseMotorCtrl(frame, cmd);
   case VECTOR_CMD_MOTOR_ENABLE: // 3
@@ -254,8 +267,22 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
       return PARSE_OK;
     }
     return PARSE_ERR_INVALID_FRAME;
-  case VECTOR_CMD_SET_BAUDRATE: // 23
-  case VECTOR_CMD_SET_PROTOCOL: // 25
+  case VECTOR_CMD_SET_BAUDRATE: // 23 — configure CAN baudrate (saved to Flash)
+    if (frame->dlc >= 1) {
+      uint8_t baud_id = frame->data[0]; /* 0=250k, 1=500k, 2=1M */
+      Param_WriteUint8(PARAM_CAN_BAUDRATE, baud_id);
+      Param_ScheduleSave();
+      /* Acknowledge: echo back new baudrate ID */
+      CAN_Frame rsp;
+      rsp.id = (0x17u << 24) | ((uint32_t)g_can_id << 8) | 0xFDu;
+      rsp.is_extended = true;
+      rsp.dlc = 1;
+      rsp.data[0] = baud_id;
+      Protocol_SendFrame(&rsp);
+      return PARSE_OK;
+    }
+    return PARSE_ERR_INVALID_FRAME;
+  case VECTOR_CMD_SET_PROTOCOL: // 25 — switch active protocol
     if (frame->dlc >= 1) {
       cmd->is_protocol_switch = true;
       cmd->target_protocol = frame->data[0];

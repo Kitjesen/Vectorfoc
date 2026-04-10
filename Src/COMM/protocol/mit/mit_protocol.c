@@ -92,25 +92,54 @@ static ParseResult ParseMITControl(const CAN_Frame *frame, MotorCommand *cmd) {
 /**
  * @brief MIT
  */
+/**
+ * @brief MIT 特殊命令帧（DLC=2）解析
+ *
+ * MIT Cheetah 协议约定：DLC=2 时为特殊命令帧。
+ *   data[0] = 0xFF (magic byte，区分普通控制帧)
+ *   data[1] = MITCmdType
+ */
+static ParseResult ParseMITSpecialCmd(const CAN_Frame *frame, MotorCommand *cmd)
+{
+  if (frame->dlc < 2 || frame->data[0] != 0xFF) {
+    return PARSE_ERR_INVALID_FRAME;
+  }
+  MITCmdType type = (MITCmdType)frame->data[1];
+  switch (type) {
+  case MIT_CMD_MOTOR_OFF:   /* 0x00 — disable motor */
+    cmd->enable_motor = false;
+    return PARSE_OK;
+  case MIT_CMD_MOTOR_ON:    /* 0x01 — enable motor */
+    cmd->enable_motor = true;
+    return PARSE_OK;
+  case MIT_CMD_SET_ZERO:    /* 0x02 — set current position as zero */
+    cmd->set_zero = true;
+    return PARSE_OK;
+  case MIT_CMD_GET_STATE:   /* 0x04 — request status frame (handled by manager) */
+    /* No specific MotorCommand fields needed; manager sends feedback on PARSE_OK */
+    return PARSE_OK;
+  default:
+    return PARSE_ERR_UNSUPPORTED;
+  }
+}
+
 ParseResult ProtocolMIT_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   if (frame == NULL || cmd == NULL) {
     return PARSE_ERR_INVALID_FRAME;
   }
   memset(cmd, 0, sizeof(MotorCommand));
-  // MITCAN ID
-  // CAN ID: 0x00-0x7FmotorID
-  // ID
-  // : DLC
+
   if (frame->dlc == 8) {
-    // 8
+    /* Standard MIT impedance control frame */
     return ParseMITControl(frame, cmd);
-  } else if (frame->dlc == 0) {
-    // 0 (ID)
-    if (frame->is_rtr) {
-      // RTR: state
-      return PARSE_OK;
-    }
+  } else if (frame->dlc == 2) {
+    /* MIT special command frame: [0xFF][CmdType] */
+    return ParseMITSpecialCmd(frame, cmd);
+  } else if (frame->dlc == 0 && frame->is_rtr) {
+    /* RTR: remote status request — manager handles feedback reply */
+    return PARSE_OK;
   }
+
   return PARSE_ERR_UNSUPPORTED;
 }
 /**

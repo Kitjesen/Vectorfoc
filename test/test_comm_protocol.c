@@ -410,6 +410,7 @@ int main(void)
 #include "calibration_context.h"
 
 uint8_t g_can_id = 1;
+uint8_t g_protocol_type = 0;
 MOTOR_DATA motor_data;
 
 void Motor_RequestCalibration(MOTOR_DATA *m, uint8_t type) { (void)m; (void)type; }
@@ -419,6 +420,7 @@ uint8_t Motor_PreCalibCheck(MOTOR_DATA *m, uint8_t *fail) {
     (void)m; if (fail) *fail = 0; return 0xFF;
 }
 void Param_WriteFloat(uint16_t idx, float v) { (void)idx; (void)v; }
+void Param_WriteUint8(uint16_t idx, uint8_t v) { (void)idx; (void)v; }
 void Param_ScheduleSave(void) {}
 void CmdService_SetReportEnable(bool en) { (void)en; }
 void Protocol_SendFrame(const CAN_Frame *f) { (void)f; }
