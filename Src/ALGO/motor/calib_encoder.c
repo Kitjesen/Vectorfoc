@@ -1,23 +1,50 @@
+// Copyright 2024-2026 VectorFOC Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "calib_encoder.h"
-#include "control/impl.h" // For Control_InjectVoltage
-#include "hal_pwm.h" // For MHAL_PWM_Brake ( HAL)
-#ifdef BOARD_XSTAR
-#include "board_config_xstar.h"
+#include "config.h"          /* provides HW_POSITION_SENSOR_MODE — must come first */
+#include "control/impl.h"    /* Control_InjectVoltage */
+#include "hal_pwm.h"         /* MHAL_PWM_Brake */
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
+#include "mt6816_encoder.h"
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#include "tmr3109_encoder.h"
+#else
 #include "hall_encoder.h"
 #include "abz_encoder.h"
-#else
-#include "mt6816_encoder.h"           // Include specific encoder header
 #endif
-#include "config.h" // For calibration constants
 #include <math.h>
 #include <string.h>
-// Helper macro to access concrete encoder
-#ifndef BOARD_XSTAR
-#define ENC ((MT6816_Handle_t *)motor->components.encoder)
-#define CW MT6816_DIR_CW
-#define CCW MT6816_DIR_CCW
+
+/*
+ * 统一编码器访问宏。
+ * MT6816 与 TMR3109 句柄字段名完全对齐（shadow_count / count_in_cpr /
+ * dir / offset_counts / offset_lut / calib_valid / pole_pairs），
+ * 因此两者共用同一套标定逻辑，仅 CPR 常量不同。
+ */
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#define ENC          ((TMR3109_Handle_t *)motor->components.encoder)
+#define CW           TMR3109_DIR_CW
+#define CCW          TMR3109_DIR_CCW
+#define ENCODER_CPR_F TMR3109_CPR_F
+#define ENCODER_CPR   TMR3109_CPR
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
+#define ENC          ((MT6816_Handle_t *)motor->components.encoder)
+#define CW           MT6816_DIR_CW
+#define CCW          MT6816_DIR_CCW
 #define ENCODER_CPR_F MT6816_CPR_F
-#define ENCODER_CPR MT6816_CPR
+#define ENCODER_CPR   MT6816_CPR
 #endif
 #define OFFSET_LUT_NUM 128
 /**
@@ -31,7 +58,9 @@ CalibResult DirectionPoleCalib_Update(MOTOR_DATA *motor,
                                       DirectionPoleCalibContext *ctx) {
   if (motor == NULL || ctx == NULL)
     return CALIB_FAILED_INVALID_PARAMS;
-#ifdef BOARD_XSTAR
+#if (HW_POSITION_SENSOR_MODE != HW_POSITION_SENSOR_MT6816) && \
+    (HW_POSITION_SENSOR_MODE != HW_POSITION_SENSOR_TMR3109)
+  /* Hall/ABZ: no mechanical calibration needed, mark as valid immediately */
   (void)ctx;
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
   hall_data.calib_valid = true;
@@ -40,7 +69,7 @@ CalibResult DirectionPoleCalib_Update(MOTOR_DATA *motor,
 #endif
   motor->state.Cs_State = CS_ENCODER_START;
   return CALIB_SUCCESS;
-#else
+#else  /* MT6816 or TMR3109: full mechanical calibration */
   float time = (float)ctx->loop_count * CURRENT_MEASURE_PERIOD;
   switch (motor->state.Cs_State) {
   case CS_DIR_PP_START:
@@ -122,7 +151,9 @@ CalibResult DirectionPoleCalib_Update(MOTOR_DATA *motor,
 CalibResult EncoderCalib_Update(MOTOR_DATA *motor, EncoderCalibContext *ctx) {
   if (motor == NULL || ctx == NULL)
     return CALIB_FAILED_INVALID_PARAMS;
-#ifdef BOARD_XSTAR
+#if (HW_POSITION_SENSOR_MODE != HW_POSITION_SENSOR_MT6816) && \
+    (HW_POSITION_SENSOR_MODE != HW_POSITION_SENSOR_TMR3109)
+  /* Hall/ABZ: no LUT calibration needed, mark valid and clear PID state */
   (void)ctx;
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
   hall_data.calib_valid = true;
@@ -134,7 +165,7 @@ CalibResult EncoderCalib_Update(MOTOR_DATA *motor, EncoderCalibContext *ctx) {
   PID_clear(&motor->VelPID);
   PID_clear(&motor->PosPID);
   return CALIB_SUCCESS;
-#else
+#else  /* MT6816 or TMR3109: LUT calibration */
   float time = (float)ctx->loop_count * CURRENT_MEASURE_PERIOD;
   float voltage = CURRENT_MAX_CALIB * motor->parameters.Rs * 3.0f / 2.0f;
   switch (motor->state.Cs_State) {
