@@ -47,9 +47,15 @@ static inline void ISR_UpdateEncoder(MOTOR_DATA *motor) {
     Motor_HAL_EncoderData_t enc_data;
     motor->components.hal->encoder->update();
     motor->components.hal->encoder->get_data(&enc_data);
-    motor->feedback.position = enc_data.angle_rad / M_2PI;
-    motor->feedback.velocity = enc_data.velocity_rad / M_2PI;
-    motor->feedback.phase_angle = enc_data.elec_angle;
+    /* NOTE: feedback.position 和 feedback.velocity 以【圈数 (turn)】存储
+     *   position  = angle_rad  / (2π)  → [turn]，   0~1 per revolution
+     *   velocity  = velocity_rad / (2π) → [turn/s]，rad/s 除以 2π
+     * 控制层（outer.c / impl.c）在需要 [rad] 时乘以 M_2PI 还原。
+     * motor.h 中 feedback 字段注释 "[rad]" 为历史遗留误标，实际单位是圈数。
+     * motor.h 中的 CONTROLLER_DATA.vel_limit 等速度参数也同样是 [turn/s]。 */
+    motor->feedback.position = enc_data.angle_rad / M_2PI;  /* [turn] */
+    motor->feedback.velocity = enc_data.velocity_rad / M_2PI; /* [turn/s] */
+    motor->feedback.phase_angle = enc_data.elec_angle; /* [rad] 电角度，正确 */
     /* Open-loop: let control module accumulate theta_elec freely */
     if (motor->state.Control_Mode != CONTROL_MODE_OPEN) {
       motor->algo_input.theta_elec = enc_data.elec_angle;

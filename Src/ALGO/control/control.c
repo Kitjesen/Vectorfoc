@@ -19,8 +19,9 @@
 #include "impl.h"
 #include "config.h"
 #include "foc/foc_algorithm.h"
-#include "config.h"
 #include "trajectory/rate_limiter.h"
+#include "error_manager.h"
+#include "error_types.h"
 // Static Context
 static MotorControlCtx s_ctx;
 // Rate Limiters
@@ -79,6 +80,12 @@ void MotorControl_Run(MOTOR_DATA *motor) {
     ControlImpl_MIT(motor);
     break;
   default:
+    /* 未知控制模式：关闭 PWM 输出，防止悬空状态导致硬件损坏。
+     * 正常运行时不应进入此分支；若出现，说明 Control_Mode 被意外写入无效值。 */
+    if (motor->components.hal && motor->components.hal->pwm) {
+      motor->components.hal->pwm->brake();
+    }
+    ERROR_REPORT(ERROR_MOTOR_ENCODER_LOSS, "Unknown control mode — PWM braked");
     break;
   }
   //

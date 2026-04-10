@@ -125,6 +125,9 @@ void Executor_ProcessCommand(const MotorCommand *cmd) {
       case 3:
         new_mode = CONTROL_MODE_TORQUE;
         break;
+      case 4:
+        new_mode = CONTROL_MODE_VELOCITY_RAMP;
+        break;
       case 5:
         new_mode = CONTROL_MODE_POSITION;
         break;
