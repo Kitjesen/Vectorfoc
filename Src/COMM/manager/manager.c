@@ -194,6 +194,20 @@ bool Protocol_BuildParamResponse(uint16_t param_index, float value,
   }
 }
 /**
+ * @brief  Build calibration status frame (CMD 0x09)
+ */
+bool Protocol_BuildCalibStatus(const MotorStatus *status, CAN_Frame *frame) {
+  if (status == NULL || frame == NULL) {
+    return false;
+  }
+  switch (s_current_protocol) {
+  case PROTOCOL_INOVXIO:
+    return ProtocolPrivate_BuildCalibStatus(status, frame);
+  default:
+    return false;
+  }
+}
+/**
  * @brief CAN
  * @note ， BSP_CAN_SendFrame
  */

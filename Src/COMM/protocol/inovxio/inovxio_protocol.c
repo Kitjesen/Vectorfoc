@@ -1,4 +1,5 @@
 #include "inovxio_protocol.h"
+#include "calibration_context.h"
 #include "fault_def.h"
 #include "manager.h" // For Protocol_SendFrame
 #include "motor.h"
@@ -138,8 +139,7 @@ ParseResult ProtocolPrivate_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   case PRIVATE_CMD_SET_ZERO: // 6
     cmd->set_zero = true;
     return PARSE_OK;
-  case PRIVATE_CMD_CALIBRATE: // 8 (New)
-    // motorcalibration ()
+  case PRIVATE_CMD_CALIBRATE: // 8
     {
       uint8_t type = 0;
       if (frame->dlc >= 1)
@@ -147,6 +147,44 @@ ParseResult ProtocolPrivate_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
       Motor_RequestCalibration(&motor_data, type);
     }
     return PARSE_OK;
+  case PRIVATE_CMD_CALIB_STATUS: { // 9 — query calibration progress
+    MotorStatus s;
+    s.can_id = g_can_id;
+    s.calib_stage = motor_data.state.Sub_State;
+    s.calib_sub_stage = motor_data.state.Cs_State;
+    s.calib_progress = CalibContext_GetProgress(
+        motor_data.state.Sub_State, motor_data.state.Cs_State,
+        &motor_data.calib_ctx);
+    s.calib_result = motor_data.last_calib_result;
+    CAN_Frame rsp;
+    if (ProtocolPrivate_BuildCalibStatus(&s, &rsp))
+      Protocol_SendFrame(&rsp);
+    return PARSE_OK;
+  }
+  case PRIVATE_CMD_CALIB_ABORT: // 10 — abort calibration
+    Motor_AbortCalibration(&motor_data);
+    {
+      MotorStatus s;
+      s.can_id = g_can_id;
+      s.calib_stage = motor_data.state.Sub_State;
+      s.calib_sub_stage = motor_data.state.Cs_State;
+      s.calib_progress = 0;
+      s.calib_result = motor_data.last_calib_result;
+      CAN_Frame rsp;
+      if (ProtocolPrivate_BuildCalibStatus(&s, &rsp))
+        Protocol_SendFrame(&rsp);
+    }
+    return PARSE_OK;
+  case PRIVATE_CMD_CALIB_VALIDATE: { // 14 — pre-calibration check
+    uint8_t fail_mask = 0;
+    uint8_t pass_mask = Motor_PreCalibCheck(&motor_data, &fail_mask);
+    CAN_Frame rsp;
+    if (ProtocolPrivate_BuildCalibValidate(
+            pass_mask, fail_mask, motor_data.algo_input.Vbus,
+            motor_data.feedback.temperature, &rsp))
+      Protocol_SendFrame(&rsp);
+    return PARSE_OK;
+  }
   case PRIVATE_CMD_SET_ID: // 7
     //  Param API  ID
     if (frame->dlc >= 4) { // Assumed layout: [NewID][0][0][0]
@@ -227,7 +265,8 @@ bool ProtocolPrivate_BuildFeedback(const MotorStatus *status,
   // Bit 23-22: Mode (0:Reset, 1:Cali, 2:Motor)
   // Bit 21-16: Fault bits (6 bits)
   // Bit 15-8:  Master ID (0xFD)
-  uint32_t mode = 2; // Motor Mode
+  // Mode: 1 = Calibrating, 2 = Motor operational
+  uint32_t mode = (status->calib_stage != 0u) ? 1u : 2u;
   // fault (Bit 21-16)
   // Bit 21:  (FAULT_ENCODER_UNCALIBRATED)
   // Bit 20: overload (FAULT_STALL_OVERLOAD)
@@ -341,5 +380,70 @@ bool ProtocolPrivate_BuildFaultDetail(const MotorStatus *status,
   frame->data[5] = (timestamp >> 16) & 0xFF;
   frame->data[6] = (timestamp >> 8) & 0xFF;
   frame->data[7] = timestamp & 0xFF;
+  return true;
+}
+/**
+ * @brief  Build calibration status frame (CMD 0x09)
+ * @details
+ *   CAN_ID: [0x09<<24] | [can_id<<8] | 0xFD
+ *   data[0] = sub_state   (SUB_STATE: 0=IDLE,1=CURRENT,2=RSLS,3=FLUX)
+ *   data[1] = cs_state    (CS_STATE: detailed sub-stage within RSLS)
+ *   data[2] = progress    (0-100%)
+ *   data[3] = last_result (CalibResult)
+ *   data[4:5] = Rs × 1000 as uint16 (mΩ), valid after calibration
+ *   data[6:7] = pole_pairs as uint16
+ */
+bool ProtocolPrivate_BuildCalibStatus(const MotorStatus *status,
+                                      CAN_Frame *frame) {
+  if (!status || !frame)
+    return false;
+  frame->id = (0x09u << 24) | ((uint32_t)status->can_id << 8) | 0xFDu;
+  frame->is_extended = true;
+  frame->dlc = 8;
+  frame->data[0] = status->calib_stage;
+  frame->data[1] = status->calib_sub_stage;
+  frame->data[2] = status->calib_progress;
+  frame->data[3] = status->calib_result;
+  // Encode measured Rs (Ohm → mΩ as uint16, clamped to 0-65535)
+  float rs_mohm = motor_data.parameters.Rs * 1000.0f;
+  if (rs_mohm < 0.0f) rs_mohm = 0.0f;
+  if (rs_mohm > 65535.0f) rs_mohm = 65535.0f;
+  uint16_t rs_raw = (uint16_t)rs_mohm;
+  Uint16ToBuf(rs_raw, &frame->data[4]);
+  // Encode pole pairs
+  uint16_t pp = (uint16_t)motor_data.parameters.pole_pairs;
+  Uint16ToBuf(pp, &frame->data[6]);
+  return true;
+}
+/**
+ * @brief  Build pre-calibration validation response frame (CMD 0x0E)
+ * @details
+ *   CAN_ID: [0x0E<<24] | [can_id<<8] | 0xFD
+ *   data[0] = pass_mask  (bit0=voltage, bit1=temp, bit2=motor_state, bit3=encoder)
+ *   data[1] = fail_mask  (same bit layout)
+ *   data[2:3] = Vbus × 100 as uint16
+ *   data[4]   = temperature (uint8, °C)
+ *   data[5:7] = reserved (0)
+ */
+bool ProtocolPrivate_BuildCalibValidate(uint8_t pass_mask, uint8_t fail_mask,
+                                        float vbus, float temp,
+                                        CAN_Frame *frame) {
+  if (!frame)
+    return false;
+  frame->id = (0x0Eu << 24) | ((uint32_t)g_can_id << 8) | 0xFDu;
+  frame->is_extended = true;
+  frame->dlc = 8;
+  frame->data[0] = pass_mask;
+  frame->data[1] = fail_mask;
+  float vbus_x100 = vbus * 100.0f;
+  if (vbus_x100 < 0.0f) vbus_x100 = 0.0f;
+  if (vbus_x100 > 65535.0f) vbus_x100 = 65535.0f;
+  uint16_t vbus_raw = (uint16_t)vbus_x100;
+  Uint16ToBuf(vbus_raw, &frame->data[2]);
+  int16_t temp_raw = (int16_t)temp;
+  frame->data[4] = (uint8_t)(temp_raw < 0 ? 0 : (temp_raw > 255 ? 255 : temp_raw));
+  frame->data[5] = 0;
+  frame->data[6] = 0;
+  frame->data[7] = 0;
   return true;
 }

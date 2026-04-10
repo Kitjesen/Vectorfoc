@@ -1,5 +1,6 @@
 #include "motor_api.h"
 #include "current_calib.h"
+#include "flux_calib.h"
 #include "control/control.h" // For CurrentLoop_UpdateGain, Control_Init
 #include "control/cogging.h"
 #include "control/feedforward.h"
@@ -59,15 +60,25 @@ void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type) {
   CalibContext_Reset(&motor->calib_ctx);
   // 4. setcalibrationstate
   // 4. Select calibration mode
+  motor->calib_type_requested = calibration_type;
+  motor->last_calib_result = CALIB_IN_PROGRESS;
   switch (calibration_type) {
   case 1:
-    motor->state.Sub_State = RSLS_CALIBRATING;
-    RSLSCalib_Start(motor, &motor->calib_ctx);
-    break;
   case 2:
     motor->state.Sub_State = RSLS_CALIBRATING;
     RSLSCalib_Start(motor, &motor->calib_ctx);
     break;
+  case 3: // Current offset calibration only
+    motor->state.Sub_State = CURRENT_CALIBRATING;
+    CurrentCalib_Start(motor, &motor->calib_ctx);
+    break;
+  case 4: // Flux calibration only (requires encoder already calibrated)
+    motor->state.Sub_State = FLUX_CALIBRATING;
+    FluxCalib_Start(motor, &motor->calib_ctx);
+    break;
+  case 5: // Anti-cogging calibration
+    Motor_API_StartCoggingCalib(motor);
+    return; // Cogging calib runs independently, skip DS402 state change
   default:
     motor->state.Sub_State = CURRENT_CALIBRATING;
     CurrentCalib_Start(motor, &motor->calib_ctx);
@@ -76,6 +87,57 @@ void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type) {
   // 5. statemode ( FSM )
   // motor->state.State_Mode = STATE_MODE_DETECTING; // Legacy
   StateMachine_RequestState(&g_ds402_state_machine, STATE_CALIBRATING);
+}
+
+void Motor_AbortCalibration(MOTOR_DATA *motor) {
+  if (motor->state.Sub_State == SUB_STATE_IDLE)
+    return;
+  MHAL_PWM_Brake();
+  CalibContext_Reset(&motor->calib_ctx);
+  motor->state.Sub_State = SUB_STATE_IDLE;
+  motor->state.Cs_State = CS_STATE_IDLE;
+  motor->last_calib_result = CALIB_ABORTED;
+  StateMachine_RequestState(&g_ds402_state_machine, STATE_SWITCH_ON_DISABLED);
+}
+
+uint8_t Motor_PreCalibCheck(MOTOR_DATA *motor, uint8_t *fail_mask) {
+  uint8_t pass = 0;
+  uint8_t fail = 0;
+
+  // Bit 0: Bus voltage >= 18V
+  if (motor->algo_input.Vbus >= 18.0f) {
+    pass |= (1u << 0);
+  } else {
+    fail |= (1u << 0);
+  }
+
+  // Bit 1: Temperature < 80°C
+  if (motor->feedback.temperature < 80.0f) {
+    pass |= (1u << 1);
+  } else {
+    fail |= (1u << 1);
+  }
+
+  // Bit 2: Motor not in GUARD (fault) state
+  if (motor->state.State_Mode != STATE_MODE_GUARD) {
+    pass |= (1u << 2);
+  } else {
+    fail |= (1u << 2);
+  }
+
+  // Bit 3: Encoder not reporting hardware loss fault
+  {
+    uint32_t faults = Safety_GetActiveFaultBits();
+    if (!(faults & FAULT_ENCODER_LOSS)) {
+      pass |= (1u << 3);
+    } else {
+      fail |= (1u << 3);
+    }
+  }
+
+  if (fail_mask != NULL)
+    *fail_mask = fail;
+  return pass;
 }
 void Motor_ClearFaults(MOTOR_DATA *motor) {
   if (motor->state.State_Mode == STATE_MODE_GUARD) {

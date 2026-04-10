@@ -39,26 +39,39 @@ static void MotorInitializeTask(MOTOR_DATA *motor) {
   case CURRENT_CALIBRATING:
     result = CurrentCalib_Update(motor, &motor->calib_ctx);
     if (result == CALIB_SUCCESS) {
-      Init_Motor_Calib(motor); //  RSLS calibration
+      motor->last_calib_result = CALIB_SUCCESS;
+      if (motor->calib_type_requested == 3) {
+        // Current-only calibration: done, return to idle
+        motor->state.Sub_State = SUB_STATE_IDLE;
+        motor->state.State_Mode = STATE_MODE_RUNNING;
+        Param_ScheduleSave();
+      } else {
+        Init_Motor_Calib(motor); //  RSLS calibration
+      }
     } else if (result != CALIB_IN_PROGRESS) {
+      motor->last_calib_result = result;
       motor->state.State_Mode = STATE_MODE_GUARD;
     }
     break;
   case RSLS_CALIBRATING:
     result = RSLSCalib_Update(motor, &motor->calib_ctx, CURRENT_MEASURE_PERIOD);
     if (result == CALIB_SUCCESS) {
+      motor->last_calib_result = CALIB_SUCCESS;
       motor->state.Sub_State = FLUX_CALIBRATING;
     } else if (result != CALIB_IN_PROGRESS) {
+      motor->last_calib_result = result;
       motor->state.State_Mode = STATE_MODE_GUARD;
     }
     break;
   case FLUX_CALIBRATING:
     result = FluxCalib_Update(motor, &motor->calib_ctx);
     if (result == CALIB_SUCCESS) {
+      motor->last_calib_result = CALIB_SUCCESS;
       motor->state.Sub_State = SUB_STATE_IDLE;
       motor->state.State_Mode = STATE_MODE_RUNNING;
       Param_ScheduleSave(); // calibrationdone，（ISRsafety）
     } else if (result != CALIB_IN_PROGRESS) {
+      motor->last_calib_result = result;
       motor->state.State_Mode = STATE_MODE_GUARD; // calibration
     }
     break;
