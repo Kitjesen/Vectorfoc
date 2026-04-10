@@ -13,7 +13,7 @@
  *   CAN ← Protocol_BuildFeedback() ← state
  *
  * :
- *   Protocol_Init(PROTOCOL_INOVXIO);        // init
+ *   Protocol_Init(PROTOCOL_VECTOR);        // init
  *   Protocol_ProcessRxFrame(&can_frame);    // CANinterrupt
  *   Protocol_SendFrame(&can_frame);         // CAN
     CAN 。
@@ -30,7 +30,7 @@
 #include "fsm.h"
 #include "hal_abstraction.h"
 #include "hal_encoder.h"
-#include "protocol/inovxio/inovxio_protocol.h"
+#include "protocol/vector/vector_protocol.h"
 #include "protocol/mit/mit_protocol.h"
 #include "motor.h"
 #include "safety_control.h" // For Safety_GetActiveFaultBits
@@ -39,10 +39,10 @@
 #include "device_id.h"
 #include <string.h>
 #define CAN_BROADCAST_ADDR 0x7F   ///< CAN
-#define INOVXIO_CMD_GET_ID 0x00   ///< InovxiogetID
+#define VECTOR_CMD_GET_ID 0x00   ///< InovxiogetID
 #define PROTOCOL_RX_QUEUE_LEN 32U ///< Rx ring buffer length
 /*  */
-static ProtocolType s_current_protocol = PROTOCOL_INOVXIO;
+static ProtocolType s_current_protocol = PROTOCOL_VECTOR;
 /* （ NULL， BSP_CAN ）*/
 static const TransportInterface *s_transport = NULL;
 /* ISR->Task Rx ring buffer */
@@ -81,8 +81,8 @@ void Protocol_Init(ProtocolType default_protocol) {
   s_current_protocol = default_protocol;
   // init
   switch (s_current_protocol) {
-  case PROTOCOL_INOVXIO:
-    ProtocolPrivate_Init();
+  case PROTOCOL_VECTOR:
+    ProtocolVector_Init();
     break;
   case PROTOCOL_CANOPEN:
     ProtocolCANopen_Init();
@@ -92,8 +92,8 @@ void Protocol_Init(ProtocolType default_protocol) {
     break;
   default:
     // Inovxio
-    s_current_protocol = PROTOCOL_INOVXIO;
-    ProtocolPrivate_Init();
+    s_current_protocol = PROTOCOL_VECTOR;
+    ProtocolVector_Init();
     break;
   }
 }
@@ -120,8 +120,8 @@ ParseResult Protocol_ParseFrame(const CAN_Frame *frame, MotorCommand *cmd) {
   }
   ParseResult result;
   switch (s_current_protocol) {
-  case PROTOCOL_INOVXIO:
-    result = ProtocolPrivate_Parse(frame, cmd);
+  case PROTOCOL_VECTOR:
+    result = ProtocolVector_Parse(frame, cmd);
     break;
   case PROTOCOL_CANOPEN:
     result = ProtocolCANopen_Parse(frame, cmd);
@@ -148,8 +148,8 @@ bool Protocol_BuildFeedback(const MotorStatus *status, CAN_Frame *frame) {
     return false;
   }
   switch (s_current_protocol) {
-  case PROTOCOL_INOVXIO:
-    return ProtocolPrivate_BuildFeedback(status, frame);
+  case PROTOCOL_VECTOR:
+    return ProtocolVector_BuildFeedback(status, frame);
   case PROTOCOL_CANOPEN:
     return ProtocolCANopen_BuildFeedback(status, frame);
   case PROTOCOL_MIT:
@@ -166,8 +166,8 @@ bool Protocol_BuildFault(uint32_t fault_code, CAN_Frame *frame) {
     return false;
   }
   switch (s_current_protocol) {
-  case PROTOCOL_INOVXIO:
-    return ProtocolPrivate_BuildFault(fault_code, 0, frame);
+  case PROTOCOL_VECTOR:
+    return ProtocolVector_BuildFault(fault_code, 0, frame);
   case PROTOCOL_CANOPEN:
     return ProtocolCANopen_BuildFault(fault_code, frame);
   case PROTOCOL_MIT:
@@ -185,8 +185,8 @@ bool Protocol_BuildParamResponse(uint16_t param_index, float value,
     return false;
   }
   switch (s_current_protocol) {
-  case PROTOCOL_INOVXIO:
-    return ProtocolPrivate_BuildParamResponse(param_index, value, frame);
+  case PROTOCOL_VECTOR:
+    return ProtocolVector_BuildParamResponse(param_index, value, frame);
     // param，
     // case PROTOCOL_CANOPEN: ...
   default:
@@ -201,8 +201,8 @@ bool Protocol_BuildCalibStatus(const MotorStatus *status, CAN_Frame *frame) {
     return false;
   }
   switch (s_current_protocol) {
-  case PROTOCOL_INOVXIO:
-    return ProtocolPrivate_BuildCalibStatus(status, frame);
+  case PROTOCOL_VECTOR:
+    return ProtocolVector_BuildCalibStatus(status, frame);
   default:
     return false;
   }
@@ -286,11 +286,11 @@ void Protocol_ProcessRxFrame(const CAN_Frame *frame) {
   start_cnt = DWT->CYCCNT;
 #endif
   MotorCommand cmd;
-  // 0. : INOVXIO (GET_ID)
+  // 0. Vector GET_ID fast-path (before full parse)
   // ，motor
-  if (s_current_protocol == PROTOCOL_INOVXIO) {
+  if (s_current_protocol == PROTOCOL_VECTOR) {
     uint8_t cmd_type = (frame->id >> 24) & 0x1F;
-    if (cmd_type == INOVXIO_CMD_GET_ID) {
+    if (cmd_type == VECTOR_CMD_GET_ID) {
       uint8_t target = frame->id & 0xFF;
       // ID
       if (target == g_can_id || target == CAN_BROADCAST_ADDR) {

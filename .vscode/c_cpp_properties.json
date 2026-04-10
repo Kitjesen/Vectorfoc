@@ -31,7 +31,7 @@
                 "${workspaceFolder}/Src/COMM/manager",
                 "${workspaceFolder}/Src/COMM/executor",
                 "${workspaceFolder}/Src/COMM/protocol",
-                "${workspaceFolder}/Src/COMM/protocol/inovxio",
+                "${workspaceFolder}/Src/COMM/protocol/vector",
                 "${workspaceFolder}/Src/COMM/protocol/canopen",
                 "${workspaceFolder}/Src/COMM/protocol/mit",
                 "${workspaceFolder}/Src/COMM/transport",

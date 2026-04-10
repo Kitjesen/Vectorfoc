@@ -145,7 +145,7 @@ include_directories(
     Src/COMM/executor
     Src/COMM/protocol
     Src/COMM/protocol/canopen
-    Src/COMM/protocol/inovxio
+    Src/COMM/protocol/vector
     Src/COMM/protocol/mit
     Src/COMM/transport
     Src/UI

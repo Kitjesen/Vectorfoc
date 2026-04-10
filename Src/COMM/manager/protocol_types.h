@@ -16,7 +16,7 @@
  * @brief Supported protocol types.
  */
 typedef enum {
-  PROTOCOL_INOVXIO = 0, /**< Inovxio (MinerU) private protocol */
+  PROTOCOL_VECTOR = 0,  /**< Vector private protocol */
   PROTOCOL_CANOPEN = 1, /**< CANopen DS402 */
   PROTOCOL_MIT = 2      /**< MIT Cheetah lightweight protocol */
 } ProtocolType;

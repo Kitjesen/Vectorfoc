@@ -41,6 +41,7 @@ void CmdService_Init(void) { LOGINFO("[CMD] Command service initialized"); }
 void CmdService_SetReportEnable(bool enable) { s_report_enabled = enable; }
 void CmdService_Process(void) {
   static uint32_t last_report_time = 0;
+  static uint32_t last_calib_report_time = 0; // 1Hz progress report during calibration
   static bool last_fault_state = false;
   static float report_iq_filt = 0.0f;
   static float report_id_filt = 0.0f;
@@ -62,13 +63,27 @@ void CmdService_Process(void) {
     }
   }
   last_fault_state = has_fault;
-  // Auto-push calibration status frame when calibration stage changes
+  // Auto-push calibration status frame on stage change (immediate)
   if (status.calib_stage != prev_calib_stage) {
     prev_calib_stage = status.calib_stage;
+    last_calib_report_time = now; // align periodic timer to stage change
     CAN_Frame calib_frame;
     if (Protocol_BuildCalibStatus(&status, &calib_frame)) {
       Protocol_SendFrame(&calib_frame);
     }
+  }
+  // Periodic calibration progress report at 1Hz while calibration is running
+  // Reuses the same elapsed-time pattern as the 100Hz motor feedback below
+  if (status.calib_stage != 0) {
+    if (now - last_calib_report_time >= 1000u) { // 1 Hz
+      last_calib_report_time = now;
+      CAN_Frame calib_frame;
+      if (Protocol_BuildCalibStatus(&status, &calib_frame)) {
+        Protocol_SendFrame(&calib_frame);
+      }
+    }
+  } else {
+    last_calib_report_time = 0u; // reset when idle so next calib starts fresh
   }
   // statefeedback: fault (100Hz)
   if (s_report_enabled && !has_fault) {
