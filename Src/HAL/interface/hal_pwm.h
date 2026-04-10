@@ -71,6 +71,8 @@ typedef struct {
  * @param interface PWM
  * @return 0: , -1:
  */
+/** 注册 Motor HAL 句柄（app_init 调用），消除 hal_pwm.c 对 motor_data 的反向依赖 */
+void MHAL_PWM_SetHandle(const void *hal_handle);
 int MHAL_PWM_Register(const HAL_PWM_Interface_t *interface);
 int MHAL_PWM_Init(void);
 int MHAL_PWM_SetDuty(float Ta, float Tb, float Tc);

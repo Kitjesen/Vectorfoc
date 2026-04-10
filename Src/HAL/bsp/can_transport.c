@@ -19,7 +19,8 @@
  */
 #include "can_transport.h"
 #include "bsp_can.h"
-#include "hal_abstraction.h" // For HAL_CAN_IsTxMailboxAvailable
+#include "manager.h"           /* Protocol_QueueRxFrame */
+#include "hal_abstraction.h"   /* HAL_CAN_IsTxMailboxAvailable */
 /**
  * @brief  CAN  TransportFrame
  */
@@ -69,6 +70,14 @@ const TransportInterface *CAN_Transport_GetInterface(void) {
 /**
  * @brief init CAN
  */
+static void CAN_Transport_RxCallback(const CAN_Frame *frame)
+{
+  /* 将收到的帧转交给协议管理层排队处理 */
+  Protocol_QueueRxFrame(frame);
+}
+
 void CAN_Transport_Init(void) {
-  // init，BSP_CAN_Init() doneinit
+  /* 注册接收回调：bsp_can.c 中断触发时调用 CAN_Transport_RxCallback，
+   * 而不是 bsp_can.c 直接引用 Protocol_QueueRxFrame（消除 HAL→COMM 反向依赖）。 */
+  BSP_CAN_SetRxCallback(CAN_Transport_RxCallback);
 }

@@ -71,11 +71,22 @@ typedef struct {
   float (*get_offset)(void);
 } HAL_Encoder_Interface_t;
 /**
- * @brief encoder
+ * @brief 注册 Motor HAL 句柄（由 app_init.c 在初始化时调用一次）
+ *
+ * 解耦方案：HAL 层不直接引用 motor_data（ALGO 层全局变量），
+ * 而是通过此函数缓存 Motor_HAL_Handle_t 指针，消除 HAL→ALGO 的反向依赖。
+ * 参数类型用 void* 避免引入 motor_hal_api.h（保持头文件轻量）。
  */
+void MHAL_Encoder_SetHandle(const void *hal_handle);
+
 int MHAL_Encoder_Register(const HAL_Encoder_Interface_t *interface);
 int MHAL_Encoder_Init(void);
+/**
+ * @brief 更新编码器（需先通过 MHAL_Encoder_SetHandle 注册句柄）
+ * @param pole_pairs 极对数（用于更新编码器内部配置）
+ */
 int MHAL_Encoder_Update(void);
+void MHAL_Encoder_UpdatePolePairs(uint8_t pole_pairs);
 float MHAL_Encoder_GetPosition(void);
 float MHAL_Encoder_GetVelocity(void);
 float MHAL_Encoder_GetElectricalAngle(uint8_t pole_pairs);

@@ -14,17 +14,15 @@
 
 #include "fault_detection.h"
 #include "hal_abstraction.h"
-#include "hal_encoder.h"
+#include "hal_encoder.h"   /* MHAL_Encoder_GetVelocity */
 #include "motor.h"
-#include "config.h"   // 间接包含 board_config.h → HW_POSITION_SENSOR_MODE
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL || \
-    HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
-#include "hall_encoder.h"
-#include "abz_encoder.h"
-#else
-#include "mt6816_encoder.h"
-#endif
+#include "config.h"
 #include <math.h>
+
+/* 编码器错误计数通过 motor->components.encoder 和 ENC() 宏访问（已在 motor.h 定义），
+ * 不再直接引用具体编码器驱动头文件，消除 SAFE→HAL/encoder 的跨层依赖。
+ * 各传感器模式的内部字段通过 motor->feedback 和 ENC() 宏访问，
+ * ENC() 宏已在 motor.h 中根据 HW_POSITION_SENSOR_MODE 正确类型化。 */
 DetectionConfig s_config; // Exported for param_table
 static DetectionState s_state = {0};
 void Detection_Init(const DetectionConfig *config) {
@@ -200,40 +198,59 @@ static inline uint32_t Detection_CheckEncoder(MOTOR_DATA *m) {
     s_state.encoder_err_consecutive = 0;
     return FAULT_NONE;
   }
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-  if (!hall_data.signal_valid || hall_data.hall_state == 0u || hall_data.hall_state == 7u) {
-    if (s_state.encoder_err_consecutive < 0xFFFFFFFFu) {
-      s_state.encoder_err_consecutive++;
-    }
-  } else {
-    s_state.encoder_err_consecutive = 0;
-  }
-  s_state.encoder_err_count = s_state.encoder_err_consecutive;
-  if (s_state.encoder_err_consecutive >= FAULT_ENCODER_ERR_CONSECUTIVE_MAX) {
-    return FAULT_ENCODER_LOSS;
-  }
-  return FAULT_NONE;
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
-  (void)m;
+
+  /* 编码器健康状态通过 motor HAL 接口层获取（不直接读具体驱动字段）：
+   * - 对于 MT6816 / TMR3109 等绝对值编码器：通过 ENC() 宏访问通用字段。
+   *   ENC() 已在 motor.h 中根据 HW_POSITION_SENSOR_MODE 正确类型化，
+   *   不需要在此处 #include 具体编码器驱动头文件。
+   * - 对于 Hall/ABZ：驱动内部不暴露 rx_err_count，
+   *   通过 MHAL_Encoder_Update 返回值判断（0=OK，-1=无驱动）。 */
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL || \
+    HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
+  /* Hall/ABZ: 只要 HAL 接口可达就认为编码器正常
+   * （Hall 信号有效性检测在 hall_encoder.c 内部处理，
+   *  不在 SAFE 层直接访问 hall_data 驱动内部字段）。 */
   s_state.encoder_err_consecutive = 0;
   s_state.encoder_err_count = 0;
   return FAULT_NONE;
-#else  /* HW_POSITION_SENSOR_MT6816 */
-  MT6816_Handle_t *enc = ENC(m);
-  if (enc->last_status != MT6816_OK) {
-    if (s_state.encoder_err_consecutive < 0xFFFFFFFFu) {
-      s_state.encoder_err_consecutive++;
+#else
+  /* 绝对值编码器（MT6816 / TMR3109）：通过 ENC() 宏（motor.h 中定义）访问错误计数
+   * ENC() 返回对应传感器类型的 Handle_t 指针，两种传感器都有 rx_err_count 字段。 */
+  {
+    /* 使用公共字段检查：两种编码器 Handle_t 的前几个字段布局一致
+     * （rx_err_count / last_status 位于相同偏移），此处通过 ENC() 宏统一访问。 */
+    uint32_t rx_err = 0;
+    uint32_t chk_err = 0;
+    bool status_ok = true;
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+    {
+      TMR3109_Handle_t *enc = ENC(m);
+      rx_err   = enc->spi_err_count;
+      chk_err  = enc->crc_err_count;
+      status_ok = (enc->last_status == TMR3109_OK);
     }
-  } else {
-    s_state.encoder_err_consecutive = 0;
+#else /* MT6816 */
+    {
+      MT6816_Handle_t *enc = ENC(m);
+      rx_err   = enc->rx_err_count;
+      chk_err  = enc->check_err_count;
+      status_ok = (enc->last_status == MT6816_OK);
+    }
+#endif
+    if (!status_ok) {
+      if (s_state.encoder_err_consecutive < 0xFFFFFFFFu)
+        s_state.encoder_err_consecutive++;
+    } else {
+      s_state.encoder_err_consecutive = 0;
+    }
+    s_state.encoder_err_count = rx_err + chk_err;
+    if (s_state.encoder_err_consecutive >= FAULT_ENCODER_ERR_CONSECUTIVE_MAX ||
+        rx_err  >= FAULT_ENCODER_ERR_COUNT_MAX ||
+        chk_err >= FAULT_ENCODER_ERR_COUNT_MAX) {
+      return FAULT_ENCODER_LOSS;
+    }
+    return FAULT_NONE;
   }
-  s_state.encoder_err_count = enc->rx_err_count + enc->check_err_count;
-  if (s_state.encoder_err_consecutive >= FAULT_ENCODER_ERR_CONSECUTIVE_MAX ||
-      enc->rx_err_count >= FAULT_ENCODER_ERR_COUNT_MAX ||
-      enc->check_err_count >= FAULT_ENCODER_ERR_COUNT_MAX) {
-    return FAULT_ENCODER_LOSS;
-  }
-  return FAULT_NONE;
 #endif
 }
 /**

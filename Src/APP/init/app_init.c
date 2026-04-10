@@ -32,6 +32,7 @@
 #include "error_manager.h"
 #include "error_types.h"
 #include "hal_abstraction.h"
+#include "hal_adc.h"
 #include "hal_encoder.h"
 #include "hal_pwm.h"
 #include "led.h"
@@ -93,6 +94,16 @@ void App_Init(void) {
 #endif
 
   Init_Motor_No_Calib(&motor_data);
+
+  /* 注入 Motor HAL 句柄到 HAL 包装层，消除 HAL→ALGO 的反向依赖：
+   * hal_encoder.c / hal_adc.c / hal_pwm.c 通过此指针访问 HAL 接口，
+   * 不再直接引用 motor_data 全局变量。 */
+  MHAL_Encoder_SetHandle(motor_data.components.hal);
+  MHAL_ADC_SetHandle(motor_data.components.hal);
+  MHAL_PWM_SetHandle(motor_data.components.hal);
+  /* 初始同步极对数到编码器驱动 */
+  MHAL_Encoder_UpdatePolePairs((uint8_t)motor_data.parameters.pole_pairs);
+
   /* Open-loop from the start: prevents false encoder/voltage faults
    * before Hall signals stabilise and Vbus filter ramps up. */
   motor_data.state.Control_Mode = CONTROL_MODE_OPEN;

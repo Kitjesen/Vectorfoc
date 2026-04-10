@@ -64,6 +64,8 @@ typedef struct {
 /**
  * @brief ㄥ ADC ュ
  */
+/** 注册 Motor HAL 句柄（app_init 调用），消除 hal_adc.c 对 motor_data 的反向依赖 */
+void MHAL_ADC_SetHandle(const void *hal_handle);
 int MHAL_ADC_Register(const HAL_ADC_Interface_t *interface);
 /**
  * @brief ?ADC

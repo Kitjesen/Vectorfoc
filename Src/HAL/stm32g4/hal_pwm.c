@@ -14,63 +14,61 @@
 
 /**
  * @file hal_pwm.c
- * @brief PWM
- * @note  HAL ： motor_data.components.hal->pwm
- *       motor_data init，components.hal start
+ * @brief PWM HAL wrapper
+ *
+ * 层次设计：HAL 层不依赖 ALGO 层 motor_data，
+ * 由 app_init.c 通过 MHAL_PWM_SetHandle() 注入 Motor_HAL_Handle_t 指针。
  */
 #include "hal_pwm.h"
-#include "motor.h"
+#include "motor_hal_api.h"
 #include "config.h"
-/**
- * @brief  PWM  ()
- * @note  HAL ，
- */
-int MHAL_PWM_Register(const HAL_PWM_Interface_t *interface) {
-  (void)interface; // param，
-  return 0;        //
+
+static const Motor_HAL_Handle_t *s_hal = NULL;
+
+void MHAL_PWM_SetHandle(const void *hal_handle)
+{
+    s_hal = (const Motor_HAL_Handle_t *)hal_handle;
 }
-int MHAL_PWM_Init(void) {
-  // motor_hal_g431.c  PWM  init
-  // init MX_TIM1_Init()  main.c done
-  return 0;
+
+int MHAL_PWM_Register(const HAL_PWM_Interface_t *interface)
+{
+    (void)interface;
+    return 0;
 }
-int MHAL_PWM_SetDuty(float Ta, float Tb, float Tc) {
-  if (motor_data.components.hal == NULL ||
-      motor_data.components.hal->pwm == NULL ||
-      motor_data.components.hal->pwm->set_duty == NULL)
-    return -1;
-  motor_data.components.hal->pwm->set_duty(Ta, Tb, Tc);
-  return 0;
+
+int MHAL_PWM_Init(void) { return 0; }
+
+int MHAL_PWM_SetDuty(float Ta, float Tb, float Tc)
+{
+    if (s_hal == NULL || s_hal->pwm == NULL || s_hal->pwm->set_duty == NULL)
+        return -1;
+    s_hal->pwm->set_duty(Ta, Tb, Tc);
+    return 0;
 }
-int MHAL_PWM_Enable(void) {
-  if (motor_data.components.hal == NULL ||
-      motor_data.components.hal->pwm == NULL ||
-      motor_data.components.hal->pwm->enable == NULL)
-    return -1;
-  motor_data.components.hal->pwm->enable();
-  return 0;
+
+int MHAL_PWM_Enable(void)
+{
+    if (s_hal == NULL || s_hal->pwm == NULL || s_hal->pwm->enable == NULL)
+        return -1;
+    s_hal->pwm->enable();
+    return 0;
 }
-int MHAL_PWM_Disable(void) {
-  if (motor_data.components.hal == NULL ||
-      motor_data.components.hal->pwm == NULL ||
-      motor_data.components.hal->pwm->disable == NULL)
-    return -1;
-  motor_data.components.hal->pwm->disable();
-  return 0;
+
+int MHAL_PWM_Disable(void)
+{
+    if (s_hal == NULL || s_hal->pwm == NULL || s_hal->pwm->disable == NULL)
+        return -1;
+    s_hal->pwm->disable();
+    return 0;
 }
-int MHAL_PWM_Brake(void) {
-  if (motor_data.components.hal == NULL ||
-      motor_data.components.hal->pwm == NULL ||
-      motor_data.components.hal->pwm->brake == NULL)
-    return -1;
-  motor_data.components.hal->pwm->brake();
-  return 0;
+
+int MHAL_PWM_Brake(void)
+{
+    if (s_hal == NULL || s_hal->pwm == NULL || s_hal->pwm->brake == NULL)
+        return -1;
+    s_hal->pwm->brake();
+    return 0;
 }
-uint32_t MHAL_PWM_GetFrequency(void) {
-  // config PWM frequency
-  return PWM_FREQUENCY;
-}
-float MHAL_PWM_GetPeriod(void) {
-  // config PWM period
-  return CURRENT_MEASURE_PERIOD;
-}
+
+uint32_t MHAL_PWM_GetFrequency(void) { return PWM_FREQUENCY; }
+float MHAL_PWM_GetPeriod(void) { return CURRENT_MEASURE_PERIOD; }

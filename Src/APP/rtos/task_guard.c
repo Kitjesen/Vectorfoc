@@ -33,6 +33,34 @@
 
 typedef enum { DEMO_WAIT, DEMO_RUN, DEMO_DONE } DemoState;
 
+/**
+ * @brief 根据电机状态更新 LED（原在 motor.c，迁移到 APP 层避免 ALGO→UI 依赖）
+ *
+ * LED 颜色含义：
+ *   紫色(9)闪烁 — 空闲/标定中
+ *   红色(0)常亮 — 故障
+ *   青色(3)常亮 — 正常运行
+ *   红色(0)/黑色(7)快闪 — GUARD 状态但无 active fault
+ */
+static void Motor_UpdateLED(const MOTOR_DATA *motor)
+{
+  if (motor->state.State_Mode == STATE_MODE_IDLE ||
+      motor->state.State_Mode == STATE_MODE_DETECTING) {
+    static uint32_t blink_cnt = 0;
+    if (++blink_cnt >= 100u) { blink_cnt = 0u; }
+    RGB_DisplayColorById(blink_cnt < 50u ? 9u : 7u); /* 1 Hz blink */
+  } else if (Safety_HasActiveFault()) {
+    RGB_DisplayColorById(0); /* red — fault */
+  } else if (motor->state.State_Mode == STATE_MODE_RUNNING) {
+    RGB_DisplayColorById(3); /* cyan — running OK */
+  } else {
+    /* GUARD without active fault — fast blink 100ms */
+    static uint32_t guard_cnt = 0;
+    if (++guard_cnt >= 20u) { guard_cnt = 0u; }
+    RGB_DisplayColorById(guard_cnt < 10u ? 0u : 7u);
+  }
+}
+
 __attribute__((noreturn)) void StartGuardTask(void const *argument) {
   (void)argument;
   uint32_t heartbeat_cnt = 0;
@@ -41,6 +69,7 @@ __attribute__((noreturn)) void StartGuardTask(void const *argument) {
 
   for (;;) {
     MotorGuardTask(&motor_data);
+    Motor_UpdateLED(&motor_data);
 
     /* ---- 开机自动转并保持 ---- */
     switch (demo) {

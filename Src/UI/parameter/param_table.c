@@ -20,14 +20,9 @@
 #include "fault_detection.h"
 #include "motor.h"
 #include "config.h"
-#ifdef BOARD_XSTAR
-#include "board_config_xstar.h"
-#include "hall_encoder.h"
-#include "abz_encoder.h"
-#else
-#include "mt6816_encoder.h"
-extern MT6816_Handle_t encoder_data;
-#endif
+/* 编码器驱动头文件已从此处移除：param_table.c 不需要直接访问编码器内部字段。
+ * 编码器相关参数（pole_pairs 等）通过 motor_data.parameters 访问，
+ * 已由 #include "motor.h" 提供完整定义。 */
 #include <string.h>
 /* ============================================================================
  * ㄥ?
