@@ -151,6 +151,7 @@ typedef enum {
   CALIB_FAILED_NO_MOVEMENT,    // Motor not moving
   CALIB_FAILED_INVALID_PARAMS, // Invalid parameters
   CALIB_FAILED_MEMORY,         // Memory allocation failure
+  CALIB_ABORTED,               // Calibration aborted by user command
 } CalibResult;
 
 //=============================================================================
@@ -174,5 +175,15 @@ void CalibContext_Release(CalibrationContext *ctx);
  * @param ctx Calibration context pointer
  */
 void CalibContext_Reset(CalibrationContext *ctx);
+
+/**
+ * @brief Compute calibration progress percentage (0-100)
+ * @param sub_state Current SUB_STATE value
+ * @param cs_state  Current CS_STATE value (used within RSLS stage)
+ * @param ctx       Calibration context for loop counter access
+ * @return Progress percentage 0-100
+ */
+uint8_t CalibContext_GetProgress(uint8_t sub_state, uint8_t cs_state,
+                                 const CalibrationContext *ctx);
 
 #endif // CALIBRATION_CONTEXT_H

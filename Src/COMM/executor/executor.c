@@ -21,7 +21,7 @@
 #include "fsm.h"
 #include "hal_abstraction.h"
 #include "hal_encoder.h" // For MHAL_Encoder_* ( HAL)
-#include "inovxio_protocol.h"
+#include "vector_protocol.h"
 #include "manager.h" // For Protocol_SendFrame used in feedback
 #include "motor.h"
 #include "param_access.h"
@@ -88,8 +88,8 @@ void Executor_ProcessCommand(const MotorCommand *cmd) {
     status.fault_code = Safety_GetActiveFaultBits();
     CAN_Frame tx_frame;
     bool frame_ready = false;
-    if (Protocol_GetType() == PROTOCOL_INOVXIO) {
-      frame_ready = ProtocolPrivate_BuildFaultDetail(&status, &tx_frame);
+    if (Protocol_GetType() == PROTOCOL_VECTOR) {
+      frame_ready = ProtocolVector_BuildFaultDetail(&status, &tx_frame);
     } else {
       frame_ready = Protocol_BuildFault(status.fault_code, &tx_frame);
     }

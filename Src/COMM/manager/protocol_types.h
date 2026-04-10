@@ -30,7 +30,7 @@
  * @brief Supported protocol types.
  */
 typedef enum {
-  PROTOCOL_INOVXIO = 0, /**< Inovxio (MinerU) private protocol */
+  PROTOCOL_VECTOR = 0,  /**< Vector private protocol */
   PROTOCOL_CANOPEN = 1, /**< CANopen DS402 */
   PROTOCOL_MIT = 2      /**< MIT Cheetah lightweight protocol */
 } ProtocolType;
@@ -104,6 +104,12 @@ typedef struct {
 
   /* CAN information */
   uint8_t can_id; /**< CAN ID */
+
+  /* Calibration status */
+  uint8_t calib_stage;     /**< Current calibration stage (SUB_STATE) */
+  uint8_t calib_sub_stage; /**< Current calibration sub-stage (CS_STATE) */
+  uint8_t calib_progress;  /**< Calibration progress 0-100% */
+  uint8_t calib_result;    /**< Last calibration result (CalibResult) */
 
 } MotorStatus;
 

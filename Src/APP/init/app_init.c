@@ -48,8 +48,8 @@ static ProtocolType App_GetBootProtocol(void) {
   if (g_protocol_type <= PROTOCOL_MIT) {
     return (ProtocolType)g_protocol_type;
   }
-  g_protocol_type = PROTOCOL_INOVXIO;
-  return PROTOCOL_INOVXIO;
+  g_protocol_type = PROTOCOL_VECTOR;
+  return PROTOCOL_VECTOR;
 }
 
 void App_Init(void) {

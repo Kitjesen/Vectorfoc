@@ -91,6 +91,13 @@ bool Protocol_BuildFault(uint32_t fault_code, CAN_Frame *frame);
 bool Protocol_BuildParamResponse(uint16_t param_index, float value,
                                  CAN_Frame *frame);
 /**
+ * @brief  Build calibration status frame (CMD 0x09).
+ * @param  status Motor status with calibration fields populated.
+ * @param  frame  [out] CAN frame.
+ * @return true on success, false on failure.
+ */
+bool Protocol_BuildCalibStatus(const MotorStatus *status, CAN_Frame *frame);
+/**
  * @brief  Send CAN frame.
  * @param  frame CAN frame.
  * @return true on success, false on failure.

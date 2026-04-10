@@ -1,6 +1,6 @@
 /********************************************************************************
  * @file        : bsp_usart.c
- * @author      : INOVXIO
+ * @author      : VectorFOC
  * @brief       : USARTdriver
  * @version     : V1.0
  * @date        : 2024 - 11 - 12
@@ -15,7 +15,7 @@
  *  V1.0:
  *    - ，
  *
- * Copyright (c) 2024 INOVXIO. All rights reserved.
+ * Copyright (c) 2024 VectorFOC. All rights reserved.
  ********************************************************************************/
 #include "bsp_usart.h"
 #include "bsp_log.h"

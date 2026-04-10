@@ -230,7 +230,9 @@ typedef struct MOTOR_DATA_s {
                                  // cast
     float cogging_calib_request; // 1.0f triggers anticogging calibration
   } advanced;
-  CalibrationContext calib_ctx; /**< calibration */
+  CalibrationContext calib_ctx;      /**< calibration */
+  uint8_t calib_type_requested;      /**< requested calibration type (0-5) */
+  uint8_t last_calib_result;         /**< last calibration result (CalibResult) */
   volatile bool params_updated; /**< param (inner loopparam) */
 } MOTOR_DATA;
 extern MOTOR_DATA motor_data;
@@ -265,6 +267,19 @@ void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type);
  * @param motor motor
  */
 void Motor_ClearFaults(MOTOR_DATA *motor);
+/**
+ * @brief  Abort any ongoing calibration and return motor to IDLE
+ * @param motor motor instance
+ */
+void Motor_AbortCalibration(MOTOR_DATA *motor);
+/**
+ * @brief  Pre-calibration prerequisite check
+ * @param motor      motor instance
+ * @param fail_mask  [out] bitmask of failed checks (bit0=voltage, bit1=temp,
+ *                   bit2=motor_state, bit3=encoder)
+ * @return pass_mask bitmask of passed checks (same bit layout)
+ */
+uint8_t Motor_PreCalibCheck(MOTOR_DATA *motor, uint8_t *fail_mask);
 /**
  * @brief DS402state
  *

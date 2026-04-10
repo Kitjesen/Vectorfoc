@@ -19,7 +19,7 @@
  *
  * :
  *   ┌─────────────────────┐
- *   │    Protocol Layer   │  (manager.c, inovxio, canopen, mit)
+ *   │    Protocol Layer   │  (manager.c, vector, canopen, mit)
  *   ├─────────────────────┤
  *   │  TransportInterface │  ←
  *   ├─────────────────────┤
