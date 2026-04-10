@@ -58,6 +58,18 @@ typedef struct {
  * @brief initCAN（）
  * @note RobotInit
  */
+/** CAN 接收帧回调函数类型 */
+typedef void (*BSP_CAN_RxCallback_t)(const CAN_Frame *frame);
+
+/**
+ * @brief 注册 CAN 接收回调（由 can_transport.c 调用）
+ *
+ * 通过回调模式解耦：bsp_can.c 中断触发时调用此回调，
+ * 而不是直接引用 COMM 层的 Protocol_QueueRxFrame，
+ * 消除 HAL→COMM 的反向依赖。
+ */
+void BSP_CAN_SetRxCallback(BSP_CAN_RxCallback_t cb);
+
 void BSP_CAN_Init(void);
 /**
  * @brief CAN ()

@@ -25,9 +25,15 @@
 #include "stdbool.h"
 #include "string.h"
 /* [FIX]  stdlib.h ( malloc) */
-#include "manager.h"
-#include "motor.h"
-#include "param_access.h"
+/* 接收回调（由 can_transport.c 通过 BSP_CAN_SetRxCallback 注册）
+ * 原来直接调用 manager.h 中的 Protocol_QueueRxFrame，
+ * 改为回调模式消除 HAL→COMM 反向依赖。 */
+static BSP_CAN_RxCallback_t s_rx_cb = NULL;
+
+void BSP_CAN_SetRxCallback(BSP_CAN_RxCallback_t cb)
+{
+    s_rx_cb = cb;
+}
 #define GET_CMD_TYPE(id) (((id) >> 24) & 0x1F)
 #define GET_TARGET_ID(id) ((id) & 0xFF)
 /* CAN（）
@@ -251,7 +257,9 @@ static void FDCANFIFOxCallback(FDCAN_HandleTypeDef *_hcan, uint32_t fifox) {
     /* [FIX]  DLC  */
     uint8_t copy_len = (frame.dlc > 8) ? 8 : frame.dlc;
     memcpy(frame.data, can_rx_buff, copy_len);
-    Protocol_QueueRxFrame(&frame);
+    if (s_rx_cb != NULL) {
+      s_rx_cb(&frame);
+    }
   }
 }
 /**
