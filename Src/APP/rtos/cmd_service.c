@@ -1,3 +1,17 @@
+// Copyright 2024-2026 VectorFOC Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file cmd_service.c
  * @brief  - CANstate
@@ -5,6 +19,7 @@
  */
 #include "cmd_service.h"
 #include "bsp_log.h"
+#include "calibration_context.h"
 #include "manager.h"
 #include "motor.h"
 #include "config.h"
@@ -27,16 +42,25 @@ static inline void CmdService_SnapshotStatus(MotorStatus *status) {
   status->motor_state = motor_data.state.State_Mode;
   status->control_mode = motor_data.state.Control_Mode;
   status->fault_code = Safety_GetActiveFaultBits();
+  // Calibration status fields
+  status->calib_stage = motor_data.state.Sub_State;
+  status->calib_sub_stage = motor_data.state.Cs_State;
+  status->calib_progress = CalibContext_GetProgress(
+      motor_data.state.Sub_State, motor_data.state.Cs_State,
+      &motor_data.calib_ctx);
+  status->calib_result = motor_data.last_calib_result;
   __enable_irq();
 }
 void CmdService_Init(void) { LOGINFO("[CMD] Command service initialized"); }
 void CmdService_SetReportEnable(bool enable) { s_report_enabled = enable; }
 void CmdService_Process(void) {
   static uint32_t last_report_time = 0;
+  static uint32_t last_calib_report_time = 0; // 1Hz progress report during calibration
   static bool last_fault_state = false;
   static float report_iq_filt = 0.0f;
   static float report_id_filt = 0.0f;
   static bool report_current_init = false;
+  static uint8_t prev_calib_stage = 0; // SUB_STATE_IDLE
   uint32_t now = HAL_GetTick();
   // param
   Param_ProcessScheduledSave();
@@ -53,6 +77,28 @@ void CmdService_Process(void) {
     }
   }
   last_fault_state = has_fault;
+  // Auto-push calibration status frame on stage change (immediate)
+  if (status.calib_stage != prev_calib_stage) {
+    prev_calib_stage = status.calib_stage;
+    last_calib_report_time = now; // align periodic timer to stage change
+    CAN_Frame calib_frame;
+    if (Protocol_BuildCalibStatus(&status, &calib_frame)) {
+      Protocol_SendFrame(&calib_frame);
+    }
+  }
+  // Periodic calibration progress report at 1Hz while calibration is running
+  // Reuses the same elapsed-time pattern as the 100Hz motor feedback below
+  if (status.calib_stage != 0) {
+    if (now - last_calib_report_time >= 1000u) { // 1 Hz
+      last_calib_report_time = now;
+      CAN_Frame calib_frame;
+      if (Protocol_BuildCalibStatus(&status, &calib_frame)) {
+        Protocol_SendFrame(&calib_frame);
+      }
+    }
+  } else {
+    last_calib_report_time = 0u; // reset when idle so next calib starts fresh
+  }
   // statefeedback: fault (100Hz)
   if (s_report_enabled && !has_fault) {
     if (now - last_report_time >= 10) { // 100Hz

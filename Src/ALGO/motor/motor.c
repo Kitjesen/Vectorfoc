@@ -1,3 +1,17 @@
+// Copyright 2024-2026 VectorFOC Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "motor.h"
 #include "bsp_dwt.h"
 #include "current_calib.h"
@@ -6,18 +20,13 @@
 #include "config.h"
 #include "control/control.h"
 #include "hal_pwm.h" // For MHAL_PWM_Brake ( HAL)
-#include "mt6816_encoder.h"
 #include "param_access.h"
 #include "param_table.h"
 #include "pid.h"
 #include "rsls_calib.h"
 #include "safety_control.h"
 #include <stdlib.h>
-#ifdef BOARD_XSTAR
-extern Motor_HAL_Handle_t xstar_hal_handle;
-#else
-extern Motor_HAL_Handle_t g431_hal_handle;
-#endif
+extern Motor_HAL_Handle_t HW_MOTOR_HAL_HANDLE;
 /* DS402state */
 extern StateMachine g_ds402_state_machine;
 extern uint8_t g_can_id;
@@ -39,26 +48,39 @@ static void MotorInitializeTask(MOTOR_DATA *motor) {
   case CURRENT_CALIBRATING:
     result = CurrentCalib_Update(motor, &motor->calib_ctx);
     if (result == CALIB_SUCCESS) {
-      Init_Motor_Calib(motor); //  RSLS calibration
+      motor->last_calib_result = CALIB_SUCCESS;
+      if (motor->calib_type_requested == 3) {
+        // Current-only calibration: done, return to idle
+        motor->state.Sub_State = SUB_STATE_IDLE;
+        motor->state.State_Mode = STATE_MODE_RUNNING;
+        Param_ScheduleSave();
+      } else {
+        Init_Motor_Calib(motor); //  RSLS calibration
+      }
     } else if (result != CALIB_IN_PROGRESS) {
+      motor->last_calib_result = result;
       motor->state.State_Mode = STATE_MODE_GUARD;
     }
     break;
   case RSLS_CALIBRATING:
     result = RSLSCalib_Update(motor, &motor->calib_ctx, CURRENT_MEASURE_PERIOD);
     if (result == CALIB_SUCCESS) {
+      motor->last_calib_result = CALIB_SUCCESS;
       motor->state.Sub_State = FLUX_CALIBRATING;
     } else if (result != CALIB_IN_PROGRESS) {
+      motor->last_calib_result = result;
       motor->state.State_Mode = STATE_MODE_GUARD;
     }
     break;
   case FLUX_CALIBRATING:
     result = FluxCalib_Update(motor, &motor->calib_ctx);
     if (result == CALIB_SUCCESS) {
+      motor->last_calib_result = CALIB_SUCCESS;
       motor->state.Sub_State = SUB_STATE_IDLE;
       motor->state.State_Mode = STATE_MODE_RUNNING;
       Param_ScheduleSave(); // calibrationdone，（ISRsafety）
     } else if (result != CALIB_IN_PROGRESS) {
+      motor->last_calib_result = result;
       motor->state.State_Mode = STATE_MODE_GUARD; // calibration
     }
     break;

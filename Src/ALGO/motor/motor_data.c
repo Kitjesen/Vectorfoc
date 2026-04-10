@@ -1,3 +1,17 @@
+// Copyright 2024-2026 VectorFOC Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file motor_data.c
  * @brief Global motor data and state definitions
@@ -14,7 +28,11 @@ extern Motor_HAL_Handle_t xstar_hal_handle;
 #elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
 #include "abz_encoder.h"
 extern Motor_HAL_Handle_t xstar_hal_handle;
-#else  /* HW_POSITION_SENSOR_MT6816 */
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#include "tmr3109_encoder.h"
+extern Motor_HAL_Handle_t g431_hal_handle;
+extern TMR3109_Handle_t tmr3109_encoder_data;
+#else  /* HW_POSITION_SENSOR_MT6816（默认）*/
 #include "mt6816_encoder.h"
 extern Motor_HAL_Handle_t g431_hal_handle;
 extern MT6816_Handle_t encoder_data;
@@ -43,7 +61,9 @@ MOTOR_DATA motor_data = {
             .encoder = &hall_data,
 #elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
             .encoder = &abz_data,
-#else  /* HW_POSITION_SENSOR_MT6816 */
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+            .encoder = &tmr3109_encoder_data,
+#else  /* HW_POSITION_SENSOR_MT6816（默认）*/
             .encoder = &encoder_data,
 #endif
         },

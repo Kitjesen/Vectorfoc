@@ -1,3 +1,17 @@
+// Copyright 2024-2026 VectorFOC Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file executor.c
  * @brief Command Executor Implementation
@@ -7,7 +21,7 @@
 #include "fsm.h"
 #include "hal_abstraction.h"
 #include "hal_encoder.h" // For MHAL_Encoder_* ( HAL)
-#include "inovxio_protocol.h"
+#include "vector_protocol.h"
 #include "manager.h" // For Protocol_SendFrame used in feedback
 #include "motor.h"
 #include "param_access.h"
@@ -74,8 +88,8 @@ void Executor_ProcessCommand(const MotorCommand *cmd) {
     status.fault_code = Safety_GetActiveFaultBits();
     CAN_Frame tx_frame;
     bool frame_ready = false;
-    if (Protocol_GetType() == PROTOCOL_INOVXIO) {
-      frame_ready = ProtocolPrivate_BuildFaultDetail(&status, &tx_frame);
+    if (Protocol_GetType() == PROTOCOL_VECTOR) {
+      frame_ready = ProtocolVector_BuildFaultDetail(&status, &tx_frame);
     } else {
       frame_ready = Protocol_BuildFault(status.fault_code, &tx_frame);
     }

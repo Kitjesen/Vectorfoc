@@ -42,7 +42,7 @@ CompileFlags:
     - -ISrc/COMM/manager
     - -ISrc/COMM/executor
     - -ISrc/COMM/protocol
-    - -ISrc/COMM/protocol/inovxio
+    - -ISrc/COMM/protocol/vector
     - -ISrc/COMM/protocol/canopen
     - -ISrc/COMM/protocol/mit
     - -ISrc/COMM/transport

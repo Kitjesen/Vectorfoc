@@ -1,3 +1,17 @@
+// Copyright 2024-2026 VectorFOC Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file    boards/board_vectorfoc.h
  * @brief   VectorFOC G431 (STM32G431CBU6, 168MHz, MT6816) 全部硬件引脚定义
@@ -135,13 +149,21 @@
 #define HW_VOLTAGE_FACTOR       (HW_VBUS_DIVIDER_RATIO * (HW_ADC_VREF / HW_ADC_RESOLUTION))
 
 /* ==========================================================================
-   6. 位置传感器 — SPI1 MT6816 磁编码器
+   6. 位置传感器 — SPI1 磁编码器
+      可选编码器型号（取消注释所需行，注释掉其余行）：
+        HW_POSITION_SENSOR_MT6816  — AMR 14-bit，出厂默认
+        HW_POSITION_SENSOR_TMR3109 — TMR 23-bit，推荐升级（同 SOP8 封装）
    ========================================================================== */
 #define HW_POSITION_SENSOR_HALL     1u
 #define HW_POSITION_SENSOR_ABZ      2u
 #define HW_POSITION_SENSOR_MT6816   3u
-#define HW_POSITION_SENSOR_MODE     HW_POSITION_SENSOR_MT6816
+#define HW_POSITION_SENSOR_TMR3109  4u   /**< MDT TMR3109，23-bit TMR */
 
+/* ---- 选择编码器型号（修改此行即可切换） ---- */
+#define HW_POSITION_SENSOR_MODE     HW_POSITION_SENSOR_MT6816
+/* #define HW_POSITION_SENSOR_MODE  HW_POSITION_SENSOR_TMR3109 */
+
+/* SPI 接口（MT6816 与 TMR3109 共用同一 SOP8 引脚，无需改线） */
 #define HW_ENC_SPI              hspi1
 #define HW_ENC_SPI_INST         SPI1
 #define HW_ENC_CS_PIN           GPIO_PIN_4      /* PC4 */
@@ -149,11 +171,21 @@
 #define HW_ENC_SCK_PIN          GPIO_PIN_5      /* PA5 */
 #define HW_ENC_MISO_PIN         GPIO_PIN_6      /* PA6 */
 #define HW_ENC_MOSI_PIN         GPIO_PIN_7      /* PA7 */
-#define HW_ENC_CPR              16384           /* 14-bit */
+
+/* CPR 根据所选编码器自动选择 */
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#  define HW_ENC_CPR            8388608u        /* 23-bit TMR3109 */
+#else
+#  define HW_ENC_CPR            16384u          /* 14-bit MT6816  */
+#endif
 
 /* HAL 与编码器实例名（供 motor_data.c 用，类型已在各驱动头文件中声明） */
 #define HW_MOTOR_HAL_HANDLE     g431_hal_handle
-#define HW_ENCODER_DATA_SYMBOL  encoder_data
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#  define HW_ENCODER_DATA_SYMBOL  tmr3109_encoder_data
+#else
+#  define HW_ENCODER_DATA_SYMBOL  encoder_data
+#endif
 
 /* ==========================================================================
    7. 预驱动 SPI3 — DRV8323（已定义引脚，驱动未实现，HW_DRV_ENABLED=0）

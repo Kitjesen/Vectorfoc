@@ -1,6 +1,6 @@
 /********************************************************************************
  * @file        : log.c
- * @author      : INOVXIO
+ * @author      : VectorFOC
  * @brief       : ，init、output。
  * @version     : V1.0
  * @date        : 2025 - 1 - 11
@@ -21,7 +21,7 @@
  *  V1.0:
  *    - ，。、，。
  *
- * Copyright (c) 2025 INOVXIO. All rights reserved.
+ * Copyright (c) 2025 VectorFOC. All rights reserved.
  ********************************************************************************/
 #include "bsp_log.h"
 #include <stdarg.h>
