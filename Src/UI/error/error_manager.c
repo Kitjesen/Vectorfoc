@@ -232,10 +232,12 @@ static void HandleErrorBySeverity(uint32_t error_code, ErrorSeverity severity) {
             __disable_irq();
             LOGERROR("[ErrorMgr] CRITICAL ERROR 0x%08lX - System will reset",
                      (unsigned long)error_code);
+#ifndef TEST_ENV
             // waitresetreset
             while(1) {
                 //
             }
+#endif
             break;
     }
 }
