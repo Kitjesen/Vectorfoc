@@ -19,6 +19,7 @@
 #include "motor.h"
 #include "param_access.h"
 #include "protocol_types.h"
+#include "protocol_utils.h"    // Proto_Uint16ToFloat / FloatToUint16 / BufToUint16
 #include "rtos/cmd_service.h" // For CmdService_SetReportEnable
 #include "safety_control.h"
 #include "stm32g4xx_hal.h"
@@ -53,38 +54,11 @@ static void JumpToBootloader(void) {
   __ISB();
   ((void (*)(void))reset)();
 }
-// ==========  ==========
-/**
- * @brief Uint16  Float ()
- */
-static float Uint16ToFloat(uint16_t x, float min_val, float max_val) {
-  float span = max_val - min_val;
-  return ((float)x / 65535.0f) * span + min_val;
-}
-/**
- * @brief Float  Uint16 ()
- */
-static uint16_t FloatToUint16(float x, float min_val, float max_val) {
-  float span = max_val - min_val;
-  if (x < min_val)
-    x = min_val;
-  if (x > max_val)
-    x = max_val;
-  return (uint16_t)(((x - min_val) / span) * 65535.0f);
-}
-/**
- * @brief 16 (, )
- */
-static uint16_t BufToUint16(const uint8_t *val_ptr) {
-  return (uint16_t)((val_ptr[0] << 8) | val_ptr[1]);
-}
-/**
- * @brief 16
- */
-static void Uint16ToBuf(uint16_t val, uint8_t *val_ptr) {
-  val_ptr[0] = (val >> 8) & 0xFF;
-  val_ptr[1] = val & 0xFF;
-}
+/* 量化工具函数由 protocol_utils.h 提供，本地名称别名保持向后兼容 */
+#define Uint16ToFloat  Proto_Uint16ToFloat
+#define FloatToUint16  Proto_FloatToUint16
+#define BufToUint16    Proto_BufToUint16
+#define Uint16ToBuf    Proto_Uint16ToBuf
 /**
  * @brief mode ( 1)
  * @details ID Data:  (0~65535 -> -120~120Nm)

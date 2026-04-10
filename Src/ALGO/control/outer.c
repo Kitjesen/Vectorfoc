@@ -36,12 +36,6 @@
 
 /** 速度反馈低通滤波截止频率 [Hz] */
 #define VEL_FEEDBACK_FILTER_FC 100.0f
-
-/** 速度滤波状态 - 每个电机实例应有独立状态，但当前只有单电机 */
-/* [FIX] 将静态变量移入函数或使用 motor 结构体存储，避免多电机实例问题 */
-/* 当前保持静态变量，但添加注释说明限制 */
-static float s_vel_filtered = 0.0f;
-static bool s_vel_filter_initialized = false;
 /**
  * @brief speed/velocitycalc ( PID  LADRC)
  * @param motor  motor
@@ -77,15 +71,16 @@ void Control_OuterLoopsUpdate(MOTOR_DATA *motor, MotorControlCtx *ctx) {
   }
   ctx->loop_count = 0;
 
-  // [FIX] 速度反馈低通滤波，减少噪声放大
-  if (!s_vel_filter_initialized) {
-    s_vel_filtered = motor->feedback.velocity;
-    s_vel_filter_initialized = true;
+  /* 速度反馈低通滤波（状态存储于 motor->vel_feedback_filtered，支持多电机） */
+  if (!motor->vel_filter_initialized) {
+    motor->vel_feedback_filtered = motor->feedback.velocity;
+    motor->vel_filter_initialized = true;
   }
-  float alpha_vel = (M_2PI * VEL_FEEDBACK_FILTER_FC * OUTER_LOOP_DT) / 
+  float alpha_vel = (M_2PI * VEL_FEEDBACK_FILTER_FC * OUTER_LOOP_DT) /
                     (1.0f + M_2PI * VEL_FEEDBACK_FILTER_FC * OUTER_LOOP_DT);
-  s_vel_filtered += alpha_vel * (motor->feedback.velocity - s_vel_filtered);
-  float vel_fdb = s_vel_filtered;
+  motor->vel_feedback_filtered +=
+      alpha_vel * (motor->feedback.velocity - motor->vel_feedback_filtered);
+  float vel_fdb = motor->vel_feedback_filtered;
 
   if (motor->state.Control_Mode >= CONTROL_MODE_VELOCITY &&
       motor->state.Control_Mode <= CONTROL_MODE_POSITION) {

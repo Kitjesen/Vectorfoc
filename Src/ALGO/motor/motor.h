@@ -237,6 +237,10 @@ typedef struct MOTOR_DATA_s {
   uint8_t calib_type_requested;      /**< requested calibration type (0-5) */
   uint8_t last_calib_result;         /**< last calibration result (CalibResult) */
   volatile bool params_updated; /**< param (inner loopparam) */
+
+  /* 外环速度反馈滤波状态（迁入此处以支持多电机实例，原在 outer.c 静态变量） */
+  float vel_feedback_filtered;       /**< 低通滤波后的速度反馈 [turn/s] */
+  bool vel_filter_initialized;       /**< 滤波器是否已完成首次初始化 */
 } MOTOR_DATA;
 extern MOTOR_DATA motor_data;
 /**

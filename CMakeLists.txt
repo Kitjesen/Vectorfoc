@@ -136,6 +136,7 @@ include_directories(
     Src/ALGO
     Src/ALGO/motor
     Src/ALGO/control
+    Src/SAFE
     Src/ALGO/foc
     Src/ALGO/pid
     Src/ALGO/observer
@@ -166,6 +167,7 @@ file(GLOB_RECURSE SOURCES
     "Src/APP/*.c"
     "Src/HAL/*.c"
     "Src/ALGO/*.c"
+    "Src/SAFE/*.c"
     "Src/COMM/*.c"
     "Src/UI/*.c"
     "Src/BOOT/bootloader.c"
