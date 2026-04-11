@@ -59,7 +59,9 @@ void Error_Handler(void);
 
 /* Private defines -----------------------------------------------------------*/
 #define MCPWM_CLOCK_HZ 168000000
+#ifndef MCPWM_DEADTIME_CLOCKS
 #define MCPWM_DEADTIME_CLOCKS 20
+#endif
 #define MCPWM_TGRO_TIME MCPWM_PERIOD_CLOCKS-10
 #define MCPWM_RCR 0
 #define MCPWM_FREQ 20000

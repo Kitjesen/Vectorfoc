@@ -7,6 +7,11 @@
  */
 
 #include "tim.h"
+#include "board_config.h"
+
+#ifndef HW_PWM_ADC_TRIGGER_OFFSET_TICKS
+#define HW_PWM_ADC_TRIGGER_OFFSET_TICKS 100U
+#endif
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
@@ -59,8 +64,11 @@ void MX_TIM1_Init(void) {
     Error_Handler();
   }
 
-  /* CH4: ADC trigger pulse near counter peak (4190/4200) */
-  sConfigOC.Pulse = 4190;
+  /* CH4: ADC trigger pulse near counter peak with configurable margin. */
+  sConfigOC.Pulse =
+      (htim1.Init.Period > HW_PWM_ADC_TRIGGER_OFFSET_TICKS)
+          ? (htim1.Init.Period - HW_PWM_ADC_TRIGGER_OFFSET_TICKS)
+          : (htim1.Init.Period / 2U);
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_4) != HAL_OK) {
     Error_Handler();
   }

@@ -105,7 +105,7 @@
 #define FLUX_CALIB_VEL (5.0f * M_PI)  // fluxcalibrationspeed/velocity [rad/s]
 #define CALIB_FILTER_ALPHA 0.01f      // calibrationfilter
 /* param */
-#define MAX_POLE_PAIRS 20         // pole pairs
+#define MAX_POLE_PAIRS 7          // pole pairs (≥ DEFAULT_POLE_PAIRS=7, reduces calib RAM)
 #define SAMPLES_PER_POLE_PAIR 100 // sample
 #define FLUX_VALID_MIN 0.001f     // flux [Wb]
 #define FLUX_VALID_MAX 0.500f     // flux [Wb]

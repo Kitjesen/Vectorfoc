@@ -190,6 +190,5 @@ MOTOR_DATA motor_data = {
             .cogging_comp_enabled = 0.0f,
             .cogging_calib_request = 0.0f,
         },
-    .calib_ctx = {0},
     .params_updated = true,
 };

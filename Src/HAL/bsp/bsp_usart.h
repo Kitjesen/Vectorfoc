@@ -41,7 +41,7 @@ typedef enum {
 /**
  * @brief
  */
-#define USART_TXBUFF_SIZE 2048 //
+#define USART_TXBUFF_SIZE 512 //
 typedef struct {
   uint8_t recv_buff[USART_RXBUFF_LIMIT]; // buff
   uint8_t recv_buff_size;                //

@@ -33,6 +33,7 @@
  * dir / offset_counts / offset_lut / calib_valid / pole_pairs），
  * 因此两者共用同一套标定逻辑，仅 CPR 常量不同。
  */
+#undef ENC  /* shadow motor.h ENC(m) with local object-like macro */
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
 #define ENC          ((TMR3109_Handle_t *)motor->components.encoder)
 #define CW           TMR3109_DIR_CW

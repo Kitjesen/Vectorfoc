@@ -98,8 +98,8 @@ typedef struct {
   float phase_set;         // Current electrical angle
   int16_t sample_count;    // Sample counter
   float next_sample_time;  // Next sampling timestamp
-  int error_array_storage[SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS];
-  int *error_array;        // Error array (preallocated storage)
+  int16_t error_array_storage[SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS];
+  int16_t *error_array;    // Error array (preallocated storage)
   size_t error_array_size; // Array size
 } EncoderCalibContext;
 

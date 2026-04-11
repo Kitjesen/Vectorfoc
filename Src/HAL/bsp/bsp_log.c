@@ -53,30 +53,63 @@ void LogInit(UART_HandleTypeDef *log_config)
 void LOG_PROTO(const char *fmt, LOG_LEVEL level, const char *file,
                int line, const char *func, ...)
 {
-  char tmp[LOG_BUFFER_SIZE];
   char buf[LOG_BUFFER_SIZE];
-  memset(tmp, 0, sizeof(tmp));
   memset(buf, 0, sizeof(buf));
-  va_list args;
-  va_start(args, func);
-  vsnprintf(tmp, sizeof(tmp) - 1, fmt, args);
-  va_end(args);
+  const char *level_tag = NULL;
+  const char *file_name = strrchr(file, '/');
+  const char *windows_file_name = strrchr(file, '\\');
+  size_t used = 0;
+
+  if (windows_file_name != NULL &&
+      (file_name == NULL || windows_file_name > file_name)) {
+    file_name = windows_file_name;
+  }
+  file_name = (file_name != NULL) ? (file_name + 1) : file;
+
   switch (level)
   {
   case LOG_DEBUG:
-    snprintf(buf, sizeof(buf), "[DEBUG] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
+    level_tag = "DEBUG";
     break;
   case LOG_INFO:
-    snprintf(buf, sizeof(buf), "[INFO] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
+    level_tag = "INFO";
     break;
   case LOG_WARNING:
-    snprintf(buf, sizeof(buf), "[WARN] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
+    level_tag = "WARN";
     break;
   case LOG_ERROR:
-    snprintf(buf, sizeof(buf), "[ERROR] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
+    level_tag = "ERROR";
     break;
   default:
     return;
   }
+
+  int prefix_len = snprintf(buf, sizeof(buf), "[%s] <%.48s> | <%d> | <%.32s>: ",
+                            level_tag, file_name, line, func);
+  if (prefix_len < 0) {
+    return;
+  }
+
+  used = (size_t)prefix_len;
+  if (used >= sizeof(buf)) {
+    used = sizeof(buf) - 1;
+  }
+
+  va_list args;
+  va_start(args, func);
+  (void)vsnprintf(buf + used, sizeof(buf) - used, fmt, args);
+  va_end(args);
+
+  used = strlen(buf);
+  if (used + 2 < sizeof(buf)) {
+    buf[used++] = '\r';
+    buf[used++] = '\n';
+    buf[used] = '\0';
+  } else {
+    buf[sizeof(buf) - 3] = '\r';
+    buf[sizeof(buf) - 2] = '\n';
+    buf[sizeof(buf) - 1] = '\0';
+  }
+
   USARTSend(log_usart_instance, (uint8_t *)buf, strlen(buf), USART_TRANSFER_BLOCKING);
 }
