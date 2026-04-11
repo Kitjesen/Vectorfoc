@@ -131,6 +131,12 @@
 #define MIT_POSITION_ERROR_TOLERANCE 1.0f
 /* Report (Telemetry) Filter */
 #define REPORT_CURRENT_FILTER_FC 5.0f // Hz, for reported current only
+/* V/F open-loop mode */
+#define VF_BOOST_VOLTAGE    0.5f    // [V] voltage floor at zero speed (IR drop)
+#define VF_BASE_VOLTAGE     3.0f    // [V] Vq magnitude at VF_BASE_VELOCITY
+#define VF_BASE_VELOCITY   10.0f    // [turn/s] reference mechanical speed
+/* I/F forced-current open-loop mode */
+#define IF_DEFAULT_CURRENT  2.0f    // [A] default Iq when input_torque not set
 /* Anti-cogging Calibration */
 #define COGGING_MAP_SIZE 360
 #define COGGING_CALIB_POS_THRESH_TURN 0.0005f

@@ -24,6 +24,8 @@ void ControlImpl_Position(MOTOR_DATA *motor);
 void ControlImpl_VelocityRamp(MOTOR_DATA *motor);
 void ControlImpl_PositionRamp(MOTOR_DATA *motor, MotorControlCtx *ctx);
 void ControlImpl_MIT(MOTOR_DATA *motor);
+void ControlImpl_VF(MOTOR_DATA *motor);
+void ControlImpl_IF(MOTOR_DATA *motor);
 // Helpers
 void ControlImpl_SetThetaFromEncoder(MOTOR_DATA *motor);
 void ControlImpl_SetPidLimits(MOTOR_DATA *motor);

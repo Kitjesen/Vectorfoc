@@ -60,6 +60,8 @@ typedef enum {
   CONTROL_MODE_VELOCITY_RAMP = 4, /**< speed/velocitymode */
   CONTROL_MODE_POSITION_RAMP = 5, /**< positionmode */
   CONTROL_MODE_MIT = 6,           /**< MITmode */
+  CONTROL_MODE_VF  = 8,           /**< V/F open-loop: Vq ∝ frequency, no current feedback */
+  CONTROL_MODE_IF  = 9,           /**< I/F forced-current: fixed Iq, open-loop angle */
 } CONTROL_MODE;
 /**
  * @brief calibrationstate

@@ -79,6 +79,14 @@ void MotorControl_Run(MOTOR_DATA *motor) {
   case CONTROL_MODE_MIT:
     ControlImpl_MIT(motor);
     break;
+  // V/F open-loop: Vq ∝ frequency
+  case CONTROL_MODE_VF:
+    ControlImpl_VF(motor);
+    break;
+  // I/F forced-current: fixed Iq, open-loop angle, inner current loop active
+  case CONTROL_MODE_IF:
+    ControlImpl_IF(motor);
+    break;
   default:
     /* 未知控制模式：关闭 PWM 输出，防止悬空状态导致硬件损坏。
      * 正常运行时不应进入此分支；若出现，说明 Control_Mode 被意外写入无效值。 */
@@ -89,8 +97,9 @@ void MotorControl_Run(MOTOR_DATA *motor) {
     break;
   }
   //
-  // open loopmodeFOCinner loop
-  if (motor->state.Control_Mode <= CONTROL_MODE_OPEN) {
+  // V/F and pure open-loop are voltage-injection only — skip inner/outer loops
+  if (motor->state.Control_Mode == CONTROL_MODE_OPEN ||
+      motor->state.Control_Mode == CONTROL_MODE_VF) {
     return;
   }
   // runningouter loop(speed/velocity/position)

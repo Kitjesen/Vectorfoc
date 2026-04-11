@@ -40,7 +40,8 @@ void ControlImpl_SetThetaFromEncoder(MOTOR_DATA *motor) {
 void ControlImpl_SetPidLimits(MOTOR_DATA *motor) {
   switch (motor->state.Control_Mode) {
   case CONTROL_MODE_OPEN:
-    // Open loop mode does not use inner/outer loop PID limits
+  case CONTROL_MODE_VF:
+    // Voltage-injection modes: no PID active
     break;
   case CONTROL_MODE_TORQUE:
     SetPIDLimit(motor, CURRENT_PID_MAX_OUT, CURRENT_PID_MAX_OUT, 0.0f, 0.0f,
@@ -60,6 +61,7 @@ void ControlImpl_SetPidLimits(MOTOR_DATA *motor) {
                 VEL_PID_MAX_OUT, VEL_PID_MAX_OUT, POS_PID_MAX_OUT);
     break;
   case CONTROL_MODE_MIT:
+  case CONTROL_MODE_IF:
     SetPIDLimit(motor, CURRENT_PID_MAX_OUT, CURRENT_PID_MAX_OUT, 0.0f, 0.0f,
                 0.0f);
     break;
@@ -234,4 +236,48 @@ void OpenControlMode(MOTOR_DATA *motor, float target_velocity) {
   //  FOC_voltage  Control_InjectVoltage
   Control_InjectVoltage(motor, 0.0f, OPEN_MODE_FIXED_VOLTAGE,
                         motor->algo_input.theta_elec);
+}
+/**
+ * @brief V/F open-loop mode
+ *
+ * Vq scales linearly with mechanical speed: Vq = VF_BOOST_VOLTAGE + VF_BASE_VOLTAGE
+ * * |vel| / VF_BASE_VELOCITY.  A small boost voltage compensates resistive drop at
+ * low speed.  No current feedback — angle is integrated in open loop.
+ */
+void ControlImpl_VF(MOTOR_DATA *motor) {
+  float Ts = CURRENT_MEASURE_PERIOD;
+  float vel_mech  = motor->Controller.input_velocity; // [turn/s]
+  float omega_elec = vel_mech * (float)motor->parameters.pole_pairs * M_2PI;
+  // Integrate forced electrical angle
+  motor->algo_input.theta_elec = normalize_angle(
+      motor->algo_input.theta_elec + omega_elec * Ts);
+  // Vq proportional to speed with low-speed boost; sign tracks direction
+  float vq = VF_BOOST_VOLTAGE +
+             VF_BASE_VOLTAGE * fabsf(vel_mech) / VF_BASE_VELOCITY;
+  vq = CLAMP(vq, 0.0f, motor->Controller.voltage_limit);
+  if (vel_mech < 0.0f) vq = -vq;
+  Control_InjectVoltage(motor, 0.0f, vq, motor->algo_input.theta_elec);
+}
+/**
+ * @brief I/F forced-current open-loop mode
+ *
+ * Angle is integrated in open loop (not from encoder).  Iq_ref is held at a
+ * fixed value (input_torque if non-zero, else IF_DEFAULT_CURRENT).  The generic
+ * inner current loop in control.c runs after this function using the forced angle,
+ * so actual current is closed-loop while position/velocity remain open.
+ */
+void ControlImpl_IF(MOTOR_DATA *motor) {
+  float Ts = CURRENT_MEASURE_PERIOD;
+  float vel_mech  = motor->Controller.input_velocity;
+  float omega_elec = vel_mech * (float)motor->parameters.pole_pairs * M_2PI;
+  // Integrate forced electrical angle (bypasses encoder feedback)
+  motor->algo_input.theta_elec = normalize_angle(
+      motor->algo_input.theta_elec + omega_elec * Ts);
+  // Fixed Iq; use input_torque if caller has set it, otherwise use default
+  float iq = (fabsf(motor->Controller.input_torque) > 0.01f)
+                 ? motor->Controller.input_torque
+                 : IF_DEFAULT_CURRENT;
+  motor->algo_input.Iq_ref = iq;
+  motor->algo_input.Id_ref = 0.0f;
+  // theta_elec is now forced; control.c will call Control_InnerCurrentLoop
 }
