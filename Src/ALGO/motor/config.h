@@ -31,7 +31,9 @@
 #define SYS_CLOCK_HZ_F          ((float)SYS_CLOCK_HZ)
 #define TIMER1_CLK_MHz          (SYS_CLOCK_HZ / 1000000UL)
 #define PWM_FREQUENCY           HW_PWM_FREQ_HZ
+#ifndef MCPWM_DEADTIME_CLOCKS
 #define MCPWM_DEADTIME_CLOCKS   HW_PWM_DEADTIME_CLKS
+#endif
 #define V_REG                   HW_ADC_MIDPOINT
 #define FAC_CURRENT             HW_FAC_CURRENT
 #define VOLTAGE_TO_ADC_FACTOR   HW_VOLTAGE_FACTOR
