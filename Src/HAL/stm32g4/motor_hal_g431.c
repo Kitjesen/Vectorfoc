@@ -32,11 +32,13 @@ extern CURRENT_DATA current_data;
  * ============================================================================
  */
 static void G431_PWM_SetDuty(float dtc_a, float dtc_b, float dtc_c) {
-  //  TIM register， inner.c done
+  /* Ta→U(CH1), Tb→V(CH2), Tc→W(CH3) — must match ADC mapping:
+   * Ia=JDR3(PA2)=U-phase, Ib=JDR2(PA1)=V-phase, Ic=JDR1(PA0)=W-phase.
+   * Clarke: Ialpha=Ia(U-phase) → Ta must drive the same physical winding. */
   uint16_t arr = __HAL_TIM_GET_AUTORELOAD(&HW_PWM_TIMER);
-  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_W, (uint16_t)(dtc_a * arr));
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_U, (uint16_t)(dtc_a * arr));
   __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_V, (uint16_t)(dtc_b * arr));
-  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_U, (uint16_t)(dtc_c * arr));
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_W, (uint16_t)(dtc_c * arr));
 }
 static void G431_PWM_Enable(void) {
   HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_U);
@@ -135,13 +137,18 @@ static void G431_ADC_Update(Motor_HAL_SensorData_t *data) {
   data->temp = G431_ReadTemperature();
 }
 static void G431_ADC_CalibrateOffsets(void) {
-  // Reuse existing calibration logic if possible, or reimplement
-  // For simplicity, we trigger the existing calibration function if exposed,
-  // or implement a simple average here.
+  /* Wait for JEOS (injected end-of-sequence) per sample instead of HAL_Delay.
+   * JDR registers are read-only and hold the last value until next conversion,
+   * so concurrent reads from the ADC ISR and this function are safe. */
   uint32_t sum_a = 0, sum_b = 0, sum_c = 0;
   const int samples = 1000;
   for (int i = 0; i < samples; i++) {
-    HAL_Delay(1); // Simple blocking delay for calibration
+    /* Spin until JEOS set, or 10 ms timeout (ADC runs at 20 kHz → fires ~50 µs) */
+    uint32_t t0 = HAL_GetTick();
+    while (!(HW_ADC_CURRENT.Instance->ISR & ADC_ISR_JEOS)) {
+      if (HAL_GetTick() - t0 > 10U) break;
+    }
+    HW_ADC_CURRENT.Instance->ISR = ADC_ISR_JEOS; /* W1C — clear flag */
     sum_a += HW_ADC_CURRENT.Instance->HW_ADC_JDR_IA;
     sum_b += HW_ADC_CURRENT.Instance->HW_ADC_JDR_IB;
     sum_c += HW_ADC_CURRENT.Instance->HW_ADC_JDR_IC;
