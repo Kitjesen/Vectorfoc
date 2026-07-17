@@ -26,8 +26,12 @@ typedef unsigned char bool_t; //
 #ifndef M_PI
 #define M_PI (3.14159265358979323846f) // M_PI
 #endif
+#ifndef M_2PI
 #define M_2PI (6.28318530717958647692f)    // 2
+#endif
+#ifndef M_3PI_2
 #define M_3PI_2 (4.71238898038469f)        // 3/2
+#endif
 #define _SQRT3 (1.7320508075688772935f)    // 3
 #define _SQRT3_2 (0.86602540378443864f)    // 3
 #define ONE_BY_SQRT2 (0.7071067811865475f) // 12

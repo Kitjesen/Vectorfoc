@@ -21,7 +21,8 @@
 
 // External access to mock
 void MockHAL_SetCurrents(float ia, float ib, float ic);
-void MockHAL_SetEncoder(float theta, float vel);
+void MockHAL_SetEncoder(float position, float angle, float velocity,
+                        float electrical_angle);
 void MockHAL_GetPWM(float *a, float *b, float *c);
 Motor_HAL_Handle_t *MockHAL_GetHandle(void);
 
@@ -83,7 +84,7 @@ int main() {
   motor.state.Control_Mode = CONTROL_MODE_VELOCITY;
 
   // Target
-  motor.Controller.vel_setpoint = 50.0f; // 50 rad/s
+  motor.Controller.vel_setpoint = 50.0f / M_2PI; // 50 rad/s
 
   // 3. Open Log
   FILE *f = fopen("sim_response.csv", "w");
@@ -102,7 +103,8 @@ int main() {
     float ia, ib, ic;
     MotorPlant_GetCurrents(&plant, &ia, &ib, &ic);
     MockHAL_SetCurrents(ia, ib, ic);
-    MockHAL_SetEncoder(plant.theta, plant.omega);
+    MockHAL_SetEncoder(plant.position, plant.theta, plant.omega,
+                       fmodf(plant.theta * (float)plant.P, M_2PI));
 
     // --- Step Controller (Simulate ADC Callback) ---
     // Manually trigger the update sequence
@@ -117,9 +119,9 @@ int main() {
     // 2. Update Encoder
     Motor_HAL_EncoderData_t enc;
     motor.components.hal->encoder->get_data(&enc);
-    motor.feedback.position = enc.angle_rad;
-    motor.feedback.velocity = enc.velocity_rad;
-    motor.feedback.phase_angle = enc.angle_rad * plant.P; // Elec angle
+    motor.feedback.position = enc.position_rad / M_2PI;
+    motor.feedback.velocity = enc.velocity_rad / M_2PI;
+    motor.feedback.phase_angle = enc.elec_angle;
     motor.algo_input.theta_elec = motor.feedback.phase_angle;
 
     // 3. Run FOC Logic

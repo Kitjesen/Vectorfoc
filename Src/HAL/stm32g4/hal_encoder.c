@@ -19,16 +19,14 @@
 #include "hal_encoder.h"
 
 #include "motor.h"
+#include "platform.h"
 #ifdef BOARD_XSTAR
-#include "board_config_xstar.h"
 #include "hall_encoder.h"
 #include "abz_encoder.h"
-#else
-#include "mt6816_encoder.h"
 #endif
 
 static int MHAL_Encoder_ReadData(Motor_HAL_EncoderData_t *data) {
-  if (motor_data.components.hal == NULL ||
+  if (data == NULL || motor_data.components.hal == NULL ||
       motor_data.components.hal->encoder == NULL ||
       motor_data.components.hal->encoder->get_data == NULL) {
     return -1;
@@ -61,22 +59,18 @@ int MHAL_Encoder_Update(void) {
       motor_data.components.hal->encoder->update == NULL) {
     return -1;
   }
-#ifdef BOARD_XSTAR
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-  Hall_SetPolePairs((uint8_t)motor_data.parameters.pole_pairs);
-#else
-  Abz_SetPolePairs((uint8_t)motor_data.parameters.pole_pairs);
-#endif
-#else
-  encoder_data.pole_pairs = (uint8_t)motor_data.parameters.pole_pairs;
-#endif
-  motor_data.components.hal->encoder->update();
-  return 0;
+  if (motor_data.components.hal->encoder->set_pole_pairs != NULL &&
+      motor_data.parameters.pole_pairs > 0 &&
+      motor_data.parameters.pole_pairs <= UINT8_MAX) {
+    motor_data.components.hal->encoder->set_pole_pairs(
+        (uint8_t)motor_data.parameters.pole_pairs);
+  }
+  return motor_data.components.hal->encoder->update() ? 0 : -1;
 }
 
 float MHAL_Encoder_GetPosition(void) {
   Motor_HAL_EncoderData_t data = {0};
-  return MHAL_Encoder_ReadData(&data) == 0 ? data.angle_rad : 0.0f;
+  return MHAL_Encoder_ReadData(&data) == 0 ? data.position_rad : 0.0f;
 }
 
 float MHAL_Encoder_GetVelocity(void) {
@@ -95,6 +89,18 @@ float MHAL_Encoder_GetElectricalVelocity(uint8_t pole_pairs) {
   return MHAL_Encoder_ReadData(&data) == 0 ? data.velocity_rad * pole_pairs : 0.0f;
 }
 
+int MHAL_Encoder_ZeroPosition(void) {
+  if (motor_data.components.hal == NULL ||
+      motor_data.components.hal->encoder == NULL ||
+      motor_data.components.hal->encoder->zero_position == NULL) {
+    return -1;
+  }
+  CRITICAL_SECTION_BEGIN();
+  motor_data.components.hal->encoder->zero_position();
+  CRITICAL_SECTION_END();
+  return 0;
+}
+
 int MHAL_Encoder_SetOffset(float offset) {
   if (motor_data.components.hal == NULL ||
       motor_data.components.hal->encoder == NULL ||
@@ -106,13 +112,10 @@ int MHAL_Encoder_SetOffset(float offset) {
 }
 
 float MHAL_Encoder_GetOffset(void) {
-#ifdef BOARD_XSTAR
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-  return hall_data.offset_rad;
-#else
-  return abz_data.offset_rad;
-#endif
-#else
-  return encoder_data.offset_rev;
-#endif
+  if (motor_data.components.hal == NULL ||
+      motor_data.components.hal->encoder == NULL ||
+      motor_data.components.hal->encoder->get_offset == NULL) {
+    return 0.0f;
+  }
+  return motor_data.components.hal->encoder->get_offset();
 }

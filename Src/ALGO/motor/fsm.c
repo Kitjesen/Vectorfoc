@@ -25,6 +25,7 @@
  *   7. calibration Shutdown
  */
 #include "fsm.h"
+#include "error_types.h"
 #include "hal_abstraction.h"
 #include "hal_pwm.h"
 #include <stddef.h>
@@ -101,27 +102,38 @@ static void UpdateStatusword(StateMachine *sm) {
     }
   }
   sm->statusword.word = status;
-  sm->statusword.bits.voltage_enabled = 1;
+  sm->statusword.bits.voltage_enabled =
+      ((sm->current_state == STATE_OPERATION_ENABLED &&
+        sm->operation_power_enabled) ||
+       (sm->current_state == STATE_CALIBRATING &&
+        sm->calibration_power_enabled))
+          ? 1u
+          : 0u;
 }
 static void HandleStateEntry(StateMachine *sm) {
   switch (sm->current_state) {
   case STATE_OPERATION_ENABLED:
-    MHAL_PWM_Enable();
+    sm->operation_power_enabled = false;
+    MHAL_PWM_Disable();
     break;
-  case STATE_QUICK_STOP_ACTIVE:
-    /* stop: PWM
-     *  SWITCH_ON_DISABLED  */
-    break;
-  case STATE_FAULT_REACTION_ACTIVE:
-    /* fault:  PWM safety */
+  case STATE_CALIBRATING:
+    sm->operation_power_enabled = false;
+    sm->calibration_power_enabled = false;
     MHAL_PWM_Disable();
     break;
   case STATE_NOT_READY_TO_SWITCH_ON:
   case STATE_SWITCH_ON_DISABLED:
+  case STATE_READY_TO_SWITCH_ON:
+  case STATE_SWITCHED_ON:
+  case STATE_QUICK_STOP_ACTIVE:
+  case STATE_FAULT_REACTION_ACTIVE:
   case STATE_FAULT:
-    MHAL_PWM_Disable();
-    break;
   default:
+    sm->operation_power_enabled = false;
+    sm->calibration_power_enabled = false;
+    /* Fail closed: non-energized states keep all gate outputs off.  The
+     * timer's ADC-trigger channel is managed separately. */
+    MHAL_PWM_Disable();
     break;
   }
 }
@@ -313,6 +325,48 @@ bool StateMachine_ClearFault(StateMachine *sm) {
    *  __disable_irq  Update ，safety */
   sm->active_fault_code = 0;
   ExecuteTransition(sm, STATE_SWITCH_ON_DISABLED);
+  return true;
+}
+
+bool StateMachine_SetOperationPower(StateMachine *sm, bool enabled) {
+  if (sm == NULL || sm->current_state != STATE_OPERATION_ENABLED) {
+    return false;
+  }
+  if (enabled) {
+    sm->operation_power_enabled = false;
+    if (MHAL_PWM_Enable() != 0) {
+      sm->calibration_power_enabled = false;
+      UpdateStatusword(sm);
+      StateMachine_EnterFault(sm, ERROR_HW_PWM_INIT);
+      return false;
+    }
+    sm->operation_power_enabled = true;
+  } else {
+    sm->operation_power_enabled = false;
+    MHAL_PWM_Disable();
+  }
+  UpdateStatusword(sm);
+  return true;
+}
+
+bool StateMachine_SetCalibrationPower(StateMachine *sm, bool enabled) {
+  if (sm == NULL || sm->current_state != STATE_CALIBRATING) {
+    return false;
+  }
+  if (enabled) {
+    sm->calibration_power_enabled = false;
+    if (MHAL_PWM_Enable() != 0) {
+      sm->operation_power_enabled = false;
+      UpdateStatusword(sm);
+      StateMachine_EnterFault(sm, ERROR_HW_PWM_INIT);
+      return false;
+    }
+    sm->calibration_power_enabled = true;
+  } else {
+    sm->calibration_power_enabled = false;
+    MHAL_PWM_Disable();
+  }
+  UpdateStatusword(sm);
   return true;
 }
 void StateMachine_SetPreCheckCallback(StateMachine *sm,

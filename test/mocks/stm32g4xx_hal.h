@@ -31,7 +31,9 @@ typedef struct { void *Instance; } UART_HandleTypeDef;
 #define HAL_RCC_DeInit()                    ((void)0)
 #define HAL_DeInit()                        ((void)0)
 #define HAL_NVIC_SystemReset()              ((void)0)
+#ifndef TEST_USE_REAL_SYSTEM_TICK
 #define HAL_GetSystemTick()                 (0u)
+#endif
 
 /* TIM channel aliases */
 #define TIM_CHANNEL_1  0u

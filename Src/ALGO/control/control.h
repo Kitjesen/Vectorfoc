@@ -34,7 +34,7 @@ void Control_Init(MOTOR_DATA *motor);
  *
  * @param motor Motor Control Data
  */
-void MotorControl_Run(MOTOR_DATA *motor);
+bool MotorControl_Run(MOTOR_DATA *motor);
 /**
  * @brief set PID
  */
@@ -42,7 +42,9 @@ void SetPIDLimit(MOTOR_DATA *motor, float current_max_out,
                  float current_max_iout, float vel_max_out, float vel_max_iout,
                  float pos_limit);
 /**
- * @brief updatecurrentparam (gain)
+ * @brief Apply configured current-loop gains and limits to runtime PID/algo state.
  */
+void CurrentLoop_ApplyConfiguredGains(MOTOR_DATA *motor);
+/** @brief Auto-tune and apply current-loop gains from motor Rs/Ls/bandwidth data. */
 void CurrentLoop_UpdateGain(MOTOR_DATA *motor);
 #endif // MOTOR_CONTROL_H

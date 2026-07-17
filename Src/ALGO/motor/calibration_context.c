@@ -22,6 +22,38 @@
  * @brief Calibration context management implementation
  */
 
+#if !defined(TEST_ENV)
+#include "board_config.h"
+#endif
+
+#if !defined(TEST_ENV) && \
+    (HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816 || \
+     HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109)
+/*
+ * Encoder linearity calibration is never concurrent across motors on the
+ * single-axis target. Keep its large, CPU-only workspace out of MOTOR_DATA and
+ * in CCM SRAM so the DMA-capable SRAM remains available to peripherals/RTOS.
+ */
+static int s_encoder_error_workspace[SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS]
+    __attribute__((section(".ccm_bss"), aligned(8)));
+#endif
+
+static void CalibContext_AssignEncoderWorkspace(CalibrationContext *ctx) {
+#if defined(TEST_ENV)
+  ctx->encoder.error_array = ctx->encoder.error_array_storage;
+  ctx->encoder.error_array_size =
+      SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS;
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816 || \
+    HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  ctx->encoder.error_array = s_encoder_error_workspace;
+  ctx->encoder.error_array_size =
+      SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS;
+#else
+  ctx->encoder.error_array = NULL;
+  ctx->encoder.error_array_size = 0;
+#endif
+}
+
 /**
  * @brief Initialize calibration context
  */
@@ -35,8 +67,7 @@ void CalibContext_Init(CalibrationContext *ctx) {
   // Initialize constants
   ctx->resistance.kI = 2.0f;
 
-  ctx->encoder.error_array = ctx->encoder.error_array_storage;
-  ctx->encoder.error_array_size = SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS;
+  CalibContext_AssignEncoderWorkspace(ctx);
 
   // Set initialization flag
   ctx->current.is_initialized = true;
@@ -49,8 +80,7 @@ void CalibContext_Release(CalibrationContext *ctx) {
   if (ctx == NULL)
     return;
 
-  ctx->encoder.error_array = ctx->encoder.error_array_storage;
-  ctx->encoder.error_array_size = SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS;
+  CalibContext_AssignEncoderWorkspace(ctx);
 }
 
 /**

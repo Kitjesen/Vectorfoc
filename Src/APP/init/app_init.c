@@ -32,6 +32,7 @@
 #include "error_manager.h"
 #include "error_types.h"
 #include "hal_abstraction.h"
+#include "hal_adc.h"
 #include "hal_encoder.h"
 #include "hal_pwm.h"
 #include "led.h"
@@ -39,9 +40,29 @@
 #include "motor.h"
 #include "param_access.h"
 #include "safety_control.h"
+#include <math.h>
+
+static bool s_current_offsets_ready = false;
+static bool s_initial_safety_scan_ready = false;
 
 static bool App_ReportFaultCallback(uint32_t fault_bits, void *motor) {
   return Protocol_ReportFaultCallback(fault_bits, (MOTOR_DATA *)motor);
+}
+
+static bool App_StatePreCheck(MotorState target_state) {
+  if (target_state == STATE_OPERATION_ENABLED) {
+    return s_current_offsets_ready && s_initial_safety_scan_ready &&
+           !Safety_HasActiveFault();
+  }
+
+  if (target_state == STATE_CALIBRATING) {
+    uint8_t fail_mask = 0u;
+    uint8_t pass_mask = Motor_PreCalibCheck(&motor_data, &fail_mask);
+    (void)fail_mask;
+    return s_current_offsets_ready && pass_mask == 0x0Fu;
+  }
+
+  return true;
 }
 
 static ProtocolType App_GetBootProtocol(void) {
@@ -52,49 +73,101 @@ static ProtocolType App_GetBootProtocol(void) {
   return PROTOCOL_VECTOR;
 }
 
+static bool App_CaptureInitialFeedback(void) {
+  const Motor_HAL_Handle_t *hal = motor_data.components.hal;
+  if (hal == NULL || hal->adc == NULL || hal->adc->update == NULL ||
+      hal->encoder == NULL || hal->encoder->get_data == NULL) {
+    return false;
+  }
+
+  Motor_HAL_SensorData_t sensors = {0};
+  hal->adc->update(&sensors);
+  motor_data.algo_input.Ia = sensors.i_a;
+  motor_data.algo_input.Ib = sensors.i_b;
+  motor_data.algo_input.Ic = sensors.i_c;
+  motor_data.algo_input.Vbus = sensors.v_bus;
+  motor_data.feedback.temperature = sensors.temp;
+
+  if (MHAL_Encoder_Update() != 0) {
+    return false;
+  }
+  Motor_HAL_EncoderData_t encoder = {0};
+  hal->encoder->get_data(&encoder);
+  motor_data.feedback.position = encoder.position_rad / M_2PI;
+  motor_data.feedback.velocity = encoder.velocity_rad / M_2PI;
+  motor_data.feedback.phase_angle = encoder.elec_angle;
+  motor_data.algo_input.theta_elec = encoder.elec_angle;
+
+  return isfinite(sensors.i_a) && isfinite(sensors.i_b) &&
+         isfinite(sensors.i_c) && isfinite(sensors.v_bus) &&
+         isfinite(sensors.temp) && isfinite(encoder.position_rad) &&
+         isfinite(encoder.velocity_rad) && isfinite(encoder.elec_angle);
+}
+
 void App_Init(void) {
   __disable_irq();
+  BSPInit();
 #ifdef BOARD_XSTAR
   DWT_Delay(0.001f);
 #else
   DWT_Delay(0.016f);
 #endif
-  BSPInit();
+  HAL_WatchdogFeed();
+
   LogInit(&HW_UART_DEBUG);
   ErrorManager_Init();
-  adc_bsp_init();
-  if (MHAL_PWM_Enable() != 0) {
-    ERROR_REPORT(ERROR_HW_PWM_INIT, "PWM start failed");
-    Error_Handler();
-  }
 
   RGB_DisplayColorById(0);
+  StateMachine_Init(&g_ds402_state_machine);
+  StateMachine_SetPreCheckCallback(&g_ds402_state_machine, App_StatePreCheck);
   Detection_Init(NULL);
   Safety_Init(NULL);
-  Safety_RegisterFaultCallback(App_ReportFaultCallback);
 
   Param_SystemInitOnce();
+  if (!adc_bsp_init()) {
+    ERROR_REPORT(ERROR_HW_ADC_INIT, "ADC startup failed");
+    Error_Handler();
+  }
+  if (MHAL_PWM_StartSampling() != 0) {
+    ERROR_REPORT(ERROR_HW_PWM_INIT, "PWM sampling trigger start failed");
+    Error_Handler();
+  }
+  HAL_WatchdogFeed();
+  if (MHAL_ADC_CalibrateCurrent() != 0) {
+    ERROR_REPORT(ERROR_HW_ADC_INIT, "Current offset calibration failed");
+    Error_Handler();
+  }
+  s_current_offsets_ready = true;
+  MHAL_PWM_Disable();
+
+  if (MHAL_Encoder_Init() != 0) {
+    ERROR_REPORT(ERROR_MOTOR_ENCODER_SPI, "Encoder init failed");
+    Error_Handler();
+  }
+  if (MHAL_Encoder_SetOffset(g_add_offset) != 0) {
+    ERROR_REPORT(ERROR_MOTOR_ENCODER_SPI, "Encoder offset restore failed");
+  }
+  if (!App_CaptureInitialFeedback()) {
+    Safety_TriggerFault(FAULT_POSITION_INIT, &motor_data,
+                        &g_ds402_state_machine);
+  } else {
+    uint32_t initial_faults = Detection_Check_Slow(&motor_data);
+    if (initial_faults != FAULT_NONE) {
+      Safety_TriggerFault(initial_faults, &motor_data,
+                          &g_ds402_state_machine);
+    }
+  }
+  s_initial_safety_scan_ready = true;
+
   BSP_CAN_Init();
   CAN_Transport_Init();
   Protocol_RegisterTransport(CAN_Transport_GetInterface());
   Protocol_Init(App_GetBootProtocol());
-  StateMachine_Init(&g_ds402_state_machine);
-
-#ifdef BOARD_XSTAR
-  if (MHAL_Encoder_Init() != 0) {
-    ERROR_REPORT(ERROR_MOTOR_ENCODER_SPI, "X-STAR encoder init failed");
-    Error_Handler();
-  }
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-  Hall_SetPolePairs((uint8_t)motor_data.parameters.pole_pairs);
-#else
-  Abz_SetPolePairs((uint8_t)motor_data.parameters.pole_pairs);
-#endif
-#endif
+  Detection_SetCANTimeout(g_can_timeout_ms);
+  Safety_RegisterFaultCallback(App_ReportFaultCallback);
 
   Init_Motor_No_Calib(&motor_data);
-  /* Open-loop from the start: prevents false encoder/voltage faults
-   * before Hall signals stabilise and Vbus filter ramps up. */
-  motor_data.state.Control_Mode = CONTROL_MODE_OPEN;
+  MHAL_PWM_Disable();
+  HAL_WatchdogFeed();
   __enable_irq();
 }

@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 
+option(BOOTLOADER_BUILD "Build the 16 KiB USB bootloader instead of the app" OFF)
+if(BOOTLOADER_BUILD)
+    include("${CMAKE_CURRENT_LIST_DIR}/CMakeLists_Bootloader.txt")
+    return()
+endif()
+
 # Project setup
 project(VectorFoc C CXX ASM)
 
@@ -82,17 +88,57 @@ add_definitions(-DSTM32G431xx -DUSE_HAL_DRIVER -DSTM32G4xx)
 
 # ---- Board selection ----
 option(BOARD_XSTAR "Build firmware for X-STAR-S STM32G431RBT6 board" OFF)
+set(POSITION_SENSOR "AUTO" CACHE STRING
+    "Position sensor: AUTO, MT6816, TMR3109, HALL, or ABZ")
+set_property(CACHE POSITION_SENSOR PROPERTY STRINGS
+    AUTO MT6816 TMR3109 HALL ABZ)
+string(TOUPPER "${POSITION_SENSOR}" POSITION_SENSOR_NORMALIZED)
+
 if(BOARD_XSTAR)
     add_definitions(-DBOARD_XSTAR)
-    message(STATUS "Target board: X-STAR-S (STM32G431RBT6, 170MHz, Hall sensor)")
+    set(TARGET_BOARD_NAME "X-STAR-S STM32G431RBT6")
+    if(POSITION_SENSOR_NORMALIZED STREQUAL "AUTO")
+        set(RESOLVED_POSITION_SENSOR "HALL")
+    elseif(POSITION_SENSOR_NORMALIZED STREQUAL "HALL" OR
+           POSITION_SENSOR_NORMALIZED STREQUAL "ABZ")
+        set(RESOLVED_POSITION_SENSOR "${POSITION_SENSOR_NORMALIZED}")
+    else()
+        message(FATAL_ERROR
+            "X-STAR supports POSITION_SENSOR=AUTO, HALL, or ABZ; got ${POSITION_SENSOR}")
+    endif()
 else()
-    message(STATUS "Target board: VectorFOC (STM32G431CBU6, 168MHz, MT6816 encoder)")
+    set(TARGET_BOARD_NAME "VectorFOC STM32G431CBU6")
+    if(POSITION_SENSOR_NORMALIZED STREQUAL "AUTO")
+        set(RESOLVED_POSITION_SENSOR "MT6816")
+    elseif(POSITION_SENSOR_NORMALIZED STREQUAL "MT6816" OR
+           POSITION_SENSOR_NORMALIZED STREQUAL "TMR3109")
+        set(RESOLVED_POSITION_SENSOR "${POSITION_SENSOR_NORMALIZED}")
+    else()
+        message(FATAL_ERROR
+            "VectorFOC supports POSITION_SENSOR=AUTO, MT6816, or TMR3109; got ${POSITION_SENSOR}")
+    endif()
 endif()
+
+if(RESOLVED_POSITION_SENSOR STREQUAL "MT6816")
+    add_compile_definitions(HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_MT6816)
+elseif(RESOLVED_POSITION_SENSOR STREQUAL "TMR3109")
+    add_compile_definitions(HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_TMR3109)
+elseif(RESOLVED_POSITION_SENSOR STREQUAL "HALL")
+    add_compile_definitions(HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_HALL)
+elseif(RESOLVED_POSITION_SENSOR STREQUAL "ABZ")
+    add_compile_definitions(HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_ABZ)
+endif()
+
+message(STATUS "Target board: ${TARGET_BOARD_NAME}")
+message(STATUS "Position sensor: ${RESOLVED_POSITION_SENSOR}")
 
 # Build types
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
 endif()
+
+set(CMAKE_C_FLAGS_RELEASE "-Os -DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-Os -DNDEBUG")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${MCU_FLAGS} -Wall -fdata-sections -ffunction-sections")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MCU_FLAGS} -Wall -fdata-sections -ffunction-sections")
@@ -173,6 +219,8 @@ file(GLOB_RECURSE SOURCES
     "Src/BOOT/bootloader.c"
 )
 
+list(APPEND SOURCES "Src/APP/isr/encoder_failure_guard.c")
+
 # list(FILTER SOURCES EXCLUDE REGEX "MODULES/hal/.*")
 
 # Exclude template/example files if necessary, or specific files that shouldn't be compiled
@@ -205,9 +253,36 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --specs=nano.specs --specs
 # Executable
 add_executable(${CMAKE_PROJECT_NAME}.elf ${SOURCES})
 
-# Hex and Bin generation
-add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} -O ihex ${CMAKE_PROJECT_NAME}.elf ${CMAKE_PROJECT_NAME}.hex
-    COMMAND ${CMAKE_OBJCOPY} -O binary ${CMAKE_PROJECT_NAME}.elf ${CMAKE_PROJECT_NAME}.bin
-    COMMENT "Building ${CMAKE_PROJECT_NAME}.hex and ${CMAKE_PROJECT_NAME}.bin"
-)
+# Hex and Bin generation. VectorFOC bootloader images must contain a real
+# payload size and CRC in the fixed 0x200 application-header slot.
+if(BOARD_XSTAR)
+    add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
+        COMMAND ${CMAKE_OBJCOPY} -O ihex "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>" "${CMAKE_PROJECT_NAME}.hex"
+        COMMAND ${CMAKE_OBJCOPY} -O binary "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>" "${CMAKE_PROJECT_NAME}.bin"
+        COMMENT "Building standalone ${CMAKE_PROJECT_NAME}.hex and ${CMAKE_PROJECT_NAME}.bin"
+        VERBATIM
+    )
+else()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(APP_RAW_BIN "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.raw.bin")
+    set(APP_HEADER_BIN "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.app_header.bin")
+    set(APP_PATCHED_ELF "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.patched.elf")
+    set(APP_VERSION "${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.${FW_VERSION_PATCH}")
+
+    add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
+        COMMAND ${CMAKE_OBJCOPY} -O binary "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>" "${APP_RAW_BIN}"
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/patch_app_header.py"
+                generate --image "${APP_RAW_BIN}" --header-out "${APP_HEADER_BIN}"
+                --version "${APP_VERSION}"
+        COMMAND ${CMAKE_OBJCOPY} --update-section ".app_header=${APP_HEADER_BIN}"
+                "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>" "${APP_PATCHED_ELF}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${APP_PATCHED_ELF}" "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>"
+        COMMAND ${CMAKE_OBJCOPY} -O ihex "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>" "${CMAKE_PROJECT_NAME}.hex"
+        COMMAND ${CMAKE_OBJCOPY} -O binary "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>" "${CMAKE_PROJECT_NAME}.bin"
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/patch_app_header.py"
+                verify --image "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin"
+        COMMENT "Packaging bootloader-compatible ${CMAKE_PROJECT_NAME} image"
+        VERBATIM
+    )
+endif()

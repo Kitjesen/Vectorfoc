@@ -81,45 +81,58 @@ void GetTempNtc(uint16_t value_adc, float *value_temp) {
   *value_temp = ((float)temp / 10.0f);
 }
 // NOTE: Public functions are documented in adc.h.
-uint16_t adc1_median_filter(uint8_t channel) {
-  uint16_t i, j, temp;
-  for (j = 0; j < adc1_samples - 1; j++) {
-    for (i = 1; i < adc1_samples - j; i++) {
-      // Simple bubble sort
-      if (adc1_dma_value[i][channel] > adc1_dma_value[i - 1][channel]) {
-        temp = adc1_dma_value[i][channel];
-        adc1_dma_value[i][channel] = adc1_dma_value[i - 1][channel];
-        adc1_dma_value[i - 1][channel] = temp;
-      }
+static uint16_t MedianOfSnapshot(uint16_t *samples, uint16_t count) {
+  for (uint16_t sorted = 1U; sorted < count; ++sorted) {
+    uint16_t value = samples[sorted];
+    uint16_t pos = sorted;
+    while (pos > 0U && samples[pos - 1U] > value) {
+      samples[pos] = samples[pos - 1U];
+      --pos;
     }
+    samples[pos] = value;
   }
-  return adc1_dma_value[(adc1_samples - 1) / 2][channel];
+  return samples[count / 2U];
 }
+
+uint16_t adc1_median_filter(uint8_t channel) {
+  if (channel >= adc1_channel) {
+    return 0U;
+  }
+  uint16_t snapshot[adc1_samples];
+  for (uint16_t i = 0U; i < adc1_samples; ++i) {
+    snapshot[i] = adc1_dma_value[i][channel];
+  }
+  return MedianOfSnapshot(snapshot, adc1_samples);
+}
+
 uint16_t adc1_avg_filter(uint8_t channel) {
-  uint32_t temp = 0;
-  uint16_t i;
-  for (i = 0; i < adc1_samples; i++) {
+  if (channel >= adc1_channel) {
+    return 0U;
+  }
+  uint32_t temp = 0U;
+  for (uint16_t i = 0U; i < adc1_samples; ++i) {
     temp += adc1_dma_value[i][channel];
   }
   return temp / adc1_samples;
 }
+
 uint16_t adc2_median_filter(uint8_t channel) {
-  uint16_t i, j, temp;
-  for (j = 0; j < adc2_samples - 1; j++) {
-    for (i = 1; i < adc2_samples - j; i++) {
-      if (adc2_dma_value[i][channel] > adc2_dma_value[i - 1][channel]) {
-        temp = adc2_dma_value[i][channel];
-        adc2_dma_value[i][channel] = adc2_dma_value[i - 1][channel];
-        adc2_dma_value[i - 1][channel] = temp;
-      }
-    }
+  if (channel >= adc2_channel) {
+    return 0U;
   }
-  return adc2_dma_value[(adc2_samples - 1) / 2][channel];
+  uint16_t snapshot[adc2_samples];
+  for (uint16_t i = 0U; i < adc2_samples; ++i) {
+    snapshot[i] = adc2_dma_value[i][channel];
+  }
+  return MedianOfSnapshot(snapshot, adc2_samples);
 }
+
 uint16_t adc2_avg_filter(uint8_t channel) {
-  uint32_t temp = 0; // Fixed: uninitialized variable
-  uint16_t i;
-  for (i = 0; i < adc2_samples; i++) {
+  if (channel >= adc2_channel) {
+    return 0U;
+  }
+  uint32_t temp = 0U;
+  for (uint16_t i = 0U; i < adc2_samples; ++i) {
     temp += adc2_dma_value[i][channel];
   }
   return temp / adc2_samples;

@@ -25,15 +25,18 @@
 #include "config.h"
 #include "safety_control.h"
 #include "param_access.h"
+#include "platform.h"
 #include "stm32g4xx_hal.h"
 static bool s_report_enabled = false;
 static inline void CmdService_SnapshotStatus(MotorStatus *status) {
   if (status == NULL)
     return;
-  __disable_irq();
+  /* Safety owns its own critical section, so query it before taking ours. */
+  uint32_t active_fault_bits = Safety_GetActiveFaultBits();
+  CRITICAL_SECTION_BEGIN();
   status->can_id = g_can_id;
-  status->position = motor_data.feedback.position;
-  status->velocity = motor_data.feedback.velocity;
+  status->position = Protocol_TurnsToRadians(motor_data.feedback.position);
+  status->velocity = Protocol_TurnsToRadians(motor_data.feedback.velocity);
   status->current = motor_data.algo_output.Iq;
   status->torque =
       motor_data.algo_output.Iq * motor_data.Controller.torque_const;
@@ -41,7 +44,7 @@ static inline void CmdService_SnapshotStatus(MotorStatus *status) {
   status->voltage = motor_data.algo_input.Vbus;
   status->motor_state = motor_data.state.State_Mode;
   status->control_mode = motor_data.state.Control_Mode;
-  status->fault_code = Safety_GetActiveFaultBits();
+  status->fault_code = active_fault_bits;
   // Calibration status fields
   status->calib_stage = motor_data.state.Sub_State;
   status->calib_sub_stage = motor_data.state.Cs_State;
@@ -49,8 +52,24 @@ static inline void CmdService_SnapshotStatus(MotorStatus *status) {
       motor_data.state.Sub_State, motor_data.state.Cs_State,
       &motor_data.calib_ctx);
   status->calib_result = motor_data.last_calib_result;
-  __enable_irq();
+  CRITICAL_SECTION_END();
 }
+
+static bool CmdService_ParamSaveSafe(void) {
+  bool safe;
+  CRITICAL_SECTION_BEGIN();
+  const StateMachine *sm = &g_ds402_state_machine;
+  safe = sm->current_state != STATE_OPERATION_ENABLED &&
+         sm->current_state != STATE_CALIBRATING &&
+         sm->target_state != STATE_OPERATION_ENABLED &&
+         sm->target_state != STATE_CALIBRATING &&
+         !sm->transition_in_progress &&
+         !sm->operation_power_enabled &&
+         !sm->calibration_power_enabled;
+  CRITICAL_SECTION_END();
+  return safe;
+}
+
 void CmdService_Init(void) { LOGINFO("[CMD] Command service initialized"); }
 void CmdService_SetReportEnable(bool enable) { s_report_enabled = enable; }
 void CmdService_Process(void) {
@@ -61,9 +80,14 @@ void CmdService_Process(void) {
   static float report_id_filt = 0.0f;
   static bool report_current_init = false;
   static uint8_t prev_calib_stage = 0; // SUB_STATE_IDLE
+  static uint32_t next_param_save_attempt = 0;
   uint32_t now = HAL_GetTick();
   // param
-  Param_ProcessScheduledSave();
+  if ((int32_t)(now - next_param_save_attempt) >= 0 &&
+      CmdService_ParamSaveSafe()) {
+    (void)Param_ProcessScheduledSave();
+    next_param_save_attempt = now + 250U;
+  }
   // motorstate
   MotorStatus status;
   CmdService_SnapshotStatus(&status);
@@ -71,7 +95,7 @@ void CmdService_Process(void) {
   bool has_fault = (status.fault_code != FAULT_NONE);
   // fault: fault
   if (has_fault && !last_fault_state) {
-    CAN_Frame fault_frame;
+    CAN_Frame fault_frame = {0};
     if (Protocol_BuildFault(status.fault_code, &fault_frame)) {
       Protocol_SendFrame(&fault_frame);
     }
@@ -81,7 +105,7 @@ void CmdService_Process(void) {
   if (status.calib_stage != prev_calib_stage) {
     prev_calib_stage = status.calib_stage;
     last_calib_report_time = now; // align periodic timer to stage change
-    CAN_Frame calib_frame;
+    CAN_Frame calib_frame = {0};
     if (Protocol_BuildCalibStatus(&status, &calib_frame)) {
       Protocol_SendFrame(&calib_frame);
     }
@@ -91,7 +115,7 @@ void CmdService_Process(void) {
   if (status.calib_stage != 0) {
     if (now - last_calib_report_time >= 1000u) { // 1 Hz
       last_calib_report_time = now;
-      CAN_Frame calib_frame;
+      CAN_Frame calib_frame = {0};
       if (Protocol_BuildCalibStatus(&status, &calib_frame)) {
         Protocol_SendFrame(&calib_frame);
       }
@@ -122,7 +146,7 @@ void CmdService_Process(void) {
       }
       status.current = report_iq_filt;
       status.torque = report_iq_filt * motor_data.Controller.torque_const;
-      CAN_Frame tx_frame;
+      CAN_Frame tx_frame = {0};
       if (Protocol_BuildFeedback(&status, &tx_frame)) {
         Protocol_SendFrame(&tx_frame);
       }

@@ -22,7 +22,11 @@
  *   - 温度：NCP18WB473J03RB（47kΩ@25°C, B=3950），Steinhart-Hart公式
  *   - 编码器：霍尔传感器（hall_encoder.c）
  */
-#include "board_config_xstar.h"
+#ifdef BOARD_XSTAR
+
+#include "board_config.h"
+#include "bsp_dwt.h"
+#include "config.h"
 #include "motor_hal_api.h"
 #include "hall_encoder.h"
 #include "abz_encoder.h"
@@ -60,7 +64,7 @@ static float    s_temp_filtered  = 25.0f;
 static float XStar_NTC_ConvertToTemp(uint16_t adc_raw) {
     /* 范围检查 */
     if (adc_raw < XSTAR_TEMP_ADC_MIN || adc_raw > XSTAR_TEMP_ADC_MAX) {
-        return s_temp_filtered;
+        return NAN;
     }
     /* R_ntc = R_down × (ADC_MAX - raw) / raw */
     float r_ntc = HW_NTC_PULLDOWN * (float)(HW_ADC_RESOLUTION - adc_raw) / (float)adc_raw;
@@ -76,6 +80,10 @@ static float XStar_ReadTemperature(uint16_t adc_raw) {
     }
     s_last_temp_ms = now;
     float temp = XStar_NTC_ConvertToTemp(adc_raw);
+    if (!isfinite(temp)) {
+        /* A disconnected/shorted NTC must fail safe in fault detection. */
+        return NAN;
+    }
     s_temp_filtered += XSTAR_TEMP_LPF_ALPHA * (temp - s_temp_filtered);
     return s_temp_filtered;
 }
@@ -88,39 +96,46 @@ static float XStar_ReadTemperature(uint16_t adc_raw) {
 static void XStar_PWM_SetDuty(float dtc_a, float dtc_b, float dtc_c) {
     uint16_t arr = __HAL_TIM_GET_AUTORELOAD(&HW_PWM_TIMER);
     /* 相序：set_duty(Ta=U, Tb=V, Tc=W) → CH_U, CH_V, CH_W */
-    __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_U, (uint16_t)(dtc_a * arr));
-    __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_V, (uint16_t)(dtc_b * arr));
-    __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_W, (uint16_t)(dtc_c * arr));
+    __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_A, (uint16_t)(dtc_a * arr));
+    __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_B, (uint16_t)(dtc_b * arr));
+    __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_C, (uint16_t)(dtc_c * arr));
 }
 
-static void XStar_PWM_Enable(void) {
+static void XStar_PWM_Disable(void);
+static bool XStar_PWM_StartChannel(uint32_t channel) {
+    return HAL_TIM_PWM_Start(&HW_PWM_TIMER, channel) == HAL_OK &&
+           HAL_TIMEx_PWMN_Start(&HW_PWM_TIMER, channel) == HAL_OK;
+}
+
+static bool XStar_PWM_Enable(void) {
     /* Keep CH4 (ADC trigger) always active so TIM1 never stops.
      * HAL_TIM_PWM_Stop for CH1/2/3 only stops the timer when ALL CCxE=0.
      * With CC4E=1, __HAL_TIM_DISABLE's precondition fails → TIM1 keeps counting
      * → ADC ISR keeps firing → StateMachine_Update always runs. */
-    HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_TRIG);
-    HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_U);
-    HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_V);
-    HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_W);
-    HAL_TIMEx_PWMN_Start(&HW_PWM_TIMER, HW_PWM_CH_U);
-    HAL_TIMEx_PWMN_Start(&HW_PWM_TIMER, HW_PWM_CH_V);
-    HAL_TIMEx_PWMN_Start(&HW_PWM_TIMER, HW_PWM_CH_W);
+    if (HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_TRIG) != HAL_OK ||
+        !XStar_PWM_StartChannel(HW_PWM_CH_PHASE_A) ||
+        !XStar_PWM_StartChannel(HW_PWM_CH_PHASE_B) ||
+        !XStar_PWM_StartChannel(HW_PWM_CH_PHASE_C)) {
+        XStar_PWM_Disable();
+        return false;
+    }
+    return true;
 }
 
 static void XStar_PWM_Disable(void) {
-    HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_U);
-    HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_V);
-    HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_W);
-    HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_U);
-    HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_V);
-    HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_W);
+    HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_PHASE_A);
+    HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_PHASE_B);
+    HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_PHASE_C);
+    HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_PHASE_A);
+    HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_PHASE_B);
+    HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_PHASE_C);
 }
 
 static void XStar_PWM_Brake(void) {
-    __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_U, 0);
-    __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_V, 0);
-    __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_W, 0);
-    XStar_PWM_Enable();
+    __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_A, 0);
+    __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_B, 0);
+    __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_C, 0);
+    XStar_PWM_Disable();
 }
 
 static const Motor_HAL_PwmInterface_t xstar_pwm = {
@@ -156,20 +171,32 @@ static void XStar_ADC_Update(Motor_HAL_SensorData_t *data) {
     data->temp = XStar_ReadTemperature((uint16_t)adc_temp);
 }
 
-static void XStar_ADC_CalibrateOffsets(void) {
+static bool XStar_ADC_CalibrateOffsets(void) {
     /* 静止时采集1000次，取均值作为零偏
      * 偏置电压1.65V对应ADC值约2047，实际因OPAMP和电路略有偏差 */
-    uint32_t sum_u = 0, sum_v = 0, sum_w = 0;
-    const int N = 1000;
-    for (int i = 0; i < N; i++) {
-        HAL_Delay(1);
+    uint64_t sum_u = 0, sum_v = 0, sum_w = 0;
+    const uint32_t samples = 1024u;
+    for (uint32_t i = 0; i < samples; i++) {
+        DWT_Delay(CURRENT_MEASURE_PERIOD);
         sum_u += (uint32_t)hadc1.Instance->HW_ADC1_JDR_IU;
         sum_v += (uint32_t)hadc2.Instance->HW_ADC2_JDR_IV;
         sum_w += (uint32_t)hadc1.Instance->HW_ADC1_JDR_IW;
+        if ((i & 0x3Fu) == 0u) {
+            HAL_WatchdogFeed();
+        }
     }
-    current_data.Ia_offset = (float)sum_u / N;
-    current_data.Ib_offset = (float)sum_v / N;
-    current_data.Ic_offset = (float)sum_w / N;
+    current_data.Ia_offset = (float)sum_u / (float)samples;
+    current_data.Ib_offset = (float)sum_v / (float)samples;
+    current_data.Ic_offset = (float)sum_w / (float)samples;
+    return isfinite(current_data.Ia_offset) &&
+           isfinite(current_data.Ib_offset) &&
+           isfinite(current_data.Ic_offset) &&
+           current_data.Ia_offset > 256.0f &&
+           current_data.Ia_offset < 3840.0f &&
+           current_data.Ib_offset > 256.0f &&
+           current_data.Ib_offset < 3840.0f &&
+           current_data.Ic_offset > 256.0f &&
+           current_data.Ic_offset < 3840.0f;
 }
 
 static const Motor_HAL_AdcInterface_t xstar_adc = {
@@ -201,3 +228,5 @@ Motor_HAL_Handle_t xstar_hal_handle = {
     .encoder = &g_abz_encoder_interface,
 #endif
 };
+
+#endif /* BOARD_XSTAR */

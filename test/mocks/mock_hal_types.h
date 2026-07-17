@@ -30,7 +30,9 @@
 #define M_PI 3.14159265358979323846f
 #endif
 
+#ifndef M_2PI
 #define M_2PI (2.0f * M_PI)
+#endif
 
 /* Mock HAL types */
 typedef struct {
@@ -67,8 +69,6 @@ static inline void __set_PRIMASK(uint32_t v) { (void)v; }
 static inline float arm_sin_f32(float x) { return sinf(x); }
 static inline float arm_cos_f32(float x) { return cosf(x); }
 
-/* Mock HAL tick / delay */
-static inline void HAL_Delay(uint32_t ms) { (void)ms; }
 /* HAL_GetTick: declared but not defined here.
  * Each test translation unit that needs it must provide its own definition,
  * OR link against a stub .c that provides it.

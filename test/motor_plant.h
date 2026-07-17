@@ -30,7 +30,8 @@ typedef struct {
   float i_alpha; // Alpha current [A]
   float i_beta;  // Beta current [A]
   float omega;   // Mechanical Velocity [rad/s]
-  float theta;   // Mechanical Angle [rad]
+  float position; // Multi-turn mechanical position [rad]
+  float theta;    // Single-turn mechanical angle [rad]
 
   // Current simulation step inputs (Back EMF)
   float bemf_alpha;

@@ -24,5 +24,8 @@ typedef struct {
 
 void FieldWeakening_Update(MOTOR_DATA *motor,
                            const FieldWeakening_Config_t *cfg);
+float FieldWeakening_Calculate(const MOTOR_DATA *motor,
+                               const FieldWeakening_Config_t *cfg, float dt);
+void FieldWeakening_Reset(void);
 
 #endif // FIELD_WEAKENING_H

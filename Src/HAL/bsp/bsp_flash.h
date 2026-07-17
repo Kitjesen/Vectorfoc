@@ -21,12 +21,17 @@
 #include "common.h"
 #include <stdint.h>
 #include <stdbool.h>
-/* Flashconfigparam(STM32G4) */
-#define BSP_FLASH_BASE          0x08000000
-#define BSP_FLASH_PAGE_SIZE     2048        ///< 2KB
-/* Flash */
-#define ADDR_FLASH_PAGE_62      0x0801F000  ///< Page 62 (2)
-#define ADDR_FLASH_PAGE_63      0x0801F800  ///< Page 63 (1)
+/* Flash configuration (STM32G431CB: 128KB, 64 pages, 2KB/page) */
+#define BSP_FLASH_BASE              0x08000000u
+#define BSP_FLASH_SIZE              (128u * 1024u)
+#define BSP_FLASH_END               (BSP_FLASH_BASE + BSP_FLASH_SIZE)
+#define BSP_FLASH_PAGE_SIZE         2048u
+#define BSP_FLASH_PAGE_COUNT        (BSP_FLASH_SIZE / BSP_FLASH_PAGE_SIZE)
+#define BSP_FLASH_DOUBLEWORD_SIZE   8u
+
+/* Parameter storage pages: 0x0801F000-0x0801FFFF (4KB, pages 62-63). */
+#define ADDR_FLASH_PAGE_62          0x0801F000u  ///< Page 62
+#define ADDR_FLASH_PAGE_63          0x0801F800u  ///< Page 63
 /**
  * @brief Flash
  */

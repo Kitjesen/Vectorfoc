@@ -9,11 +9,56 @@ on:
       - "**"
 
 jobs:
-  build:
+  firmware:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: .
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: vector-mt6816
+            board_xstar: "OFF"
+            sensor: MT6816
+          - name: vector-tmr3109
+            board_xstar: "OFF"
+            sensor: TMR3109
+          - name: xstar-hall
+            board_xstar: "ON"
+            sensor: HALL
+          - name: xstar-abz
+            board_xstar: "ON"
+            sensor: ABZ
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi cmake make python3
+
+      - name: Configure ${{ matrix.name }}
+        run: |
+          cmake -S . -B "build-${{ matrix.name }}" \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBOARD_XSTAR=${{ matrix.board_xstar }} \
+            -DPOSITION_SENSOR=${{ matrix.sensor }}
+
+      - name: Build ${{ matrix.name }}
+        run: cmake --build "build-${{ matrix.name }}" -j2
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.name }}
+          path: |
+            build-${{ matrix.name }}/VectorFoc.elf
+            build-${{ matrix.name }}/VectorFoc.bin
+            build-${{ matrix.name }}/VectorFoc.hex
+          retention-days: 30
+
+  bootloader:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,35 +68,46 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-arm-none-eabi cmake make
 
-      - name: Build firmware (CMake + arm-none-eabi)
+      - name: Configure bootloader
         run: |
-          mkdir -p build
-          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
-          cmake --build build -j2
+          cmake -S . -B build-bootloader \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBOOTLOADER_BUILD=ON
 
-      - name: Build tests (host)
-        run: |
-          mkdir -p test/build-ci
-          cmake -S test -B test/build-ci
-          cmake --build test/build-ci -j2
+      - name: Build bootloader
+        run: cmake --build build-bootloader -j2
 
-      - name: Run tests (host)
-        run: |
-          ./test/build-ci/test_runner_core
-          ./test/build-ci/test_runner_traj
-          ./test/build-ci/test_runner_pid
-          ./test/build-ci/test_runner_rate_limiter
-          ./test/build-ci/test_runner_ladrc
-          ./test/build-ci/test_runner_trig
-          ./test/build-ci/test_runner_integration
-
-      - name: Upload build artifacts
+      - name: Upload bootloader
         uses: actions/upload-artifact@v4
-        if: success()
         with:
-          name: firmware-binaries
+          name: firmware-bootloader
           path: |
-            build/VectorFoc.elf
-            build/VectorFoc.bin
-            build/VectorFoc.hex
+            build-bootloader/VectorFoc_Bootloader.elf
+            build-bootloader/VectorFoc_Bootloader.bin
+            build-bootloader/VectorFoc_Bootloader.hex
           retention-days: 30
+
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake make gcc python3
+
+      - name: Configure host tests
+        run: |
+          cmake -S test -B test/build-ci
+
+      - name: Build host tests
+        run: cmake --build test/build-ci -j2
+
+      - name: Run C tests
+        run: ctest --test-dir test/build-ci --output-on-failure
+
+      - name: Run app-header and OTA tooling tests
+        run: python3 -m unittest discover -s test -p "test_app_header_tools.py" -v

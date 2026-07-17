@@ -39,7 +39,7 @@ typedef struct {
   void (*update)(void);
   /**
    * @brief getposition
-   * @return position [rad],  [0, 2π]
+   * @return multi-turn mechanical position [rad], relative to boot zero
    */
   float (*get_position)(void);
   /**
@@ -80,6 +80,7 @@ float MHAL_Encoder_GetPosition(void);
 float MHAL_Encoder_GetVelocity(void);
 float MHAL_Encoder_GetElectricalAngle(uint8_t pole_pairs);
 float MHAL_Encoder_GetElectricalVelocity(uint8_t pole_pairs);
+int MHAL_Encoder_ZeroPosition(void);
 int MHAL_Encoder_SetOffset(float offset);
 float MHAL_Encoder_GetOffset(void);
 #ifdef __cplusplus

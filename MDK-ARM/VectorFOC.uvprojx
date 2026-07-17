@@ -1871,6 +1871,16 @@
               <FilePath>..\Src\APP\isr\isr_foc.c</FilePath>
             </File>
             <File>
+              <FileName>adc_sample_guard.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\APP\isr\adc_sample_guard.c</FilePath>
+            </File>
+            <File>
+              <FileName>encoder_failure_guard.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\APP\isr\encoder_failure_guard.c</FilePath>
+            </File>
+            <File>
               <FileName>cmd_service.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\APP\rtos\cmd_service.c</FilePath>
@@ -1889,6 +1899,11 @@
               <FileName>task_guard.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\APP\rtos\task_guard.c</FilePath>
+            </File>
+            <File>
+              <FileName>watchdog_supervisor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\SAFE\watchdog_supervisor.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -2019,6 +2034,16 @@
               <FileName>control.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\ALGO\control\control.c</FilePath>
+            </File>
+            <File>
+              <FileName>command_limiter.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\ALGO\control\command_limiter.c</FilePath>
+            </File>
+            <File>
+              <FileName>torque_utils.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\ALGO\control\torque_utils.c</FilePath>
             </File>
             <File>
               <FileName>impl.c</FileName>

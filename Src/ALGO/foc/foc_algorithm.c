@@ -126,7 +126,10 @@ void FOC_Algorithm_CurrentLoop(const FOC_AlgorithmInput_t *input,
   // Step 7: voltage
   // limitvoltageinverteroutput
   // V_max = (Vbus / sqrt(3)) * 0.95f ( 5% safety)
-  float V_max = input->Vbus * ONE_OVER_SQRT3 * VOLTAGE_MARGIN;
+  float inverter_limit =
+      fmaxf(input->Vbus, 0.0f) * ONE_OVER_SQRT3 * VOLTAGE_MARGIN;
+  float configured_limit = fmaxf(config->voltage_limit, 0.0f);
+  float V_max = fminf(inverter_limit, configured_limit);
   float V_mag = sqrtf(output->Vd * output->Vd + output->Vq * output->Vq);
   if (V_mag > V_max) {
     float scale = V_max / V_mag;
@@ -155,7 +158,7 @@ void FOC_Algorithm_CurrentLoop(const FOC_AlgorithmInput_t *input,
   // calc
   int ret = SVPWM_Modulate(output->Valpha, output->Vbeta, input->Vbus,
                            &output->Ta, &output->Tb, &output->Tc);
-  output->overmodulation = (ret != 0);
+  output->overmodulation = (ret == SVPWM_STATUS_OVERMODULATION);
 }
 void FOC_Algorithm_ResetState(FOC_AlgorithmState_t *state) {
   if (state == NULL)

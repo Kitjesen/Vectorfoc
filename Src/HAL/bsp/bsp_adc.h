@@ -28,5 +28,5 @@
  *  DMA ，CPU  */
 extern volatile uint16_t adc1_dma_value[adc1_samples][adc1_channel];
 extern volatile uint16_t adc2_dma_value[adc2_samples][adc2_channel];
-void adc_bsp_init(void);
+bool adc_bsp_init(void);
 #endif

@@ -22,16 +22,17 @@
 #include "main.h"
 #include "usart.h"
 #include <stdint.h>
-#define DEVICE_USART_CNT 5     //
-#define USART_RXBUFF_LIMIT 256 // buff,
+#ifndef DEVICE_USART_CNT
+#define DEVICE_USART_CNT 1U
+#endif
+#define USART_RXBUFF_LIMIT 256U // buff,
 /**
  * @brief ,
  */
-typedef void (*usart_module_callback)();
+typedef void (*usart_module_callback)(void);
 /**
  * @brief mode
  */
-#pragma pack(1)
 typedef enum {
   USART_TRANSFER_NONE = 0,
   USART_TRANSFER_BLOCKING,
@@ -41,28 +42,30 @@ typedef enum {
 /**
  * @brief
  */
-#define USART_TXBUFF_SIZE 2048 //
+#ifndef USART_TXBUFF_SIZE
+#define USART_TXBUFF_SIZE 256U
+#endif
 typedef struct {
   uint8_t recv_buff[USART_RXBUFF_LIMIT]; // buff
-  uint8_t recv_buff_size;                //
+  uint16_t recv_buff_size;               //
   UART_HandleTypeDef *usart_handle;      // usart_handle
   usart_module_callback module_callback; //
   /*  */
   uint8_t tx_buff[USART_TXBUFF_SIZE];
   volatile uint16_t tx_head;
   volatile uint16_t tx_tail;
-  volatile uint8_t is_transmitting; // 1: DMA
-  volatile uint16_t last_tx_len;    // DMA
+  volatile uint8_t is_transmitting; // 1: IT/DMA transfer active
+  volatile uint16_t last_tx_len;    // active transfer length
+  volatile USART_TRANSFER_MODE tx_mode;
 } USARTInstance;
 /**
  * @brief initconfig
  */
 typedef struct {
-  uint8_t recv_buff_size;                //
+  uint16_t recv_buff_size;               //
   UART_HandleTypeDef *usart_handle;      // usart_handle
   usart_module_callback module_callback; //
 } USART_Init_Config_s;
-#pragma pack()
 /**
  * @brief
  * start,,DMA,ITBLOCKING

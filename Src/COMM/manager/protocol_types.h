@@ -26,6 +26,17 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/** Protocol-facing motion units are SI; the control core stores mechanical turns. */
+#define PROTOCOL_RADIANS_PER_TURN (6.28318530717958647692f)
+
+static inline float Protocol_TurnsToRadians(float turns) {
+  return turns * PROTOCOL_RADIANS_PER_TURN;
+}
+
+static inline float Protocol_RadiansToTurns(float radians) {
+  return radians / PROTOCOL_RADIANS_PER_TURN;
+}
+
 /**
  * @brief Supported protocol types.
  */
@@ -64,8 +75,10 @@ typedef struct {
 
   /* Control flags */
   uint8_t control_mode; /**< Control mode */
+  bool has_enable_command; /**< True only when enable_motor is explicitly set. */
   bool enable_motor;    /**< Motor enable flag */
   bool set_zero;        /**< Set zero position flag */
+  bool clear_fault;     /**< Clear a recovered, latched fault */
 
   /* Protocol switching */
   bool is_protocol_switch; /**< Protocol switch request flag */
@@ -77,6 +90,7 @@ typedef struct {
   bool is_param_read;   /**< Parameter read request */
   bool is_param_write;  /**< Parameter write request */
   bool is_fault_query;  /**< Fault query request */
+  bool request_feedback; /**< Immediate protocol feedback request */
 
   /* Standard FSM Integration */
   bool has_control_word; /**< Flag indicating valid raw controlword */

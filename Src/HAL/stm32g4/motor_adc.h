@@ -73,7 +73,7 @@ typedef enum {
  */
 void GetTempNtc(uint16_t value_adc, float *value_temp);
 /**
- * @brief  Apply median filter to ADC1 channel (in-place sort).
+ * @brief  Apply median filter to an ADC1 DMA snapshot.
  * @param  channel ADC1 channel index.
  * @return Filtered value [LSB].
  */
@@ -85,7 +85,7 @@ uint16_t adc1_median_filter(uint8_t channel);
  */
 uint16_t adc1_avg_filter(uint8_t channel);
 /**
- * @brief  Apply median filter to ADC2 channel (in-place sort).
+ * @brief  Apply median filter to an ADC2 DMA snapshot.
  * @param  channel ADC2 channel index.
  * @return Filtered value [LSB].
  */

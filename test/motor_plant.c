@@ -26,6 +26,7 @@ void MotorPlant_Init(MotorPlant_t *plant) {
   plant->i_alpha = 0.0f;
   plant->i_beta = 0.0f;
   plant->omega = 0.0f;
+  plant->position = 0.0f;
   plant->theta = 0.0f;
 
   plant->dt = 0.00005f; // 20kHz
@@ -67,7 +68,8 @@ void MotorPlant_Step(MotorPlant_t *plant, float v_alpha, float v_beta,
 
   float d_omega = t_net / plant->J;
   plant->omega += d_omega * plant->dt;
-  plant->theta += plant->omega * plant->dt;
+  plant->position += plant->omega * plant->dt;
+  plant->theta = plant->position;
 
   // Wrap theta
   while (plant->theta > 6.2831853f)

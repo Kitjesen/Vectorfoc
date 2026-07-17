@@ -39,7 +39,8 @@ typedef struct {
 } Motor_HAL_SensorData_t;
 
 typedef struct {
-    float angle_rad;     // Mechanical angle [rad] (0 ~ 2PI)
+    float position_rad;  // Multi-turn mechanical position [rad], relative to boot zero
+    float angle_rad;     // Single-turn mechanical angle [rad] (0 ~ 2PI)
     float velocity_rad;  // Mechanical velocity [rad/s]
     float elec_angle;    // Electrical angle [rad] (-PI ~ PI) (Optional, or calculated by core)
     int32_t raw_value;   // Raw encoder value (for debugging/calibration)
@@ -63,8 +64,9 @@ typedef struct {
 
     /**
      * @brief Enable PWM output
+      * @return true when every required bridge output was enabled.
      */
-    void (*enable)(void);
+    bool (*enable)(void);
 
     /**
      * @brief Disable PWM output (High-Z)
@@ -93,7 +95,7 @@ typedef struct {
      * @brief Calibrate current offsets
      * Should be called when motor is idle.
      */
-    void (*calibrate_offsets)(void);
+    bool (*calibrate_offsets)(void);
 
 } Motor_HAL_AdcInterface_t;
 
@@ -105,7 +107,7 @@ typedef struct {
      * @brief Update encoder state
      * Should be called periodically or before control loop.
      */
-    void (*update)(void);
+    bool (*update)(void);
 
     /**
      * @brief Get latest encoder data
@@ -114,10 +116,28 @@ typedef struct {
     void (*get_data)(Motor_HAL_EncoderData_t *data);
 
     /**
-     * @brief Set electrical zero offset (if handled by driver)
-     * @param offset Offset value
+     * @brief Synchronize the configured motor pole-pair count.
+     */
+    void (*set_pole_pairs)(uint8_t pole_pairs);
+
+    /**
+     * @brief Make the current multi-turn mechanical position zero.
+     *
+     * This must not change commutation/electrical-angle calibration.
+     */
+    void (*zero_position)(void);
+
+    /**
+     * @brief Set commutation electrical-zero offset.
+     * @param offset Electrical offset [rad]
      */
     void (*set_offset)(float offset);
+
+    /**
+     * @brief Get commutation electrical-zero offset.
+     * @return Electrical offset [rad]
+     */
+    float (*get_offset)(void);
 
 } Motor_HAL_EncoderInterface_t;
 

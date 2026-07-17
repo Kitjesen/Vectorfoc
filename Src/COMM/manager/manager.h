@@ -38,7 +38,10 @@
 #include "protocol_types.h"
 #include "transport.h"
 // Forward declaration to avoid circular dependency
+#ifndef VECTORFOC_MOTOR_DATA_TYPEDEF
+#define VECTORFOC_MOTOR_DATA_TYPEDEF
 typedef struct MOTOR_DATA_s MOTOR_DATA;
+#endif
 /**
  * @brief
  * @param  transport

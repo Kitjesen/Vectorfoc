@@ -60,6 +60,7 @@ const DetectionState *Detection_GetState(void);
  * @brief updateCAN ()
  */
 void Detection_FeedWatchdog(uint32_t timestamp);
+void Detection_SetCANTimeout(uint32_t timeout_ms);
 /**
  * @brief 获取检测配置指针（运行时访问，推荐使用）
  * @return 配置指针（非 NULL）

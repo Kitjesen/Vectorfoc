@@ -31,6 +31,7 @@
 
 #include "protocol_types.h"
 #include "motor.h"         /* CONTROL_MODE_MIT, MOTOR_DATA */
+#include "param_access.h"
 #include "vector_protocol.h"
 #include <assert.h>
 #include <math.h>
@@ -55,6 +56,16 @@
             return 1; \
         } \
     } while (0)
+
+static CAN_Frame s_last_sent_frame;
+static unsigned s_sent_frame_count;
+static unsigned s_param_write_count;
+static uint16_t s_param_write_index;
+static uint8_t s_param_write_value;
+static ParamResult s_param_write_result = PARAM_OK;
+static unsigned s_save_count;
+static unsigned s_emergency_shutdown_count;
+static unsigned s_boot_request_upgrade_count;
 
 /* ── 构造 CAN 帧辅助 ─────────────────────────────────────────── */
 static CAN_Frame make_frame(uint32_t id, bool extended,
@@ -150,8 +161,13 @@ static int test_build_param_response(void)
 static int test_build_fault(void)
 {
     CAN_Frame f;
-    CHECK(ProtocolVector_BuildFault(0xDEADBEEF, 0, &f) == true);
+    memset(&f, 0xA5, sizeof(f));
+    CHECK(ProtocolVector_BuildFault(0xDEADBEEF, 0x12345678, &f) == true);
     CHECK(f.dlc == 8);
+    CHECK(f.is_extended == true);
+    CHECK(f.is_rtr == false);
+    CHECK(f.data[4] == 0x12 && f.data[5] == 0x34 &&
+          f.data[6] == 0x56 && f.data[7] == 0x78);
 
     /* CMD = 0x15 */
     CHECK(((f.id >> 24) & 0x1F) == 0x15u);
@@ -230,6 +246,20 @@ static int test_parse_rejects_standard_frame(void)
 /* ════════════════════════════════════════════════════════════════
    Parse — NULL 安全
    ════════════════════════════════════════════════════════════════ */
+
+static int test_parse_rejects_rtr_frame(void)
+{
+    uint8_t d[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    CAN_Frame f = make_frame((1u << 24) | 0x01u, true, 8, d);
+    f.is_rtr = true;
+    MotorCommand cmd;
+    memset(&cmd, 0xA5, sizeof(cmd));
+    ParseResult r = ProtocolVector_Parse(&f, &cmd);
+    CHECK(r == PARSE_ERR_INVALID_FRAME);
+
+    printf("PASS test_parse_rejects_rtr_frame\n");
+    return 0;
+}
 static int test_parse_null_safe(void)
 {
     CAN_Frame f;
@@ -294,12 +324,14 @@ static int test_parse_enable_stop(void)
     CAN_Frame f_en = make_frame(id_en, true, 0, NULL);
     MotorCommand cmd;
     CHECK(ProtocolVector_Parse(&f_en, &cmd) == PARSE_OK);
+    CHECK(cmd.has_enable_command == true);
     CHECK(cmd.enable_motor == true);
 
     /* Stop: CMD=4 */
     uint32_t id_st = (4u << 24) | 0x01u;
     CAN_Frame f_st = make_frame(id_st, true, 0, NULL);
     CHECK(ProtocolVector_Parse(&f_st, &cmd) == PARSE_OK);
+    CHECK(cmd.has_enable_command == true);
     CHECK(cmd.enable_motor == false);
 
     printf("PASS test_parse_enable_stop\n");
@@ -317,6 +349,7 @@ static int test_parse_param_read(void)
     MotorCommand cmd;
     CHECK(ProtocolVector_Parse(&f, &cmd) == PARSE_OK);
     CHECK(cmd.is_param_read == true);
+    CHECK(cmd.has_enable_command == false);
     CHECK(cmd.param_index == 0x2000);
 
     printf("PASS test_parse_param_read\n");
@@ -373,6 +406,88 @@ static int test_parse_motor_ctrl_short_dlc(void)
     return 0;
 }
 
+static int test_parse_filters_target_and_limits_broadcast_commands(void)
+{
+    MotorCommand cmd;
+    CAN_Frame f = make_frame((3u << 24) | 0x02u, true, 0, NULL);
+    CHECK(ProtocolVector_Parse(&f, &cmd) == PARSE_UNKNOWN_ID);
+
+    f = make_frame((3u << 24) | 0x7Fu, true, 0, NULL);
+    CHECK(ProtocolVector_Parse(&f, &cmd) == PARSE_UNKNOWN_ID);
+
+    f = make_frame((4u << 24) | 0x7Fu, true, 0, NULL);
+    CHECK(ProtocolVector_Parse(&f, &cmd) == PARSE_OK);
+    CHECK(cmd.has_enable_command == true);
+    CHECK(cmd.enable_motor == false);
+
+    f = make_frame((12u << 24) | 0x7Fu, true, 0, NULL);
+    CHECK(ProtocolVector_Parse(&f, &cmd) == PARSE_OK);
+    CHECK(cmd.clear_fault == true);
+    return 0;
+}
+
+static int test_version_response_is_fully_initialized(void)
+{
+    uint32_t id = (26u << 24) | 0x01u;
+    CAN_Frame f = make_frame(id, true, 0, NULL);
+    MotorCommand cmd;
+    memset(&s_last_sent_frame, 0xA5, sizeof(s_last_sent_frame));
+    s_sent_frame_count = 0;
+
+    CHECK(ProtocolVector_Parse(&f, &cmd) == PARSE_OK);
+    CHECK(s_sent_frame_count == 1);
+    CHECK(s_last_sent_frame.dlc == 8);
+    CHECK(s_last_sent_frame.is_extended == true);
+    CHECK(s_last_sent_frame.is_rtr == false);
+    CHECK(s_last_sent_frame.data[4] == 0 && s_last_sent_frame.data[5] == 0 &&
+          s_last_sent_frame.data[6] == 0 && s_last_sent_frame.data[7] == 0);
+    return 0;
+}
+
+static int test_baudrate_write_validates_before_ack_and_save(void)
+{
+    MotorCommand cmd;
+    uint8_t data[1] = {2u};
+    CAN_Frame f = make_frame((23u << 24) | 0x01u, true, 1, data);
+
+    s_param_write_count = 0u;
+    s_save_count = 0u;
+    s_sent_frame_count = 0u;
+    s_param_write_result = PARAM_OK;
+    CHECK(ProtocolVector_Parse(&f, &cmd) == PARSE_OK);
+    CHECK(s_param_write_count == 1u);
+    CHECK(s_param_write_index == PARAM_CAN_BAUDRATE);
+    CHECK(s_param_write_value == 2u);
+    CHECK(s_save_count == 1u);
+    CHECK(s_sent_frame_count == 1u);
+    CHECK(s_last_sent_frame.data[0] == 2u);
+
+    data[0] = 3u;
+    f = make_frame((23u << 24) | 0x01u, true, 1, data);
+    s_param_write_count = 0u;
+    s_save_count = 0u;
+    s_sent_frame_count = 0u;
+    s_param_write_result = PARAM_ERR_OUT_OF_RANGE;
+    CHECK(ProtocolVector_Parse(&f, &cmd) == PARSE_ERR_INVALID_FRAME);
+    CHECK(s_param_write_count == 1u);
+    CHECK(s_save_count == 0u);
+    CHECK(s_sent_frame_count == 0u);
+    s_param_write_result = PARAM_OK;
+    return 0;
+}
+static int test_bootloader_command_uses_boot_upgrade_request(void)
+{
+    MotorCommand cmd;
+    CAN_Frame f = make_frame((13u << 24) | 0x01u, true, 0, NULL);
+
+    s_emergency_shutdown_count = 0u;
+    s_boot_request_upgrade_count = 0u;
+    CHECK(ProtocolVector_Parse(&f, &cmd) == PARSE_OK);
+    CHECK(s_emergency_shutdown_count == 1u);
+    CHECK(s_boot_request_upgrade_count == 1u);
+    return 0;
+}
+
 /* ════════════════════════════════════════════════════════════════
    main
    ════════════════════════════════════════════════════════════════ */
@@ -387,6 +502,7 @@ int main(void)
     f += test_build_calib_status();
     f += test_build_calib_validate();
     f += test_parse_rejects_standard_frame();
+    f += test_parse_rejects_rtr_frame();
     f += test_parse_null_safe();
     f += test_parse_motor_ctrl();
     f += test_parse_enable_stop();
@@ -394,9 +510,13 @@ int main(void)
     f += test_parse_param_write();
     f += test_parse_unknown_cmd();
     f += test_parse_motor_ctrl_short_dlc();
+    f += test_parse_filters_target_and_limits_broadcast_commands();
+    f += test_version_response_is_fully_initialized();
+    f += test_baudrate_write_validates_before_ack_and_save();
+    f += test_bootloader_command_uses_boot_upgrade_request();
 
     if (f == 0) {
-        printf("\nAll comm protocol tests PASSED (13 tests)\n");
+        printf("\nAll comm protocol tests PASSED\n");
         return 0;
     }
     printf("\n%d comm protocol test(s) FAILED\n", f);
@@ -415,20 +535,36 @@ MOTOR_DATA motor_data;
 
 void Motor_RequestCalibration(MOTOR_DATA *m, uint8_t type) { (void)m; (void)type; }
 void Motor_AbortCalibration(MOTOR_DATA *m) { (void)m; }
-void Motor_ClearFaults(MOTOR_DATA *m) { (void)m; }
+bool Motor_ClearFaults(MOTOR_DATA *m) { (void)m; return true; }
 uint8_t Motor_PreCalibCheck(MOTOR_DATA *m, uint8_t *fail) {
     (void)m; if (fail) *fail = 0; return 0xFF;
 }
-void Param_WriteFloat(uint16_t idx, float v) { (void)idx; (void)v; }
-void Param_WriteUint8(uint16_t idx, uint8_t v) { (void)idx; (void)v; }
-void Param_ScheduleSave(void) {}
+ParamResult Param_WriteFloat(uint16_t idx, float v) {
+    (void)idx; (void)v;
+    return PARAM_OK;
+}
+ParamResult Param_WriteUint8(uint16_t idx, uint8_t v) {
+    s_param_write_count++;
+    s_param_write_index = idx;
+    s_param_write_value = v;
+    return s_param_write_result;
+}
+void Param_ScheduleSave(void) {
+    s_save_count++;
+}
 void CmdService_SetReportEnable(bool en) { (void)en; }
-void Protocol_SendFrame(const CAN_Frame *f) { (void)f; }
+bool Protocol_SendFrame(const CAN_Frame *f) {
+    s_last_sent_frame = *f;
+    s_sent_frame_count++;
+    return true;
+}
 uint8_t CalibContext_GetProgress(uint8_t a, uint8_t b,
                                   const CalibrationContext *c) {
     (void)a; (void)b; (void)c; return 0;
 }
 uint32_t Safety_GetLastFaultTime(void) { return 0; }
+void Emergency_Shutdown(void) { s_emergency_shutdown_count++; }
+void Boot_RequestUpgrade(void) { s_boot_request_upgrade_count++; }
 /* HAL_NVIC_SystemReset is a macro in test stub — undefine before redefining as function */
 #undef HAL_NVIC_SystemReset
 void HAL_NVIC_SystemReset(void) {}

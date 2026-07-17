@@ -27,6 +27,12 @@
 extern "C" {
 #endif
 
+typedef enum {
+  SVPWM_STATUS_INVALID_INPUT = -1,
+  SVPWM_STATUS_OK = 0,
+  SVPWM_STATUS_OVERMODULATION = 1,
+} SVPWM_Status_t;
+
 /**
  * @brief  SVPWM modulation: αβ voltage → PWM duty cycles.
  * @param  Valpha  [V] Alpha-axis voltage reference.
@@ -35,7 +41,8 @@ extern "C" {
  * @param  Ta      [out] [0~1] Phase A duty cycle.
  * @param  Tb      [out] [0~1] Phase B duty cycle.
  * @param  Tc      [out] [0~1] Phase C duty cycle.
- * @return 0 on success, -1 on over-modulation (voltage saturation).
+ * @return SVPWM_STATUS_OK on success, SVPWM_STATUS_OVERMODULATION when the
+ *         requested vector is scaled, or SVPWM_STATUS_INVALID_INPUT.
  * @note   Uses midpoint injection method.
  */
 int SVPWM_Modulate(float Valpha, float Vbeta, float Vbus, float *Ta, float *Tb,

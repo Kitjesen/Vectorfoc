@@ -98,8 +98,10 @@ typedef struct {
   float phase_set;         // Current electrical angle
   int16_t sample_count;    // Sample counter
   float next_sample_time;  // Next sampling timestamp
+#ifdef TEST_ENV
   int error_array_storage[SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS];
-  int *error_array;        // Error array (preallocated storage)
+#endif
+  int *error_array;        // Shared hardware calibration workspace
   size_t error_array_size; // Array size
 } EncoderCalibContext;
 

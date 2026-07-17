@@ -67,6 +67,19 @@
 #define HW_PWM_CH_W             TIM_CHANNEL_3   /* PA10 */
 #define HW_PWM_CH_TRIG          TIM_CHANNEL_4   /* ADC 注入触发 */
 
+/* X-STAR uses direct electrical-to-board phase mapping. */
+#define HW_PWM_CH_PHASE_A       HW_PWM_CH_U
+#define HW_PWM_CH_PHASE_B       HW_PWM_CH_V
+#define HW_PWM_CH_PHASE_C       HW_PWM_CH_W
+
+/* This board definition currently has no verified BKIN/BKIN2 connection. */
+#define HW_PWM_BREAK_ENABLED    0u
+#define HW_PWM_BREAK_POLARITY   TIM_BREAKPOLARITY_HIGH
+#define HW_PWM_BREAK_FILTER     0u
+#define HW_PWM_BREAK2_ENABLED   0u
+#define HW_PWM_BREAK2_POLARITY  TIM_BREAK2POLARITY_HIGH
+#define HW_PWM_BREAK2_FILTER    0u
+
 /* 上桥（与 VectorFOC 相同） */
 #define HW_PWM_U_H_PIN          GPIO_PIN_8      /* PA8  TIM1_CH1  */
 #define HW_PWM_U_H_PORT         GPIOA

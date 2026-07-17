@@ -34,6 +34,17 @@ int MHAL_PWM_Init(void) {
   // init MX_TIM1_Init()  main.c done
   return 0;
 }
+int MHAL_PWM_StartSampling(void) {
+  if (MHAL_PWM_Disable() != 0) {
+    return -1;
+  }
+
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_U, 0);
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_V, 0);
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_W, 0);
+
+  return (HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_TRIG) == HAL_OK) ? 0 : -1;
+}
 int MHAL_PWM_SetDuty(float Ta, float Tb, float Tc) {
   if (motor_data.components.hal == NULL ||
       motor_data.components.hal->pwm == NULL ||
@@ -47,8 +58,7 @@ int MHAL_PWM_Enable(void) {
       motor_data.components.hal->pwm == NULL ||
       motor_data.components.hal->pwm->enable == NULL)
     return -1;
-  motor_data.components.hal->pwm->enable();
-  return 0;
+  return motor_data.components.hal->pwm->enable() ? 0 : -1;
 }
 int MHAL_PWM_Disable(void) {
   if (motor_data.components.hal == NULL ||

@@ -30,25 +30,35 @@
 #define PARAM_STORAGE_H
 #include <stdint.h>
 #include <stdbool.h>
-/* Flash (STM32G4，param) */
-#define FLASH_PARAM_PAGE1_ADDR    0x0801F800  // 2 (2KB)
-#define FLASH_PARAM_PAGE2_ADDR    0x0801FC00  // 1 (2KB, )
-#define FLASH_PARAM_PAGE_SIZE     2048
+/* Flash (STM32G4?param) */
+/* Keep the transactional copies on different physical erase pages. */
+#define FLASH_PARAM_PAGE1_ADDR    0x0801F000u /* Page 62 */
+#define FLASH_PARAM_PAGE2_ADDR    0x0801F800u /* Page 63 */
+#define FLASH_PARAM_PAGE_SIZE     2048u
+#define PARAM_FLASH_IMAGE_SIZE    FLASH_PARAM_PAGE_SIZE
+
+typedef char FlashParamPagesMustDiffer[(FLASH_PARAM_PAGE2_ADDR - FLASH_PARAM_PAGE1_ADDR == FLASH_PARAM_PAGE_SIZE) ? 1 : -1];
 /* param */
 #define FLASH_MAGIC_WORD          0x464F4331  // "FOC1"
 #define FLASH_MAGIC_WORD_V2       0x464F4332  // "FOC2"
 #define FLASH_PARAM_VERSION       0x00010000  // v1.0.0
 typedef uint8_t FlashPageIndex;  // 0=Page1, 1=Page2
 /* Flash */
+#if defined(_MSC_VER)
+#pragma pack(push, 1)
+#define PARAM_STORAGE_PACKED
+#else
+#define PARAM_STORAGE_PACKED __attribute__((packed))
+#endif
 typedef struct {
-    uint32_t magic;           // ，
-    uint32_t version;         // param
+    uint32_t magic;           // ?
+    uint32_t param_version;   // param
     uint32_t crc32;           // CRC32
     uint32_t reserved;        //
     uint32_t generation;      // monotonically increasing write counter
-    uint32_t committed;       // 0=write in progress, 1=write complete
+    uint32_t committed;       // 0=committed, 0xFFFFFFFF=pending/erased
     /* motorparam */
-    float motor_rs;           //  [Ω]
+    float motor_rs;           //  [?]
     float motor_ls;           //  [H]
     float motor_flux;         // flux [Wb]
     uint8_t motor_pole_pairs; // pole pairs
@@ -58,8 +68,8 @@ typedef struct {
     float spd_kp;             // speed/velocityKp
     float spd_ki;             // speed/velocityKi
     float pos_kp;             // positionKp
-    float cur_filt_gain;      // currentfilter (，)
-    float spd_filt_gain;      // speed/velocityfilter (，)
+    float cur_filt_gain;      // currentfilter (?)
+    float spd_filt_gain;      // speed/velocityfilter (?)
     /* limitparam */
     float limit_torque;       // limit [Nm]
     float limit_current;      // currentlimit [A]
@@ -68,13 +78,13 @@ typedef struct {
     float vel_max;            // PPmodespeed/velocity
     float acc_set;            // PPmodespeed/velocity
     float acc_rad;            // speed/velocitymodespeed/velocity
-    float inertia;            //  [kg·m²]
+    float inertia;            //  [kg?m?]
     /* CANconfig */
     uint8_t can_id;           // CAN ID
     uint8_t can_baudrate;     // CAN (0=1M, 1=500K, 2=250K)
     uint8_t protocol_type;    //  (0=, 1=CANopen, 2=MIT)
     /* config */
-    uint8_t zero_sta;         //  (0: 0~2π, 1: -π~π)
+    uint8_t zero_sta;         //  (0: 0~2?, 1: -?~?)
     float add_offset;         //  [rad]
     uint8_t damper;           //
     uint32_t can_timeout;     // CANtimeoutthreshold [ms]
@@ -91,9 +101,19 @@ typedef struct {
     float fw_max_current;              // current [A]
     float fw_start_velocity;           // speed/velocity [rad/s]
     float cogging_comp_enabled;        // enable (0.0/1.0)
-    /*  (2KB) */
-    uint8_t reserved_data[1568];
-} __attribute__((packed)) FlashParamData;
+    float ladrc_enable;                // LADRC enable (0.0=PID, 1.0=LADRC)
+    float ladrc_omega_o;               // LADRC observer bandwidth [rad/s]
+    float ladrc_omega_c;               // LADRC cutoff/bandwidth [rad/s]
+    float ladrc_b0;                    // LADRC gain b0
+    float ladrc_max_output;            // LADRC output max [A]
+    uint8_t encoder_calib_valid;       // encoder LUT/offset calibration valid
+    uint8_t encoder_calib_reserved[3]; // alignment/reserved
+    int16_t encoder_offset_lut[128];   // encoder linearity compensation LUT
+} PARAM_STORAGE_PACKED FlashParamData;
+#if defined(_MSC_VER)
+#pragma pack(pop)
+#endif
+#undef PARAM_STORAGE_PACKED
 /*  */
 typedef enum {
     FLASH_STORAGE_OK = 0,
@@ -115,7 +135,7 @@ void ParamStorage_Init(void);
  * @param data param
  * @return FlashStorageResult
  */
-FlashStorageResult ParamStorage_Save(const FlashParamData *data);
+FlashStorageResult ParamStorage_Save(FlashParamData *data);
 /**
  * @brief Flashparam
  * @param data outputparam
@@ -138,7 +158,5 @@ bool ParamStorage_HasValidData(void);
  * @param last_crc outputCRC
  */
 void ParamStorage_GetStats(uint32_t *write_count, uint32_t *last_crc);
-FlashStorageResult ParamStorage_Save_v2(const FlashParamData *data);
-FlashStorageResult ParamStorage_Load_v2(FlashParamData *data);
 FlashPageIndex ParamStorage_GetActivePage(void);
 #endif /* PARAM_STORAGE_H */

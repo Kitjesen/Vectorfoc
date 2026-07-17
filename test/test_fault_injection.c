@@ -23,7 +23,8 @@
 // External Interfaces
 void MockHAL_SetNoiseLevel(float sigma);
 void MockHAL_SetCurrents(float ia, float ib, float ic);
-void MockHAL_SetEncoder(float theta, float vel);
+void MockHAL_SetEncoder(float position, float angle, float velocity,
+                        float electrical_angle);
 void MockHAL_GetPWM(float *a, float *b, float *c);
 Motor_HAL_Handle_t *MockHAL_GetHandle(void);
 
@@ -56,7 +57,7 @@ int main() {
   StateMachine_Init(&g_ds402_state_machine);
   g_ds402_state_machine.current_state = STATE_OPERATION_ENABLED;
   motor.state.Control_Mode = CONTROL_MODE_VELOCITY;
-  motor.Controller.vel_setpoint = 20.0f;
+  motor.Controller.vel_setpoint = 20.0f / M_2PI;
 
   // Params
   motor.parameters.pole_pairs = plant.P;
@@ -81,7 +82,8 @@ int main() {
     float ia, ib, ic;
     MotorPlant_GetCurrents(&plant, &ia, &ib, &ic);
     MockHAL_SetCurrents(ia, ib, ic);
-    MockHAL_SetEncoder(plant.theta, plant.omega);
+    MockHAL_SetEncoder(plant.position, plant.theta, plant.omega,
+                       fmodf(plant.theta * (float)plant.P, M_2PI));
 
     // Update
     Motor_HAL_SensorData_t sens = {0};
@@ -94,9 +96,9 @@ int main() {
     // Update Enc
     Motor_HAL_EncoderData_t enc = {0};
     motor.components.hal->encoder->get_data(&enc);
-    motor.feedback.position = enc.angle_rad;
-    motor.feedback.velocity = enc.velocity_rad;
-    motor.feedback.phase_angle = enc.angle_rad * plant.P;
+    motor.feedback.position = enc.position_rad / M_2PI;
+    motor.feedback.velocity = enc.velocity_rad / M_2PI;
+    motor.feedback.phase_angle = enc.elec_angle;
     motor.algo_input.theta_elec = motor.feedback.phase_angle;
 
     MotorStateTask(&motor);

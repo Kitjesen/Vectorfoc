@@ -51,13 +51,15 @@ void Control_InnerCurrentLoop(MOTOR_DATA *motor, MotorControlCtx *ctx) {
   motor->algo_input.omega_elec =
       motor->feedback.velocity * motor->parameters.pole_pairs * M_2PI;
   motor->algo_input.enabled = true;
-  motor->algo_input.Iq_ref += CoggingComp_GetCurrent(motor);
+  FOC_AlgorithmInput_t effective_input = motor->algo_input;
+  effective_input.Iq_ref += CoggingComp_GetCurrent(motor);
   FieldWeakening_Config_t fw_cfg;
   fw_cfg.max_weakening_current = motor->advanced.fw_max_current;
   fw_cfg.start_velocity = motor->advanced.fw_start_velocity;
-  FieldWeakening_Update(motor, &fw_cfg);
+  effective_input.Id_ref +=
+      FieldWeakening_Calculate(motor, &fw_cfg, CURRENT_MEASURE_PERIOD);
   // 3.  FOC
-  FOC_Algorithm_CurrentLoop(&motor->algo_input, &motor->algo_config,
+  FOC_Algorithm_CurrentLoop(&effective_input, &motor->algo_config,
                             &motor->algo_state, &motor->algo_output);
   // 4. output HAL PWM (voltage + current)
   float Ta = motor->algo_output.Ta;

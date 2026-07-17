@@ -21,6 +21,7 @@
 #include "error_manager.h"
 #include "error_types.h"
 #include "hal_abstraction.h"
+#include "platform.h"
 static SafetyContext s_ctx = {0};
 static void OnFaultDetected(uint32_t fault_bits, MOTOR_DATA *motor,
                             StateMachine *fsm);
@@ -41,7 +42,6 @@ void Safety_Init(const SafetyConfig *config) {
   s_ctx.pending_fault_bits = FAULT_NONE;
   s_ctx.fault_count = 0;
   s_ctx.initialized = true;
-  ErrorManager_Init(); // errorinit
 }
 void Safety_Update(MOTOR_DATA *motor, StateMachine *fsm) {
   if (!s_ctx.initialized) {
@@ -52,9 +52,9 @@ void Safety_Update(MOTOR_DATA *motor, StateMachine *fsm) {
   // 2. checkfault
   if (detected_faults != FAULT_NONE) {
     uint32_t active_snapshot;
-    __disable_irq();
+    CRITICAL_SECTION_BEGIN();
     active_snapshot = s_ctx.active_fault_bits;
-    __enable_irq();
+    CRITICAL_SECTION_END();
     uint32_t new_faults = detected_faults & ~active_snapshot;
     if (new_faults != FAULT_NONE) {
       s_ctx.last_fault_time = HAL_GetTick();
@@ -86,9 +86,9 @@ void Safety_Update_Fast(MOTOR_DATA *motor, StateMachine *fsm) {
   // checkfault
   if (detected_faults != FAULT_NONE) {
     uint32_t active_snapshot;
-    __disable_irq();
+    CRITICAL_SECTION_BEGIN();
     active_snapshot = s_ctx.active_fault_bits;
-    __enable_irq();
+    CRITICAL_SECTION_END();
     uint32_t new_faults = detected_faults & ~active_snapshot;
     if (new_faults != FAULT_NONE) {
       s_ctx.last_fault_time = HAL_GetTick();
@@ -113,9 +113,9 @@ void Safety_Update_Slow(MOTOR_DATA *motor, StateMachine *fsm) {
   // checkfault
   if (detected_faults != FAULT_NONE) {
     uint32_t active_snapshot;
-    __disable_irq();
+    CRITICAL_SECTION_BEGIN();
     active_snapshot = s_ctx.active_fault_bits;
-    __enable_irq();
+    CRITICAL_SECTION_END();
     uint32_t new_faults = detected_faults & ~active_snapshot;
     if (new_faults != FAULT_NONE) {
       s_ctx.last_fault_time = HAL_GetTick();
@@ -134,32 +134,56 @@ void Safety_Update_Slow(MOTOR_DATA *motor, StateMachine *fsm) {
 }
 void Safety_ClearFaults(StateMachine *fsm) {
   Detection_Reset();
-  __disable_irq();
+  CRITICAL_SECTION_BEGIN();
   s_ctx.active_fault_bits = FAULT_NONE;
   s_ctx.pending_fault_bits = FAULT_NONE;
   // [FIX] 重置故障计数器，避免历史数据影响
   s_ctx.fault_count = 0;
-  __enable_irq();
+  CRITICAL_SECTION_END();
   // errorsafetyfault
   ErrorManager_ClearDomain(ERROR_DOMAIN_SAFETY);
   if (fsm != NULL) {
-    __disable_irq();
+    CRITICAL_SECTION_BEGIN();
     StateMachine_ClearFault(fsm);
-    __enable_irq();
+    CRITICAL_SECTION_END();
   }
+}
+
+void Safety_TriggerFault(uint32_t fault_bits, MOTOR_DATA *motor,
+                         StateMachine *fsm) {
+  (void)motor;
+  if (fault_bits == FAULT_NONE) {
+    return;
+  }
+  if (!s_ctx.initialized) {
+    Safety_Init(NULL);
+  }
+
+  uint32_t active_snapshot;
+  CRITICAL_SECTION_BEGIN();
+  active_snapshot = s_ctx.active_fault_bits;
+  CRITICAL_SECTION_END();
+  uint32_t new_faults = fault_bits & ~active_snapshot;
+  if (new_faults != FAULT_NONE) {
+    s_ctx.last_fault_time = HAL_GetTick();
+    if (fsm != NULL) {
+      StateMachine_EnterFault(fsm, new_faults);
+    }
+  }
+  Safety_LatchFaultBits(fault_bits, new_faults);
 }
 bool Safety_HasActiveFault(void) {
   bool has_fault;
-  __disable_irq();
+  CRITICAL_SECTION_BEGIN();
   has_fault = (s_ctx.active_fault_bits != FAULT_NONE);
-  __enable_irq();
+  CRITICAL_SECTION_END();
   return has_fault;
 }
 uint32_t Safety_GetActiveFaultBits(void) {
   uint32_t bits;
-  __disable_irq();
+  CRITICAL_SECTION_BEGIN();
   bits = s_ctx.active_fault_bits;
-  __enable_irq();
+  CRITICAL_SECTION_END();
   return bits;
 }
 void Safety_RegisterFaultCallback(SafetyFaultCallback callback) {
@@ -208,21 +232,27 @@ static void ReportFaultToErrorManager(uint32_t fault_bits) {
   if (fault_bits & FAULT_CAN_TIMEOUT) {
     ERROR_REPORT(ERROR_COMM_TIMEOUT, "CAN communication timeout");
   }
+  if (fault_bits & FAULT_CONTROL_INVALID) {
+    ERROR_REPORT(ERROR_PARAM_INVALID_VALUE, "Invalid control configuration");
+  }
+  if (fault_bits & FAULT_ADC_STALE) {
+    ERROR_REPORT(ERROR_HW_ADC_TIMEOUT, "ADC sample stale or incomplete");
+  }
 }
 uint32_t Safety_GetLastFaultTime(void) { return s_ctx.last_fault_time; }
 static inline void Safety_LatchFaultBits(uint32_t detected_faults,
                                          uint32_t new_faults) {
-  __disable_irq();
+  CRITICAL_SECTION_BEGIN();
   s_ctx.active_fault_bits |= detected_faults;
   s_ctx.pending_fault_bits |= new_faults;
-  __enable_irq();
+  CRITICAL_SECTION_END();
 }
 static uint32_t Safety_TakePendingFaults(void) {
   uint32_t pending;
-  __disable_irq();
+  CRITICAL_SECTION_BEGIN();
   pending = s_ctx.pending_fault_bits;
   s_ctx.pending_fault_bits = FAULT_NONE;
-  __enable_irq();
+  CRITICAL_SECTION_END();
   return pending;
 }
 static inline void Safety_ReportPendingFaults(MOTOR_DATA *motor,
@@ -234,22 +264,22 @@ static inline void Safety_ReportPendingFaults(MOTOR_DATA *motor,
 }
 static void Safety_AutoClearIfSafe(StateMachine *fsm) {
   bool do_clear = false;
-  __disable_irq();
+  CRITICAL_SECTION_BEGIN();
   if (s_ctx.active_fault_bits != FAULT_NONE &&
       s_ctx.pending_fault_bits == FAULT_NONE) {
     s_ctx.active_fault_bits = FAULT_NONE;
     s_ctx.pending_fault_bits = FAULT_NONE;
     do_clear = true;
   }
-  __enable_irq();
+  CRITICAL_SECTION_END();
   if (!do_clear) {
     return;
   }
   Detection_Reset();
   ErrorManager_ClearDomain(ERROR_DOMAIN_SAFETY);
   if (fsm != NULL) {
-    __disable_irq();
+    CRITICAL_SECTION_BEGIN();
     StateMachine_ClearFault(fsm);
-    __enable_irq();
+    CRITICAL_SECTION_END();
   }
 }

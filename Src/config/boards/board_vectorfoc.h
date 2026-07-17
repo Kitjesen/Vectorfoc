@@ -46,7 +46,9 @@
    1. 时钟
    ========================================================================== */
 #define SYS_CLOCK_MHZ           168
+#ifndef SYS_CLOCK_HZ
 #define SYS_CLOCK_HZ            (SYS_CLOCK_MHZ * 1000000UL)
+#endif
 
 /* ==========================================================================
    2. 电机 PWM — TIM1（中心对齐，死区互补）
@@ -60,6 +62,26 @@
 #define HW_PWM_CH_V             TIM_CHANNEL_2   /* PA9  */
 #define HW_PWM_CH_W             TIM_CHANNEL_3   /* PA10 */
 #define HW_PWM_CH_TRIG          TIM_CHANNEL_4   /* ADC 注入触发 */
+
+/* Legacy VectorFOC electrical phase mapping. Board U/V/W labels are physical
+ * timer outputs; the control algorithm's A/B/C phases historically map
+ * A->W(CH3), B->V(CH2), C->U(CH1). Keep this permutation explicit until
+ * hardware phase proof says it can change. */
+#define HW_PWM_CH_PHASE_A       HW_PWM_CH_W
+#define HW_PWM_CH_PHASE_B       HW_PWM_CH_V
+#define HW_PWM_CH_PHASE_C       HW_PWM_CH_U
+
+/*
+ * No BKIN/BKIN2 net is present in the published IOC/pin map. Enable these
+ * only after a board revision wires a comparator/gate-driver fault output and
+ * its active polarity has been verified.
+ */
+#define HW_PWM_BREAK_ENABLED    0u
+#define HW_PWM_BREAK_POLARITY   TIM_BREAKPOLARITY_HIGH
+#define HW_PWM_BREAK_FILTER     0u
+#define HW_PWM_BREAK2_ENABLED   0u
+#define HW_PWM_BREAK2_POLARITY  TIM_BREAK2POLARITY_HIGH
+#define HW_PWM_BREAK2_FILTER    0u
 
 /* 上桥 */
 #define HW_PWM_U_H_PIN          GPIO_PIN_8      /* PA8  TIM1_CH1  */
@@ -154,13 +176,21 @@
         HW_POSITION_SENSOR_MT6816  — AMR 14-bit，出厂默认
         HW_POSITION_SENSOR_TMR3109 — TMR 23-bit，推荐升级（同 SOP8 封装）
    ========================================================================== */
+#ifndef HW_POSITION_SENSOR_HALL
 #define HW_POSITION_SENSOR_HALL     1u
+#endif
+#ifndef HW_POSITION_SENSOR_ABZ
 #define HW_POSITION_SENSOR_ABZ      2u
+#endif
+#ifndef HW_POSITION_SENSOR_MT6816
 #define HW_POSITION_SENSOR_MT6816   3u
+#endif
 #define HW_POSITION_SENSOR_TMR3109  4u   /**< MDT TMR3109，23-bit TMR */
 
 /* ---- 选择编码器型号（修改此行即可切换） ---- */
+#ifndef HW_POSITION_SENSOR_MODE
 #define HW_POSITION_SENSOR_MODE     HW_POSITION_SENSOR_MT6816
+#endif
 /* #define HW_POSITION_SENSOR_MODE  HW_POSITION_SENSOR_TMR3109 */
 
 /* SPI 接口（MT6816 与 TMR3109 共用同一 SOP8 引脚，无需改线） */

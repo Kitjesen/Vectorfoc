@@ -33,30 +33,47 @@ volatile uint16_t adc2_dma_value[adc2_samples][adc2_channel];
  * @brief ADC 操作辅助宏，失败时上报错误码并继续（不 hang 系统，
  *        避免单点 HAL 失败导致整机死锁，但故障会被记录到 ErrorManager）
  */
-#define ADC_CHECK(expr) \
-    do { \
-        if ((expr) != HAL_OK) { \
-            ERROR_REPORT(ERROR_HW_ADC_INIT, #expr " failed"); \
-        } \
-    } while (0)
+static bool ADC_Check(HAL_StatusTypeDef status, const char *operation) {
+  if (status == HAL_OK) {
+    return true;
+  }
+  ERROR_REPORT(ERROR_HW_ADC_INIT, operation);
+  return false;
+}
 
-void adc_bsp_init(void) {
+bool adc_bsp_init(void) {
+  bool ok = true;
 #ifdef BOARD_XSTAR
   /* X-STAR-S：两路 ADC 均为注入模式，无 DMA */
-  ADC_CHECK(HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED));
-  ADC_CHECK(HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED));
+  ok &= ADC_Check(HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED),
+                  "ADC1 calibration failed");
+  ok &= ADC_Check(HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED),
+                  "ADC2 calibration failed");
   /* ADC1：注入完成中断（驱动 FOC ISR） */
-  ADC_CHECK(HAL_ADCEx_InjectedStart_IT(&hadc1));
+  ok &= ADC_Check(HAL_ADCEx_InjectedStart_IT(&hadc1),
+                  "ADC1 injected start failed");
   /* ADC2：注入模式启动，结果由 FOC ISR 直接读 JDR1，不需要中断 */
-  ADC_CHECK(HAL_ADCEx_InjectedStart(&hadc2));
+  ok &= ADC_Check(HAL_ADCEx_InjectedStart(&hadc2),
+                  "ADC2 injected start failed");
 #elif ADC_INJECTED_ENABLE
   /* VectorFOC：ADC1 注入IT + ADC2 regular DMA（温度） */
-  ADC_CHECK(HAL_ADCEx_Calibration_Start(&HW_ADC_CURRENT, ADC_SINGLE_ENDED));
-  ADC_CHECK(HAL_ADCEx_Calibration_Start(&HW_ADC_TEMP, ADC_SINGLE_ENDED));
-  ADC_CHECK(HAL_ADCEx_InjectedStart_IT(&HW_ADC_CURRENT));
-  ADC_CHECK(HAL_ADC_Start_DMA(&HW_ADC_TEMP, (uint32_t *)adc2_dma_value, adc2_length));
+  ok &= ADC_Check(
+      HAL_ADCEx_Calibration_Start(&HW_ADC_CURRENT, ADC_SINGLE_ENDED),
+      "Current ADC calibration failed");
+  ok &= ADC_Check(HAL_ADCEx_Calibration_Start(&HW_ADC_TEMP, ADC_SINGLE_ENDED),
+                  "Temperature ADC calibration failed");
+  ok &= ADC_Check(HAL_ADCEx_InjectedStart_IT(&HW_ADC_CURRENT),
+                  "Current ADC injected start failed");
+  ok &= ADC_Check(
+      HAL_ADC_Start_DMA(&HW_ADC_TEMP, (uint32_t *)adc2_dma_value, adc2_length),
+      "Temperature ADC DMA start failed");
 #else
-  ADC_CHECK(HAL_ADCEx_Calibration_Start(&HW_ADC_CURRENT, ADC_SINGLE_ENDED));
-  ADC_CHECK(HAL_ADC_Start_DMA(&HW_ADC_CURRENT, (uint32_t *)adc1_dma_value, adc1_length));
+  ok &= ADC_Check(
+      HAL_ADCEx_Calibration_Start(&HW_ADC_CURRENT, ADC_SINGLE_ENDED),
+      "Current ADC calibration failed");
+  ok &= ADC_Check(
+      HAL_ADC_Start_DMA(&HW_ADC_CURRENT, (uint32_t *)adc1_dma_value, adc1_length),
+      "Current ADC DMA start failed");
 #endif
+  return ok;
 }

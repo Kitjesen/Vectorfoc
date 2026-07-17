@@ -21,6 +21,8 @@
 #include "hal_encoder.h"
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
 #include "mt6816_encoder.h"
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#include "tmr3109_encoder.h"
 #else
 #include "hall_encoder.h"
 #include "abz_encoder.h"
@@ -126,6 +128,8 @@ CalibResult FluxCalib_Finish(MOTOR_DATA *motor, CalibrationContext *ctx) {
 
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
   ((MT6816_Handle_t *)motor->components.encoder)->calib_valid = true;
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  ((TMR3109_Handle_t *)motor->components.encoder)->calib_valid = true;
 #elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
   hall_data.calib_valid = true;
 #else

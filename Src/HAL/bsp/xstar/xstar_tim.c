@@ -92,13 +92,15 @@ void XStar_TIM1_Init(void) {
     sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
     sBreakDeadTimeConfig.LockLevel        = TIM_LOCKLEVEL_OFF;
     sBreakDeadTimeConfig.DeadTime         = HW_PWM_DEADTIME_CLKS; /* 20 clks ≈ 118ns */
-    sBreakDeadTimeConfig.BreakState       = TIM_BREAK_DISABLE;
-    sBreakDeadTimeConfig.BreakPolarity    = TIM_BREAKPOLARITY_HIGH;
-    sBreakDeadTimeConfig.BreakFilter      = 0;
+    sBreakDeadTimeConfig.BreakState       =
+        HW_PWM_BREAK_ENABLED ? TIM_BREAK_ENABLE : TIM_BREAK_DISABLE;
+    sBreakDeadTimeConfig.BreakPolarity    = HW_PWM_BREAK_POLARITY;
+    sBreakDeadTimeConfig.BreakFilter      = HW_PWM_BREAK_FILTER;
     sBreakDeadTimeConfig.BreakAFMode      = TIM_BREAK_AFMODE_INPUT;
-    sBreakDeadTimeConfig.Break2State      = TIM_BREAK2_DISABLE;
-    sBreakDeadTimeConfig.Break2Polarity   = TIM_BREAK2POLARITY_HIGH;
-    sBreakDeadTimeConfig.Break2Filter     = 0;
+    sBreakDeadTimeConfig.Break2State      =
+        HW_PWM_BREAK2_ENABLED ? TIM_BREAK2_ENABLE : TIM_BREAK2_DISABLE;
+    sBreakDeadTimeConfig.Break2Polarity   = HW_PWM_BREAK2_POLARITY;
+    sBreakDeadTimeConfig.Break2Filter     = HW_PWM_BREAK2_FILTER;
     sBreakDeadTimeConfig.Break2AFMode     = TIM_BREAK_AFMODE_INPUT;
     sBreakDeadTimeConfig.AutomaticOutput  = TIM_AUTOMATICOUTPUT_DISABLE;
     if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK) {
@@ -243,9 +245,9 @@ void HAL_TIM_PWM_MspDeInit(TIM_HandleTypeDef *tim_pwmHandle) {
    HAL_TIMEx_HallSensor_Init() 内部调用 HAL_TIMEx_HallSensor_MspInit()
    ========================================================================== */
 void HAL_TIMEx_HallSensor_MspInit(TIM_HandleTypeDef *htim) {
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
     GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
     if (htim->Instance == TIM3) {
         __HAL_RCC_TIM3_CLK_ENABLE();
         __HAL_RCC_GPIOC_CLK_ENABLE();

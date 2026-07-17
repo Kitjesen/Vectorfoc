@@ -18,6 +18,7 @@
 #include "motor.h"
 #include "foc/foc_algorithm.h"
 #include "trajectory/trap_traj.h"
+#include "trajectory/rate_limiter.h"
 
 
 /**
@@ -29,6 +30,11 @@ typedef struct {
 
   // Mode switch detection
   CONTROL_MODE last_mode;
+
+  RateLimiterTypeDef velocity_limiter;
+  RateLimiterTypeDef torque_limiter;
+  float limited_velocity;
+  float limited_torque;
 
   // Setpoint caches
   float vel_set; // Internal velocity setpoint cache

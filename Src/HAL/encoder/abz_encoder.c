@@ -65,7 +65,9 @@ void Abz_Init(void) {
   abz_data.pole_pairs = saved_pole_pairs;
   abz_data.calib_valid = saved_calib_valid;
   abz_data.offset_counts =
-      (int32_t)lroundf((saved_offset / ABZ_2PI) * (float)abz_data.cpr);
+      (int32_t)lroundf((saved_offset /
+                        (ABZ_2PI * (float)abz_data.pole_pairs)) *
+                       (float)abz_data.cpr);
 
   __HAL_TIM_SET_COUNTER(&HW_ABZ_TIMER, 0);
   HAL_TIM_Encoder_Start(&HW_ABZ_TIMER, TIM_CHANNEL_ALL);
@@ -80,6 +82,10 @@ void Abz_Init(void) {
 void Abz_SetPolePairs(uint8_t pp) {
   if (pp > 0u) {
     abz_data.pole_pairs = pp;
+    abz_data.offset_counts =
+        (int32_t)lroundf((abz_data.offset_rad /
+                          (ABZ_2PI * (float)abz_data.pole_pairs)) *
+                         (float)abz_data.cpr);
   }
 }
 
@@ -90,15 +96,20 @@ void Abz_ResetCount(void) {
   abz_data.last_count = 0;
   abz_data.shadow_count = 0;
   abz_data.mec_angle_rad = 0.0f;
-  abz_data.elec_angle_rad = Abz_NormalizeAngle(abz_data.offset_rad);
+  abz_data.elec_angle_rad = Abz_NormalizeAngle(-abz_data.offset_rad);
   abz_data.velocity_rad_s = 0.0f;
   abz_data.vel_estimate_ = 0.0f;
   abz_data.last_update_us = HAL_GetMicroseconds();
 }
 
-static void Abz_HAL_Update(void) {
+static bool Abz_HAL_Update(void) {
   uint32_t now_us = HAL_GetMicroseconds();
   uint32_t elapsed_us = now_us - abz_data.last_update_us;
+  if (abz_data.cpr == 0u || abz_data.pole_pairs == 0u) {
+    abz_data.velocity_rad_s = 0.0f;
+    abz_data.vel_estimate_ = 0.0f;
+    return false;
+  }
   int32_t current = (int32_t)__HAL_TIM_GET_COUNTER(&HW_ABZ_TIMER);
   int32_t delta = Abz_WrapDelta(current - abz_data.last_count, (int32_t)abz_data.cpr);
   int32_t mechanical_counts = current - abz_data.offset_counts;
@@ -140,25 +151,41 @@ static void Abz_HAL_Update(void) {
   }
 
   abz_data.last_update_us = now_us;
+  return isfinite(abz_data.mec_angle_rad) &&
+         isfinite(abz_data.elec_angle_rad) &&
+         isfinite(abz_data.velocity_rad_s);
 }
 
 static void Abz_HAL_GetData(Motor_HAL_EncoderData_t *data) {
+  data->position_rad =
+      ((float)abz_data.shadow_count * ABZ_2PI) / (float)abz_data.cpr;
   data->angle_rad = abz_data.mec_angle_rad;
   data->velocity_rad = abz_data.velocity_rad_s;
   data->elec_angle = abz_data.elec_angle_rad;
   data->raw_value = abz_data.raw_count;
 }
 
+static void Abz_HAL_ZeroPosition(void) {
+  abz_data.shadow_count = 0;
+}
+
 static void Abz_HAL_SetOffset(float offset) {
   abz_data.offset_rad = offset;
   abz_data.offset_counts =
-      (int32_t)lroundf((offset / ABZ_2PI) * (float)abz_data.cpr);
+      (int32_t)lroundf((offset /
+                        (ABZ_2PI * (float)abz_data.pole_pairs)) *
+                       (float)abz_data.cpr);
 }
+
+static float Abz_HAL_GetOffset(void) { return abz_data.offset_rad; }
 
 const Motor_HAL_EncoderInterface_t g_abz_encoder_interface = {
     .update = Abz_HAL_Update,
     .get_data = Abz_HAL_GetData,
+    .set_pole_pairs = Abz_SetPolePairs,
+    .zero_position = Abz_HAL_ZeroPosition,
     .set_offset = Abz_HAL_SetOffset,
+    .get_offset = Abz_HAL_GetOffset,
 };
 
 #endif /* BOARD_XSTAR */

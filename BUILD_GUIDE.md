@@ -18,7 +18,8 @@
 # Configure
 cmake -S . -B build \
   --toolchain cmake/gcc-arm-none-eabi.cmake \
-  -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPOSITION_SENSOR=MT6816
 
 # Build
 cmake --build build -j$(nproc)
@@ -34,15 +35,27 @@ $env:Path = "C:\msys64\mingw64\bin;" + $env:Path
 cmake -S . -B build -G "MinGW Makefiles" `
   --toolchain cmake/gcc-arm-none-eabi.cmake `
   -DCMAKE_BUILD_TYPE=Release `
+  -DPOSITION_SENSOR=MT6816 `
   -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
 
 # Build
 cmake --build build -j8
 ```
 
-### X-STAR-S Board
+### Board and sensor matrix
 
-Add `-DBOARD_XSTAR=1` to any of the configure commands above.
+| Board | `BOARD_XSTAR` | Valid `POSITION_SENSOR` values |
+|---|---:|---|
+| VectorFOC | `OFF` | `MT6816`, `TMR3109` |
+| X-STAR-S | `ON` | `HALL`, `ABZ` |
+
+`POSITION_SENSOR=AUTO` selects MT6816 for VectorFOC and Hall for X-STAR-S.
+For example:
+
+```bash
+cmake -S . -B build-xstar-abz --toolchain cmake/gcc-arm-none-eabi.cmake \
+  -DBOARD_XSTAR=ON -DPOSITION_SENSOR=ABZ -DCMAKE_BUILD_TYPE=Release
+```
 
 ### Clean rebuild
 

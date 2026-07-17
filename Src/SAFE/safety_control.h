@@ -55,6 +55,8 @@ void Safety_Update_Slow(MOTOR_DATA *motor, StateMachine *fsm);
  * @param fsm state
  */
 void Safety_ClearFaults(StateMachine *fsm);
+void Safety_TriggerFault(uint32_t fault_bits, MOTOR_DATA *motor,
+                         StateMachine *fsm);
 /**
  * @brief 检查是否有激活的故障
  * @return true = 当前有未清除的故障，false = 无故障

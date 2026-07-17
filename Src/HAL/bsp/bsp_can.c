@@ -67,11 +67,68 @@ static bool FDCANServiceInit(void) {
   return result == HAL_OK;
 }
 /* ==========  ========== */
+
+static bool FDCANConfigureBaudrate(uint8_t baudrate_id) {
+  uint32_t rate_divisor;
+  switch (baudrate_id) {
+  case BSP_CAN_BAUD_1M:
+    rate_divisor = 1U;
+    break;
+  case BSP_CAN_BAUD_500K:
+    rate_divisor = 2U;
+    break;
+  case BSP_CAN_BAUD_250K:
+    rate_divisor = 4U;
+    break;
+  default:
+    return false;
+  }
+
+  if (HAL_FDCAN_DeInit(&HW_CAN) != HAL_OK) {
+    return false;
+  }
+
+#if defined(BOARD_XSTAR)
+  /* X-STAR: 170 MHz kernel clock, 17 time quanta: 1 + 13 + 3. */
+  uint32_t prescaler = 10U * rate_divisor;
+  HW_CAN.Init.NominalPrescaler = prescaler;
+  HW_CAN.Init.NominalSyncJumpWidth = 3U;
+  HW_CAN.Init.NominalTimeSeg1 = 13U;
+  HW_CAN.Init.NominalTimeSeg2 = 3U;
+  HW_CAN.Init.DataPrescaler = prescaler;
+  HW_CAN.Init.DataSyncJumpWidth = 3U;
+  HW_CAN.Init.DataTimeSeg1 = 13U;
+  HW_CAN.Init.DataTimeSeg2 = 3U;
+#else
+  /* 168 MHz kernel clock, 28 time quanta: 1 + 20 + 7. */
+  uint32_t prescaler = 6U * rate_divisor;
+  HW_CAN.Init.NominalPrescaler = prescaler;
+  HW_CAN.Init.NominalSyncJumpWidth = 7U;
+  HW_CAN.Init.NominalTimeSeg1 = 20U;
+  HW_CAN.Init.NominalTimeSeg2 = 7U;
+  HW_CAN.Init.DataPrescaler = prescaler;
+  HW_CAN.Init.DataSyncJumpWidth = 7U;
+  HW_CAN.Init.DataTimeSeg1 = 20U;
+  HW_CAN.Init.DataTimeSeg2 = 7U;
+#endif
+
+  return HAL_FDCAN_Init(&HW_CAN) == HAL_OK;
+}
+
 /**
  * @brief initCAN（）
  * @note App_Init，startFDCANinterrupt
  */
 void BSP_CAN_Init(void) {
+  if (!FDCANConfigureBaudrate(g_can_baudrate)) {
+    LOGERROR("[bsp_can] Invalid or failed baudrate configuration, using 1Mbps");
+    g_can_baudrate = BSP_CAN_BAUD_1M;
+    if (!FDCANConfigureBaudrate(g_can_baudrate)) {
+      LOGERROR("[bsp_can] CAN peripheral reinitialization failed");
+      return;
+    }
+  }
+
   if (FDCANServiceInit()) {
     LOGINFO("[bsp_can] CAN Service Started (Unified Init)");
   } else {
@@ -237,13 +294,15 @@ bool BSP_CAN_SendFrame(const CAN_Frame *frame) {
  * @note FIFOinterrupt
  */
 static void FDCANFIFOxCallback(FDCAN_HandleTypeDef *_hcan, uint32_t fifox) {
-  static FDCAN_RxHeaderTypeDef rxconf;
-  uint8_t can_rx_buff[8];
   while (HAL_FDCAN_GetRxFifoFillLevel(_hcan, fifox)) {
+    FDCAN_RxHeaderTypeDef rxconf = {0};
+    uint8_t can_rx_buff[8] = {0};
     // FIFOget
-    HAL_FDCAN_GetRxMessage(_hcan, fifox, &rxconf, can_rx_buff);
+    if (HAL_FDCAN_GetRxMessage(_hcan, fifox, &rxconf, can_rx_buff) != HAL_OK) {
+      continue;
+    }
     //
-    CAN_Frame frame;
+    CAN_Frame frame = {0};
     frame.id = rxconf.Identifier;
     frame.dlc = rxconf.DataLength >> 16; // Approximation for Classic CAN
     frame.is_extended = (rxconf.IdType == FDCAN_EXTENDED_ID);

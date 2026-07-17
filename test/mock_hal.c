@@ -29,8 +29,11 @@ static float mock_adc_ib = 0.0f;
 static float mock_adc_ic = 0.0f;
 static float mock_vbus = 24.0f;
 
-static float mock_theta = 0.0f;
+static float mock_position = 0.0f;
+static float mock_angle = 0.0f;
 static float mock_velocity = 0.0f;
+static float mock_electrical_angle = 0.0f;
+static bool mock_encoder_valid = true;
 
 // --- Mock Control Interface ---
 void MockHAL_SetNoiseLevel(float sigma) {
@@ -43,10 +46,16 @@ void MockHAL_SetCurrents(float ia, float ib, float ic) {
   mock_adc_ic = ic;
 }
 
-void MockHAL_SetEncoder(float theta, float vel) {
-  mock_theta = theta;
-  mock_velocity = vel;
+void MockHAL_SetEncoder(float position, float angle, float velocity,
+                        float electrical_angle) {
+  mock_position = position;
+  mock_angle = angle;
+  mock_velocity = velocity;
+  mock_electrical_angle = electrical_angle;
+  mock_encoder_valid = true;
 }
+
+void MockHAL_SetEncoderValid(bool valid) { mock_encoder_valid = valid; }
 
 void MockHAL_GetPWM(float *a, float *b, float *c) {
   *a = mock_pwm_a;
@@ -63,7 +72,10 @@ static void pwm_set_duty(float dtc_a, float dtc_b, float dtc_c) {
   // printf("[MOCK HAL] PWM Set: %.2f %.2f %.2f\n", dtc_a, dtc_b, dtc_c);
 }
 
-static void pwm_enable(void) { printf("[MOCK HAL] PWM Enabled\n"); }
+static bool pwm_enable(void) {
+  printf("[MOCK HAL] PWM Enabled\n");
+  return true;
+}
 
 static void pwm_disable(void) { printf("[MOCK HAL] PWM Disabled\n"); }
 
@@ -77,25 +89,33 @@ static void adc_update(Motor_HAL_SensorData_t *data) {
   data->temp = 35.0f; // Dummy temp
 }
 
-static void adc_calibrate_offsets(void) {
+static bool adc_calibrate_offsets(void) {
   printf("[MOCK HAL] ADC Calibrate Offsets\n");
+  return true;
 }
 
-static void enc_update(void) {
+static bool enc_update(void) {
   // No-op for static mock, simulation handles dynamics
+  return mock_encoder_valid;
 }
 
 static void enc_get_data(Motor_HAL_EncoderData_t *data) {
-  data->angle_rad = mock_theta;
+  data->position_rad = mock_position;
+  data->angle_rad = mock_angle;
   data->velocity_rad = mock_velocity;
-  data->elec_angle =
-      mock_theta; // Simply pass through for now, pole pairs handled in plant
+  data->elec_angle = mock_electrical_angle;
   data->raw_value = 0;
 }
 
 static void enc_set_offset(float offset) {
   printf("[MOCK HAL] Encoder Set Offset: %.3f\n", offset);
 }
+
+static void enc_set_pole_pairs(uint8_t pole_pairs) { (void)pole_pairs; }
+
+static void enc_zero_position(void) { mock_position = 0.0f; }
+
+static float enc_get_offset(void) { return 0.0f; }
 
 // --- Interface Structs ---
 static const Motor_HAL_PwmInterface_t pwm_impl = {
@@ -113,7 +133,10 @@ static const Motor_HAL_AdcInterface_t adc_impl = {
 static const Motor_HAL_EncoderInterface_t enc_impl = {
     .update = enc_update,
     .get_data = enc_get_data,
+    .set_pole_pairs = enc_set_pole_pairs,
+    .zero_position = enc_zero_position,
     .set_offset = enc_set_offset,
+    .get_offset = enc_get_offset,
 };
 
 // --- Global Handle ---
@@ -166,7 +189,10 @@ CalibResult_stub FluxCalib_Update(void *motor, void *ctx) { return 0; }
 void Param_ScheduleSave(void) {}
 
 // --- Motor control stub ---
-void MotorControl_Run(void *motor) {}
+bool MotorControl_Run(void *motor) {
+  (void)motor;
+  return true;
+}
 
 // --- Safety stubs ---
 void Safety_Update_Slow(void *motor, void *fsm) {}

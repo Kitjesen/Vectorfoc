@@ -15,6 +15,8 @@
 #include "outer.h"
 #include "config.h"
 #include "control/ladrc.h"
+#include "control/feedforward.h"
+#include "control/torque_utils.h"
 #include "foc/foc_algorithm.h"
 #include "pid.h"
 #include "math.h"
@@ -88,14 +90,18 @@ void Control_OuterLoopsUpdate(MOTOR_DATA *motor, MotorControlCtx *ctx) {
       /* [FIX] Use PID_CalcDt with actual dt for position loop */
       ctx->vel_set = PID_CalcDt(&motor->PosPID, motor->feedback.position,
                               motor->Controller.input_position, OUTER_LOOP_DT);
-      ctx->vel_set = CLAMP(ctx->vel_set, -motor->Controller.input_velocity,
-                           +motor->Controller.input_velocity);
+      float position_velocity_limit = Control_PositionVelocityLimit(
+          motor->Controller.input_velocity, motor->Controller.vel_limit);
+      ctx->vel_set = CLAMP(ctx->vel_set, -position_velocity_limit,
+                          +position_velocity_limit);
     } else if (motor->state.Control_Mode == CONTROL_MODE_VELOCITY) {
-      ctx->vel_set = motor->Controller.input_velocity;
+      ctx->vel_set = ctx->limited_velocity;
       ctx->vel_set = CLAMP(ctx->vel_set, -motor->Controller.vel_limit,
                            +motor->Controller.vel_limit);
     }
-    motor->algo_input.Iq_ref = VelLoop_Calc(motor, ctx->vel_set, vel_fdb);
+    motor->algo_input.Iq_ref =
+        VelLoop_Calc(motor, ctx->vel_set, vel_fdb) +
+        Feedforward_GetCurrent(motor);
     motor->algo_input.Id_ref = 0.0f;
     return;
   }
@@ -107,8 +113,10 @@ void Control_OuterLoopsUpdate(MOTOR_DATA *motor, MotorControlCtx *ctx) {
       ctx->vel_set = PID_CalcDt(&motor->PosPID, motor->feedback.position,
                               motor->Controller.pos_setpoint, OUTER_LOOP_DT) +
                      motor->Controller.vel_setpoint;
-      ctx->vel_set = CLAMP(ctx->vel_set, -motor->Controller.input_velocity,
-                           +motor->Controller.input_velocity);
+      float position_velocity_limit = Control_PositionVelocityLimit(
+          motor->Controller.input_velocity, motor->Controller.vel_limit);
+      ctx->vel_set = CLAMP(ctx->vel_set, -position_velocity_limit,
+                          +position_velocity_limit);
     } else if (motor->state.Control_Mode == CONTROL_MODE_VELOCITY_RAMP) {
       ctx->vel_set = motor->Controller.vel_setpoint;
       ctx->vel_set = CLAMP(ctx->vel_set, -motor->Controller.vel_limit,
@@ -116,9 +124,13 @@ void Control_OuterLoopsUpdate(MOTOR_DATA *motor, MotorControlCtx *ctx) {
     }
     vel_fdb = CLAMP(vel_fdb, -motor->Controller.vel_limit,
                     +motor->Controller.vel_limit);
+    float trajectory_current = 0.0f;
+    (void)Control_TorqueToCurrent(motor->Controller.torque_setpoint,
+                                  motor->Controller.torque_const,
+                                  &trajectory_current);
     motor->algo_input.Iq_ref =
-        VelLoop_Calc(motor, ctx->vel_set, vel_fdb) +
-        motor->Controller.torque_setpoint;
+        VelLoop_Calc(motor, ctx->vel_set, vel_fdb) + trajectory_current +
+        Feedforward_GetCurrent(motor);
     motor->algo_input.Id_ref = 0.0f;
     return;
   }

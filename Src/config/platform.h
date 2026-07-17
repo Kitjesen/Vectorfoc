@@ -32,26 +32,14 @@
      shared_variable = new_value;
      CRITICAL_SECTION_END();
    ========================================================================== */
-#if defined(__GNUC__) || defined(__clang__)
-  /* GCC / Clang: save and restore interrupt state */
-  #define CRITICAL_SECTION_BEGIN()                  \
-      do {                                          \
-          uint32_t __primask = __get_PRIMASK();     \
-          __disable_irq()
+#define CRITICAL_SECTION_BEGIN()                  \
+    do {                                          \
+        uint32_t __primask = __get_PRIMASK();     \
+        __disable_irq()
 
-  #define CRITICAL_SECTION_END()                    \
-          if (!__primask) __enable_irq();           \
-      } while (0)
-#else
-  /* Fallback: simple disable/enable */
-  #define CRITICAL_SECTION_BEGIN()                  \
-      do {                                          \
-          __disable_irq()
-
-  #define CRITICAL_SECTION_END()                    \
-          __enable_irq();                           \
-      } while (0)
-#endif
+#define CRITICAL_SECTION_END()                    \
+        __set_PRIMASK(__primask);                 \
+    } while (0)
 
 /* ==========================================================================
    Array utilities
@@ -93,10 +81,18 @@
 /* ==========================================================================
    Numeric helpers
    ========================================================================== */
+#ifndef CLAMP
 #define CLAMP(val, lo, hi)  ((val) < (lo) ? (lo) : ((val) > (hi) ? (hi) : (val)))
+#endif
+#ifndef MIN
 #define MIN(a, b)           ((a) < (b) ? (a) : (b))
+#endif
+#ifndef MAX
 #define MAX(a, b)           ((a) > (b) ? (a) : (b))
+#endif
+#ifndef ABS
 #define ABS(x)              ((x) < 0 ? -(x) : (x))
+#endif
 
 /* ==========================================================================
    Bit manipulation

@@ -36,21 +36,6 @@
 #define PARAM_ACCESS_H
 #include "param_table.h"
 /**
- * @brief param
- * @param index param
- * @param data output
- * @param type output (NULL)
- * @return ParamResult
- */
-ParamResult Param_Read(uint16_t index, void *data, ParamType *type);
-/**
- * @brief param
- * @param index param
- * @param data input
- * @return ParamResult
- */
-ParamResult Param_Write(uint16_t index, const void *data);
-/**
  * @brief floatparam ()
  * @param index param
  * @param value output
@@ -78,6 +63,21 @@ ParamResult Param_ReadUint8(uint16_t index, uint8_t *value);
  * @return ParamResult
  */
 ParamResult Param_WriteUint8(uint16_t index, uint8_t value);
+ParamResult Param_ReadUint16(uint16_t index, uint16_t *value);
+ParamResult Param_WriteUint16(uint16_t index, uint16_t value);
+ParamResult Param_ReadUint32(uint16_t index, uint32_t *value);
+ParamResult Param_WriteUint32(uint16_t index, uint32_t value);
+ParamResult Param_ReadInt32(uint16_t index, int32_t *value);
+ParamResult Param_WriteInt32(uint16_t index, int32_t value);
+
+/** Convert a typed parameter to the float representation used on the wire. */
+ParamResult Param_ReadAsFloat(uint16_t index, float *value);
+
+/**
+ * Convert the wire-format float to the parameter's declared type.
+ * Integer targets require a finite, integral, in-range value.
+ */
+ParamResult Param_WriteFromFloat(uint16_t index, float value);
 /**
  * @brief paramFlash
  * @return ParamResult

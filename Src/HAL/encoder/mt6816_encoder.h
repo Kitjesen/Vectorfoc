@@ -38,7 +38,6 @@ extern "C" {
 #define MT6816_CPR 16384u /**< Counts per revolution (14-bit) */
 #define MT6816_CPR_F 16384.0f
 #define MT6816_LUT_SIZE 128           /**< Linearity compensation LUT size */
-#define MT6816_MAX_DELAY 10           /**< [ms] SPI timeout */
 #define MT6816_PLL_BW_DEFAULT 2000.0f /**< [Hz] Default PLL bandwidth */
 
 /**
@@ -83,6 +82,7 @@ typedef struct MT6816_Handle_t {
   int64_t shadow_count; /**< [counts] Multi-turn accumulator (64-bit to prevent
                            overflow) */
   int32_t count_in_cpr; /**< [counts] Single-turn count (0-16383) */
+  bool position_initialized; /**< First valid sample established boot origin */
 
   /* Calibration data */
   int16_t offset_lut[MT6816_LUT_SIZE]; /**< Linearity compensation LUT */
@@ -138,6 +138,7 @@ MT6816_Status_t MT6816_Update(MT6816_Handle_t *encoder, float dt);
  * @param  encoder Encoder handle.
  */
 void MT6816_ResetCount(MT6816_Handle_t *encoder);
+void MT6816_RebaseTracking(MT6816_Handle_t *encoder);
 
 /**
  * @brief  Get encoder angle and velocity (core processing).

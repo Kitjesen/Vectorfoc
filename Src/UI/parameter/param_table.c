@@ -279,7 +279,7 @@ static const ParamEntry s_param_table[] = {
      .name = "run_mode",
      .ptr = &g_run_mode,
      .min = 0,
-     .max = 10,
+     .max = 5,
      .default_val = (float)DEFAULT_RUN_MODE,
      .need_save = true},
     /* ===  === */

@@ -19,6 +19,8 @@
 #include "config.h"   // 间接包含 board_config.h → HW_POSITION_SENSOR_MODE
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
 #include "mt6816_encoder.h"
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#include "tmr3109_encoder.h"
 #endif
 #include <malloc.h>
 #include <string.h>
@@ -55,6 +57,11 @@ CalibResult RSLSCalib_Start(MOTOR_DATA *motor, CalibrationContext *ctx) {
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
   MT6816_Handle_t *enc = (MT6816_Handle_t *)motor->components.encoder;
   enc->dir = MT6816_DIR_CW;
+  MT6816_RebaseTracking(enc);
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  TMR3109_Handle_t *enc = (TMR3109_Handle_t *)motor->components.encoder;
+  enc->dir = TMR3109_DIR_CW;
+  TMR3109_RebaseTracking(enc);
 #endif
 
   // State machine starting point

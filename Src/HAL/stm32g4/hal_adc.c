@@ -79,6 +79,5 @@ int MHAL_ADC_CalibrateCurrent(void) {
       motor_data.components.hal->adc == NULL ||
       motor_data.components.hal->adc->calibrate_offsets == NULL)
     return -1;
-  motor_data.components.hal->adc->calibrate_offsets();
-  return 0;
+  return motor_data.components.hal->adc->calibrate_offsets() ? 0 : -1;
 }

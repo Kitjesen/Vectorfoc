@@ -70,9 +70,11 @@ Bit 7-0:   Target Node ID
 
 **支持对象**:
 - NMT (Network Management)
-- SDO (Service Data Object)
-- PDO (Process Data Object)
-- Heartbeat
+- 标准 8 字节 expedited SDO download（`0x2F`/`0x2B`/`0x23`），成功响应
+  `0x60`，错误响应 `0x80 + abort code`
+- RPDO1: `controlword[0:1] + mode[2] + reserved[3] + target[4:7]`
+- 位置、速度分别使用可配置的 units/rad；`6071h` 目标转矩使用转矩限制的千分比
+- Heartbeat（仅 CANopen 模式发送）
 - Emergency
 
 ### 3. MIT Cheetah协议 (`mit/`)
@@ -116,7 +118,7 @@ void SendFeedback(void) {
         .torque = motor.torque
     };
     
-    CAN_Frame frame;
+    CAN_Frame frame = {0};
     if (Protocol_BuildFeedback(&status, &frame)) {
         Protocol_SendFrame(&frame);
     }

@@ -268,14 +268,17 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
   // Ensure the buffer is not empty
-  if (*Len != 0 && *Buf != 0)
+  if (*Len != 0)
   {
     // Convert uint32_t to uint16_t and pass it to handler
     uint16_t len16 = (*Len > UINT16_MAX) ? UINT16_MAX : (uint16_t)*Len;
 #ifdef BOOTLOADER_BUILD
-    BootProto_ProcessData(Buf, len16);
+    (void)BootProto_QueueData(Buf, len16);
 #else
-    vofa_Receive(Buf, len16);
+    if (*Buf != 0)
+    {
+      (void)Vofa_QueueReceive(Buf, len16);
+    }
 #endif
   }
 
@@ -298,10 +301,13 @@ uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len)
 {
   uint8_t result = USBD_OK;
   /* USER CODE BEGIN 7 */
+  if (Buf == NULL || Len == 0U) {
+    return USBD_FAIL;
+  }
   USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef *)hUsbDeviceFS.pClassData;
-  if (hcdc->TxState != 0)
+  if (hcdc == NULL || hcdc->TxState != 0)
   {
-    return USBD_BUSY;
+    return (hcdc == NULL) ? USBD_FAIL : USBD_BUSY;
   }
   USBD_CDC_SetTxBuffer(&hUsbDeviceFS, Buf, Len);
   result = USBD_CDC_TransmitPacket(&hUsbDeviceFS);
@@ -328,6 +334,11 @@ static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
   UNUSED(Buf);
   UNUSED(Len);
   UNUSED(epnum);
+#ifdef BOOTLOADER_BUILD
+  BootProto_OnTransmitComplete();
+#else
+  Vofa_OnTransmitComplete();
+#endif
   /* USER CODE END 13 */
   return result;
 }

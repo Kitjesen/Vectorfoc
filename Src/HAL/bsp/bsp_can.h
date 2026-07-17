@@ -28,6 +28,13 @@ extern "C" {
 /* CAN（） */
 #define FDCAN_MX_REGISTER_CNT 6
 #define DEVICE_CAN_CNT 1
+
+typedef enum {
+  BSP_CAN_BAUD_1M = 0U,
+  BSP_CAN_BAUD_500K = 1U,
+  BSP_CAN_BAUD_250K = 2U,
+} BSP_CAN_BaudrateId;
+
 /**
  * @brief FDCAN
  */

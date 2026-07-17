@@ -126,6 +126,8 @@ static int test_ff_viscous_friction_direction(void)
 
     /* 正向速度 */
     MOTOR_DATA m_pos = make_motor(10.0f, 0.0f);
+    m_pos.state.Control_Mode = CONTROL_MODE_VELOCITY;
+    Feedforward_Reset();
     /* 先调一次让 has_last = true，accel 有值 */
     Feedforward_Update(&m_pos, &p);
     m_pos.Controller.input_torque = 0.0f;
@@ -133,16 +135,20 @@ static int test_ff_viscous_friction_direction(void)
     Feedforward_Update(&m_pos, &p);
 
     /* viscous = 0.1 * 10 = 1.0，正向 */
-    CHECK(m_pos.Controller.input_torque > 0.0f);
+    CHECK(Feedforward_GetTorque() > 0.0f);
+    CHECK_NEAR(m_pos.Controller.input_torque, 0.0f, 1e-6f);
 
     /* 负向速度 */
     MOTOR_DATA m_neg = make_motor(-10.0f, 0.0f);
+    m_neg.state.Control_Mode = CONTROL_MODE_VELOCITY;
+    Feedforward_Reset();
     Feedforward_Update(&m_neg, &p); /* has_last */
     m_neg.Controller.input_torque = 0.0f;
     m_neg.Controller.vel_setpoint = -10.0f;
     Feedforward_Update(&m_neg, &p);
 
-    CHECK(m_neg.Controller.input_torque < 0.0f);
+    CHECK(Feedforward_GetTorque() < 0.0f);
+    CHECK_NEAR(m_neg.Controller.input_torque, 0.0f, 1e-6f);
 
     printf("PASS test_ff_viscous_friction_direction\n");
     return 0;

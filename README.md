@@ -25,7 +25,7 @@
 
 | Board        | MCU        | Sensor          | USB | DRV chip |
 |-------------|-----------|----------------|-----|----------|
-| VectorFOC G431 | STM32G431CB | MT6816 (SPI)  | Yes | — |
+| VectorFOC G431 | STM32G431CB | MT6816 / TMR3109 (SPI) | Yes | — |
 | X-STAR-S    | STM32G431CB | Hall / ABZ      | No  | — |
 
 Adding a new board requires only a single header in `Src/config/boards/` — see [Board Abstraction](#board-abstraction).
@@ -44,11 +44,14 @@ Adding a new board requires only a single header in `Src/config/boards/` — see
 ```bash
 cmake -S . -B build \
   --toolchain cmake/gcc-arm-none-eabi.cmake \
-  -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPOSITION_SENSOR=MT6816
 cmake --build build -j$(nproc)
 ```
 
-For X-STAR-S board, add `-DBOARD_XSTAR=1`.
+Supported combinations are `VectorFOC + MT6816/TMR3109` and
+`X-STAR-S + HALL/ABZ`. Select X-STAR-S with `-DBOARD_XSTAR=ON`; CMake
+rejects incompatible board/sensor pairs.
 
 ### Run host tests (no hardware required)
 

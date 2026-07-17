@@ -119,6 +119,7 @@ typedef enum {
   PARAM_ERR_READONLY,      ///< param
   PARAM_ERR_OUT_OF_RANGE,  ///<
   PARAM_ERR_NULL_PTR,      ///<
+  PARAM_ERR_STORAGE,       ///< non-volatile storage failure
 } ParamResult;
 /* ============================================================================
  * param

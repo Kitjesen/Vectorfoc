@@ -21,12 +21,14 @@
 #include "cmsis_os.h"
 #include "manager.h"
 #include "rtos_tasks.h"
+#include "watchdog_supervisor.h"
 __attribute__((noreturn)) void StartCustomTask(void const *argument) {
   (void)argument;
   CmdService_Init();
   for (;;) {
     Protocol_ProcessQueuedFrames();
     CmdService_Process();
+    WatchdogSupervisor_MarkComm();
     osDelay(2);
   }
 }

@@ -30,26 +30,31 @@ extern TIM_HandleTypeDef   htim17;
 /* ---- Cortex-M4 Exception Handlers ---- */
 
 void NMI_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
 
 void HardFault_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
 
 void MemManage_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
 
 void BusFault_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
 
 void UsageFault_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }

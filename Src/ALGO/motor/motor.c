@@ -42,6 +42,17 @@ extern MOTOR_DATA motor_data;
  * @brief calibrationstate
  * : current -> / -> fluxcalibration
  */
+static void MotorCalibrationFailSafe(MOTOR_DATA *motor, CalibResult result) {
+  MHAL_PWM_Disable();
+  (void)StateMachine_SetCalibrationPower(&g_ds402_state_machine, false);
+  #if !defined(TEST_ENV)
+  CalibContext_Reset(&motor->calib_ctx);
+#endif
+  motor->last_calib_result = result;
+  motor->state.Sub_State = SUB_STATE_IDLE;
+  motor->state.Cs_State = CS_STATE_IDLE;
+  motor->state.State_Mode = STATE_MODE_GUARD;
+}
 static void MotorInitializeTask(MOTOR_DATA *motor) {
   CalibResult result;
   switch (motor->state.Sub_State) {
@@ -58,8 +69,7 @@ static void MotorInitializeTask(MOTOR_DATA *motor) {
         Init_Motor_Calib(motor); //  RSLS calibration
       }
     } else if (result != CALIB_IN_PROGRESS) {
-      motor->last_calib_result = result;
-      motor->state.State_Mode = STATE_MODE_GUARD;
+      MotorCalibrationFailSafe(motor, result);
     }
     break;
   case RSLS_CALIBRATING:
@@ -68,8 +78,7 @@ static void MotorInitializeTask(MOTOR_DATA *motor) {
       motor->last_calib_result = CALIB_SUCCESS;
       motor->state.Sub_State = FLUX_CALIBRATING;
     } else if (result != CALIB_IN_PROGRESS) {
-      motor->last_calib_result = result;
-      motor->state.State_Mode = STATE_MODE_GUARD;
+      MotorCalibrationFailSafe(motor, result);
     }
     break;
   case FLUX_CALIBRATING:
@@ -80,8 +89,7 @@ static void MotorInitializeTask(MOTOR_DATA *motor) {
       motor->state.State_Mode = STATE_MODE_RUNNING;
       Param_ScheduleSave(); // calibrationdone，（ISRsafety）
     } else if (result != CALIB_IN_PROGRESS) {
-      motor->last_calib_result = result;
-      motor->state.State_Mode = STATE_MODE_GUARD; // calibration
+      MotorCalibrationFailSafe(motor, result); // calibration
     }
     break;
   default:
@@ -123,27 +131,30 @@ void MotorStateTask(MOTOR_DATA *motor) {
       PID_clear(&motor->VelPID);
       PID_clear(&motor->PosPID);
       FOC_Algorithm_ResetState(&motor->algo_state);
-      MHAL_PWM_Brake();
+      /* IDLE/GUARD is a de-energized state.  Never use active low-side
+       * braking here because that can re-enable the power stage after a
+       * fault. */
+      MHAL_PWM_Disable();
     }
     last_state = fsm_state;
   }
   // 4.  (Do Action)
   switch (motor->state.State_Mode) {
   case STATE_MODE_RUNNING: // runningmode
-    MotorControl_Run(motor);
+    if (MotorControl_Run(motor) && !Safety_HasActiveFault() &&
+        !g_ds402_state_machine.operation_power_enabled) {
+      (void)StateMachine_SetOperationPower(&g_ds402_state_machine, true);
+    }
     break;
   case STATE_MODE_DETECTING: // calibration/mode
     MotorInitializeTask(motor);
-    if (motor->state.Sub_State == SUB_STATE_IDLE) {
+    if (motor->state.State_Mode == STATE_MODE_GUARD) {
+      // faultstate FSM
+      StateMachine_EnterFault(&g_ds402_state_machine, FAULT_STALL_OVERLOAD);
+    } else if (motor->state.Sub_State == SUB_STATE_IDLE) {
       // Exit to Switch On Disabled
       StateMachine_RequestState(&g_ds402_state_machine,
                                 STATE_SWITCH_ON_DISABLED);
-    }
-    // Check if calibration failed (Transitioned to GUARD by
-    // MotorInitializeTask)
-    else if (motor->state.State_Mode == STATE_MODE_GUARD) {
-      // faultstate FSM
-      StateMachine_EnterFault(&g_ds402_state_machine, FAULT_STALL_OVERLOAD);
     }
     break;
   case STATE_MODE_IDLE:

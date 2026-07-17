@@ -7,6 +7,7 @@
  */
 
 #include "spi.h"
+#include "board_config.h"
 
 SPI_HandleTypeDef hspi1;
 SPI_HandleTypeDef hspi3;
@@ -16,7 +17,11 @@ void MX_SPI1_Init(void) {
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
   hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+#else
   hspi1.Init.CLKPolarity = SPI_POLARITY_HIGH;
+#endif
   hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
   hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;

@@ -17,8 +17,8 @@
 #include "board_config.h"
 #include "common.h"
 #include "config.h"
-#include "error_manager.h"
-#include "error_types.h"
+#include "encoder_position_tracker.h"
+#include "encoder_spi_transfer.h"
 #include <math.h>
 /** MT6816 Register Addresses */
 #define MT6816_REG_ANGLE_H 0x83 ///< Angle High Byte (Read)
@@ -46,6 +46,7 @@ ENCODER_DATA encoder_data = {
     .raw_angle = 0,
     .shadow_count = 0,
     .count_in_cpr = 0,
+    .position_initialized = false,
     .pos_estimate_counts_ = 0.0f,
     .vel_estimate_counts_ = 0.0f,
     .pos_cpr_counts_ = 0.0f,
@@ -101,6 +102,7 @@ void MT6816_Init(MT6816_Handle_t *encoder, SPI_HandleTypeDef *hspi,
   encoder->raw_angle = 0;
   encoder->shadow_count = 0;
   encoder->count_in_cpr = 0;
+  encoder->position_initialized = false;
   encoder->calib_valid = false;
   encoder->is_calibrated = false;
   // Initialize PLL State
@@ -140,6 +142,21 @@ void MT6816_ResetCount(MT6816_Handle_t *encoder) {
   encoder->shadow_count = 0;
   encoder->pos_estimate_counts_ = 0.0f;
   encoder->pos_estimate_ = 0.0f;
+}
+
+void MT6816_RebaseTracking(MT6816_Handle_t *encoder) {
+  if (encoder == NULL)
+    return;
+  encoder->position_initialized = false;
+  encoder->shadow_count = 0;
+  encoder->count_in_cpr = 0;
+  encoder->pos_estimate_counts_ = 0.0f;
+  encoder->vel_estimate_counts_ = 0.0f;
+  encoder->pos_cpr_counts_ = 0.0f;
+  encoder->interpolation_ = 0.5f;
+  encoder->pos_estimate_ = 0.0f;
+  encoder->vel_estimate_ = 0.0f;
+  encoder->velocity_rad_s = 0.0f;
 }
 float normalize_angle(float angle) {
   float a = fmodf(angle, M_2PI);
@@ -198,17 +215,15 @@ void GetMotor_Angle(MT6816_Handle_t *encoder, float dt) {
     cnt += MT6816_CPR;
   }
   /* === 3. Calculate Incremental Position (Wrap Handling) === */
-  int old_cnt = encoder->count_in_cpr;
-  encoder->count_in_cpr = cnt;
-  int delta_enc = cnt - old_cnt;
-  // Robust wrap detection
-  if (delta_enc > (int)(MT6816_CPR / 2)) {
-    delta_enc -= MT6816_CPR;
-  } else if (delta_enc < -(int)(MT6816_CPR / 2)) {
-    delta_enc += MT6816_CPR;
+  bool first_sample = !encoder->position_initialized;
+  int delta_enc =
+      EncoderPosition_Update(cnt, MT6816_CPR, &encoder->position_initialized,
+                             &encoder->count_in_cpr, &encoder->shadow_count);
+  if (first_sample) {
+    encoder->pos_cpr_counts_ = (float)cnt;
+    encoder->vel_estimate_counts_ = 0.0f;
+    encoder->interpolation_ = 0.5f;
   }
-  // Accumulate to 64-bit shadow counter
-  encoder->shadow_count += (int64_t)delta_enc;
   /* === 4. Run PLL (Incremental / Modulo Domain Only) === */
   // We use PLL primarily for Velocity estimation and sub-count smoothing.
   // We DO NOT use absolute float position for long-term feedback to avoid
@@ -302,15 +317,11 @@ static bool mt6816_read_raw(MT6816_Handle_t *encoder) {
   uint8_t tx_data[3] = {MT6816_REG_ANGLE_H, MT6816_REG_ANGLE_L, 0x00};
   uint8_t rx_data[3] = {0, 0, 0};
   MT6816_CS_Low(encoder);
-  if (HAL_SPI_TransmitReceive(encoder->hspi, tx_data, rx_data, 3,
-                              MT6816_MAX_DELAY) != HAL_OK) {
+  if (EncoderSPI_TransmitReceiveBounded(encoder->hspi, tx_data, rx_data, 3U) !=
+      HAL_OK) {
     MT6816_CS_High(encoder);
     if (encoder->rx_err_count < 0xFFFF)
       encoder->rx_err_count++;
-    // SPIerror（100）
-    if (encoder->rx_err_count == 1 || encoder->rx_err_count % 100 == 0) {
-      ERROR_REPORT(ERROR_MOTOR_ENCODER_SPI, "MT6816 SPI error");
-    }
     encoder->last_status = MT6816_ERR_SPI;
     return false;
   }

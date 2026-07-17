@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #ifndef BOARD_XSTAR
+#include "bsp_dwt.h"
 #include "motor_adc.h"
 #include "config.h"
 #include "board_config.h"
@@ -34,33 +35,42 @@ extern CURRENT_DATA current_data;
 static void G431_PWM_SetDuty(float dtc_a, float dtc_b, float dtc_c) {
   //  TIM register， inner.c done
   uint16_t arr = __HAL_TIM_GET_AUTORELOAD(&HW_PWM_TIMER);
-  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_W, (uint16_t)(dtc_a * arr));
-  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_V, (uint16_t)(dtc_b * arr));
-  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_U, (uint16_t)(dtc_c * arr));
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_A,
+                        (uint16_t)(dtc_a * arr));
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_B,
+                        (uint16_t)(dtc_b * arr));
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_C,
+                        (uint16_t)(dtc_c * arr));
 }
-static void G431_PWM_Enable(void) {
-  HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_U);
-  HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_V);
-  HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_W);
-  HAL_TIMEx_PWMN_Start(&HW_PWM_TIMER, HW_PWM_CH_U);
-  HAL_TIMEx_PWMN_Start(&HW_PWM_TIMER, HW_PWM_CH_V);
-  HAL_TIMEx_PWMN_Start(&HW_PWM_TIMER, HW_PWM_CH_W);
+static void G431_PWM_Disable(void);
+static bool G431_PWM_StartChannel(uint32_t channel) {
+  return HAL_TIM_PWM_Start(&HW_PWM_TIMER, channel) == HAL_OK &&
+         HAL_TIMEx_PWMN_Start(&HW_PWM_TIMER, channel) == HAL_OK;
+}
+static bool G431_PWM_Enable(void) {
+  if (HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_TRIG) != HAL_OK ||
+      !G431_PWM_StartChannel(HW_PWM_CH_PHASE_A) ||
+      !G431_PWM_StartChannel(HW_PWM_CH_PHASE_B) ||
+      !G431_PWM_StartChannel(HW_PWM_CH_PHASE_C)) {
+    G431_PWM_Disable();
+    return false;
+  }
+  return true;
 }
 static void G431_PWM_Disable(void) {
-  HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_U);
-  HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_V);
-  HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_W);
-  HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_U);
-  HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_V);
-  HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_W);
+  HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_PHASE_A);
+  HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_PHASE_B);
+  HAL_TIM_PWM_Stop(&HW_PWM_TIMER, HW_PWM_CH_PHASE_C);
+  HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_PHASE_A);
+  HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_PHASE_B);
+  HAL_TIMEx_PWMN_Stop(&HW_PWM_TIMER, HW_PWM_CH_PHASE_C);
 }
 static void G431_PWM_Brake(void) {
-  // Low side ON, High side OFF
-  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_U, 0);
-  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_V, 0);
-  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_W, 0);
-  // Ensure outputs are enabled
-  G431_PWM_Enable();
+  /* Brake is a fail-safe zero-output request, not an implicit enable. */
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_A, 0);
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_B, 0);
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_C, 0);
+  G431_PWM_Disable();
 }
 static const Motor_HAL_PwmInterface_t g431_pwm = {.set_duty = G431_PWM_SetDuty,
                                                   .enable = G431_PWM_Enable,
@@ -79,6 +89,21 @@ static const Motor_HAL_PwmInterface_t g431_pwm = {.set_duty = G431_PWM_SetDuty,
 static uint32_t s_last_temp_update = 0;
 static float s_temp_filtered = TEMP_DEFAULT;
 static bool s_temp_sensor_ok = true;
+
+static float G431_NTC_ConvertToTemp(uint16_t adc_raw) {
+  if (adc_raw == 0U || adc_raw > TEMP_ADC_MAX_VALID) {
+    return NAN;
+  }
+  /* VectorFOC topology: 3.3 V -> 10k pull-up -> ADC -> NTC -> GND. */
+  float r_ntc = HW_NTC_PULLUP * (float)adc_raw /
+                (float)(HW_ADC_RESOLUTION - adc_raw);
+  float denominator = logf(r_ntc / HW_NTC_R25) +
+                      HW_NTC_B_VALUE / 298.15f;
+  if (!isfinite(denominator) || denominator <= 0.0f) {
+    return NAN;
+  }
+  return HW_NTC_B_VALUE / denominator - 273.15f;
+}
 /**
  * @brief temperature（、filtererrorcheck）
  * @return temperature
@@ -94,18 +119,18 @@ static float G431_ReadTemperature(void) {
   // ： DMA
   uint16_t adc_raw = adc2_dma_value[0][adc2_ch12];
   // 3. errorcheck：ADC
-  if (adc_raw < TEMP_ADC_MIN_VALID || adc_raw > TEMP_ADC_MAX_VALID) {
+  if (adc_raw == 0U || adc_raw > TEMP_ADC_MAX_VALID) {
     if (s_temp_sensor_ok) {
       // fault，error
       s_temp_sensor_ok = false;
       // ：ERROR_REPORT(ERROR_SENSOR_TEMP, "Temp sensor out of range");
     }
     // filter，update
-    return s_temp_filtered;
+    return NAN;
   }
   // 4. temperature
   float temp;
-  GetTempNtc(adc_raw, &temp);
+  temp = G431_NTC_ConvertToTemp(adc_raw);
   // 5. filter
   s_temp_filtered += TEMP_LPF_ALPHA * (temp - s_temp_filtered);
   s_temp_sensor_ok = true;
@@ -134,21 +159,30 @@ static void G431_ADC_Update(Motor_HAL_SensorData_t *data) {
   // temperature（、filtererrorcheck）
   data->temp = G431_ReadTemperature();
 }
-static void G431_ADC_CalibrateOffsets(void) {
-  // Reuse existing calibration logic if possible, or reimplement
-  // For simplicity, we trigger the existing calibration function if exposed,
-  // or implement a simple average here.
-  uint32_t sum_a = 0, sum_b = 0, sum_c = 0;
-  const int samples = 1000;
-  for (int i = 0; i < samples; i++) {
-    HAL_Delay(1); // Simple blocking delay for calibration
+static bool G431_ADC_CalibrateOffsets(void) {
+  uint64_t sum_a = 0, sum_b = 0, sum_c = 0;
+  const uint32_t samples = 1024u;
+  for (uint32_t i = 0; i < samples; i++) {
+    DWT_Delay(CURRENT_MEASURE_PERIOD);
     sum_a += HW_ADC_CURRENT.Instance->HW_ADC_JDR_IA;
     sum_b += HW_ADC_CURRENT.Instance->HW_ADC_JDR_IB;
     sum_c += HW_ADC_CURRENT.Instance->HW_ADC_JDR_IC;
+    if ((i & 0x3Fu) == 0u) {
+      HAL_WatchdogFeed();
+    }
   }
-  current_data.Ia_offset = (float)sum_a / samples;
-  current_data.Ib_offset = (float)sum_b / samples;
-  current_data.Ic_offset = (float)sum_c / samples;
+  current_data.Ia_offset = (float)sum_a / (float)samples;
+  current_data.Ib_offset = (float)sum_b / (float)samples;
+  current_data.Ic_offset = (float)sum_c / (float)samples;
+  return isfinite(current_data.Ia_offset) &&
+         isfinite(current_data.Ib_offset) &&
+         isfinite(current_data.Ic_offset) &&
+         current_data.Ia_offset > 256.0f &&
+         current_data.Ia_offset < 3840.0f &&
+         current_data.Ib_offset > 256.0f &&
+         current_data.Ib_offset < 3840.0f &&
+         current_data.Ic_offset > 256.0f &&
+         current_data.Ic_offset < 3840.0f;
 }
 static const Motor_HAL_AdcInterface_t g431_adc = {
     .update = G431_ADC_Update, .calibrate_offsets = G431_ADC_CalibrateOffsets};
@@ -156,37 +190,92 @@ static const Motor_HAL_AdcInterface_t g431_adc = {
  * Encoder Interface Implementation
  * ============================================================================
  */
-static void G431_Encoder_Update(void) {
+static bool G431_Encoder_Update(void) {
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  TMR3109_Update(&tmr3109_encoder_data, CURRENT_MEASURE_PERIOD);
+  return TMR3109_Update(&tmr3109_encoder_data, CURRENT_MEASURE_PERIOD) ==
+         TMR3109_OK;
 #else
-  MT6816_Update(&encoder_data, CURRENT_MEASURE_PERIOD);
+  return MT6816_Update(&encoder_data, CURRENT_MEASURE_PERIOD) == MT6816_OK;
 #endif
 }
 static void G431_Encoder_GetData(Motor_HAL_EncoderData_t *data) {
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  data->position_rad = tmr3109_encoder_data.pos_estimate_ * M_2PI;
   data->angle_rad    = tmr3109_encoder_data.mec_angle_rad;
   data->velocity_rad = tmr3109_encoder_data.velocity_rad_s;
   data->elec_angle   = tmr3109_encoder_data.elec_angle_rad;
   data->raw_value    = (int32_t)tmr3109_encoder_data.raw_angle;
 #else
+  data->position_rad = encoder_data.pos_estimate_ * M_2PI;
   data->angle_rad    = encoder_data.mec_angle_rad;
   data->velocity_rad = encoder_data.velocity_rad_s;
   data->elec_angle   = encoder_data.elec_angle_rad;
   data->raw_value    = encoder_data.raw_angle;
 #endif
 }
-static void G431_Encoder_SetOffset(float offset) {
+
+static void G431_Encoder_SetPolePairs(uint8_t pole_pairs) {
+  if (pole_pairs == 0u) {
+    return;
+  }
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  tmr3109_encoder_data.offset_rev = offset;
+  tmr3109_encoder_data.pole_pairs = pole_pairs;
 #else
-  encoder_data.offset_rev = offset;
+  encoder_data.pole_pairs = pole_pairs;
 #endif
 }
+
+static void G431_Encoder_ZeroPosition(void) {
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  TMR3109_ResetCount(&tmr3109_encoder_data);
+#else
+  MT6816_ResetCount(&encoder_data);
+#endif
+}
+
+static void G431_Encoder_SetOffset(float offset) {
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  uint8_t pole_pairs =
+      tmr3109_encoder_data.pole_pairs == 0u ? 1u
+                                           : tmr3109_encoder_data.pole_pairs;
+  float mechanical_turns = offset / (M_2PI * (float)pole_pairs);
+  tmr3109_encoder_data.offset_rev = mechanical_turns;
+  tmr3109_encoder_data.offset_counts =
+      (int32_t)lroundf(mechanical_turns * TMR3109_CPR_F);
+#else
+  uint8_t pole_pairs =
+      encoder_data.pole_pairs == 0u ? 1u : encoder_data.pole_pairs;
+  float mechanical_turns = offset / (M_2PI * (float)pole_pairs);
+  encoder_data.offset_rev = mechanical_turns;
+  encoder_data.offset_counts =
+      (int32_t)lroundf(mechanical_turns * MT6816_CPR_F);
+#endif
+}
+
+static float G431_Encoder_GetOffset(void) {
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  uint8_t pole_pairs =
+      tmr3109_encoder_data.pole_pairs == 0u ? 1u
+                                           : tmr3109_encoder_data.pole_pairs;
+  return ((float)tmr3109_encoder_data.offset_counts * M_2PI *
+          (float)pole_pairs) /
+         TMR3109_CPR_F;
+#else
+  uint8_t pole_pairs =
+      encoder_data.pole_pairs == 0u ? 1u : encoder_data.pole_pairs;
+  return ((float)encoder_data.offset_counts * M_2PI * (float)pole_pairs) /
+         MT6816_CPR_F;
+#endif
+}
+
 static const Motor_HAL_EncoderInterface_t g431_encoder = {
-    .update    = G431_Encoder_Update,
-    .get_data  = G431_Encoder_GetData,
-    .set_offset = G431_Encoder_SetOffset};
+    .update = G431_Encoder_Update,
+    .get_data = G431_Encoder_GetData,
+    .set_pole_pairs = G431_Encoder_SetPolePairs,
+    .zero_position = G431_Encoder_ZeroPosition,
+    .set_offset = G431_Encoder_SetOffset,
+    .get_offset = G431_Encoder_GetOffset,
+};
 /* ============================================================================
  * Main Handle Construction
  * ============================================================================
