@@ -100,11 +100,14 @@ static bool ParamTable_IsInRange(const ParamEntry *entry, const void *value) {
 }
 
 static bool ParamTable_IsDefaultValid(const ParamEntry *entry) {
-  if (entry == NULL || !isfinite(entry->default_val)) {
+  ParamTargetBinding binding = {0};
+  if (entry == NULL ||
+      ParamTable_GetBinding(entry, &binding) != PARAM_OK ||
+      !isfinite(binding.default_val)) {
     return false;
   }
 
-  float value = entry->default_val;
+  float value = binding.default_val;
   switch (entry->type) {
   case PARAM_TYPE_FLOAT:
     return ParamTable_IsInRange(entry, &value);
@@ -199,9 +202,11 @@ static ParamResult Param_ReadRaw(uint16_t index, void *data,
     ERROR_REPORT(ERROR_PARAM_INVALID_VALUE, operation);
     return PARAM_ERR_INVALID_TYPE;
   }
-  if (entry->ptr == NULL) {
+  ParamTargetBinding binding = {0};
+  ParamResult binding_result = ParamTable_GetBinding(entry, &binding);
+  if (binding_result != PARAM_OK) {
     ERROR_REPORT(ERROR_PARAM_NULL_PTR, operation);
-    return PARAM_ERR_NULL_PTR;
+    return binding_result;
   }
 
 #if !defined(TEST_ENV)
@@ -209,19 +214,19 @@ static ParamResult Param_ReadRaw(uint16_t index, void *data,
 #endif
   switch (entry->type) {
   case PARAM_TYPE_UINT8:
-    *(uint8_t *)data = *(const uint8_t *)entry->ptr;
+    *(uint8_t *)data = *(const uint8_t *)binding.target;
     break;
   case PARAM_TYPE_UINT16:
-    *(uint16_t *)data = *(const uint16_t *)entry->ptr;
+    *(uint16_t *)data = *(const uint16_t *)binding.target;
     break;
   case PARAM_TYPE_INT32:
-    *(int32_t *)data = *(const int32_t *)entry->ptr;
+    *(int32_t *)data = *(const int32_t *)binding.target;
     break;
   case PARAM_TYPE_UINT32:
-    *(uint32_t *)data = *(const uint32_t *)entry->ptr;
+    *(uint32_t *)data = *(const uint32_t *)binding.target;
     break;
   case PARAM_TYPE_FLOAT:
-    *(float *)data = *(const float *)entry->ptr;
+    *(float *)data = *(const float *)binding.target;
     break;
   default:
     break;
@@ -246,9 +251,11 @@ static ParamResult Param_WriteRaw(uint16_t index, const void *data) {
     ERROR_REPORT(ERROR_PARAM_ACCESS_DENIED, "Param_Write: not writable");
     return PARAM_ERR_READONLY;
   }
-  if (entry->ptr == NULL) {
+  ParamTargetBinding binding = {0};
+  ParamResult binding_result = ParamTable_GetBinding(entry, &binding);
+  if (binding_result != PARAM_OK) {
     ERROR_REPORT(ERROR_PARAM_NULL_PTR, "Param_Write: NULL target");
-    return PARAM_ERR_NULL_PTR;
+    return binding_result;
   }
   // check
   if (!ParamTable_IsInRange(entry, data)) {
@@ -262,19 +269,19 @@ static ParamResult Param_WriteRaw(uint16_t index, const void *data) {
 #endif
   switch (entry->type) {
   case PARAM_TYPE_UINT8:
-    *(uint8_t *)entry->ptr = *(const uint8_t *)data;
+    *(uint8_t *)binding.target = *(const uint8_t *)data;
     break;
   case PARAM_TYPE_UINT16:
-    *(uint16_t *)entry->ptr = *(const uint16_t *)data;
+    *(uint16_t *)binding.target = *(const uint16_t *)data;
     break;
   case PARAM_TYPE_INT32:
-    *(int32_t *)entry->ptr = *(const int32_t *)data;
+    *(int32_t *)binding.target = *(const int32_t *)data;
     break;
   case PARAM_TYPE_UINT32:
-    *(uint32_t *)entry->ptr = *(const uint32_t *)data;
+    *(uint32_t *)binding.target = *(const uint32_t *)data;
     break;
   case PARAM_TYPE_FLOAT:
-    *(float *)entry->ptr = *(const float *)data;
+    *(float *)binding.target = *(const float *)data;
     break;
   default:
     result = PARAM_ERR_INVALID_TYPE;
@@ -815,12 +822,22 @@ ParamResult Param_SystemInitOnce(void) {
   if (s_param_system_initialized) {
     return PARAM_OK;
   }
+  if (!ParamTable_IsBound()) {
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR,
+                 "Param_SystemInitOnce: parameter targets are unbound");
+    return PARAM_ERR_NULL_PTR;
+  }
   ParamTable_Init();
   ParamResult result = Param_LoadFromFlash();
   s_param_system_initialized = true;
   return result;
 }
 ParamResult Param_RestoreDefaults(void) {
+  if (!ParamTable_IsBound()) {
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR,
+                 "RestoreDefaults: parameter targets are unbound");
+    return PARAM_ERR_NULL_PTR;
+  }
   const ParamEntry *table = ParamTable_GetTable();
   uint32_t count = ParamTable_GetCount();
   if (table == NULL || count == 0) {
@@ -849,7 +866,11 @@ ParamResult Param_RestoreDefaults(void) {
       continue;
     }
 
-    result = Param_WriteFromFloat(entry->index, entry->default_val);
+    ParamTargetBinding binding = {0};
+    result = ParamTable_GetBinding(entry, &binding);
+    if (result == PARAM_OK) {
+      result = Param_WriteFromFloat(entry->index, binding.default_val);
+    }
     if (result != PARAM_OK) {
       ERROR_REPORT(ERROR_PARAM_INVALID_VALUE,
                    "RestoreDefaults: invalid table default");

@@ -35,6 +35,7 @@ static int s_encoder_calibration_capture_count;
 static int s_encoder_calibration_restore_count;
 static int s_encoder_calibration_clear_count;
 static void *s_encoder_calibration_last_context;
+static bool s_param_table_bound = true;
 
 static const ParamEntry s_entries[] = {
     {.index = PARAM_MOTOR_RS,
@@ -141,6 +142,20 @@ const ParamEntry *ParamTable_Find(uint16_t index) {
 }
 
 void ParamTable_Init(void) {}
+bool ParamTable_IsBound(void) { return s_param_table_bound; }
+ParamResult ParamTable_GetBinding(const ParamEntry *entry,
+                                  ParamTargetBinding *binding) {
+  if (entry == NULL || binding == NULL || entry->ptr == NULL) {
+    return PARAM_ERR_NULL_PTR;
+  }
+  *binding = (ParamTargetBinding){
+      .index = entry->index,
+      .type = entry->type,
+      .target = entry->ptr,
+      .default_val = entry->default_val,
+  };
+  return PARAM_OK;
+}
 uint32_t ParamTable_GetCount(void) {
   return (uint32_t)(sizeof(s_entries) / sizeof(s_entries[0]));
 }
@@ -176,6 +191,7 @@ bool ParamStorage_HasValidData(void) { return s_storage_has_valid_data; }
 
 static void ResetState(void) {
   ParamEncoderCalibration_SetAdapter(NULL, NULL);
+  s_param_table_bound = true;
   s_float_value = 2.5f;
   s_float_value_2 = 1.25f;
   s_uint8_value = 7U;
@@ -240,6 +256,17 @@ static void RuntimeApplySpy(void *context, uint16_t index) {
   s_runtime_apply_count++;
   s_runtime_last_context = context;
   s_runtime_last_index = index;
+}
+
+static int TestSystemInitRequiresBoundTable(void) {
+  ResetState();
+  s_param_table_bound = false;
+  if (Param_SystemInitOnce() != PARAM_ERR_NULL_PTR) {
+    return 1;
+  }
+
+  s_param_table_bound = true;
+  return Param_SystemInitOnce() != PARAM_OK;
 }
 
 static void EncoderCalibrationSpy(
@@ -591,6 +618,10 @@ static int TestRollbackUsesLatestCommittedImageAfterInterleavedSchedules(void) {
 
 int main(void) {
   ResetState();
+  if (TestSystemInitRequiresBoundTable()) {
+    printf("FAIL parameter system initialized without table bindings\n");
+    return 1;
+  }
   if (TestReadMismatchDoesNotOverwrite()) {
     printf("FAIL typed read overwrote a smaller destination\n");
     return 1;

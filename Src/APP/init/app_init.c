@@ -18,6 +18,7 @@
  * @note  robot.c
  */
 #include "app_init.h"
+#include "app_comm_bootstrap.h"
 #include "board_config.h"
 #include "bsp_adc.h"
 #ifdef BOARD_XSTAR
@@ -25,8 +26,6 @@
 #include "abz_encoder.h"
 #include "xstar_bsp.h"
 #endif
-#include "bsp_can.h"
-#include "can_transport.h"
 #include "bsp_init.h"
 #include "bsp_log.h"
 #include "error_manager.h"
@@ -36,11 +35,11 @@
 #include "hal_encoder.h"
 #include "hal_pwm.h"
 #include "led.h"
-#include "manager.h"
 #include "motor.h"
 #include "param_access.h"
 #include "safety_control.h"
 #include "settings/encoder_calibration_settings.h"
+#include "settings/parameter_bindings_settings.h"
 #include "settings/runtime_settings.h"
 #include <math.h>
 
@@ -49,10 +48,6 @@ static bool s_initial_safety_scan_ready = false;
 static volatile bool s_foc_runtime_ready = false;
 
 bool App_IsFocRuntimeReady(void) { return s_foc_runtime_ready; }
-
-static bool App_ReportFaultCallback(uint32_t fault_bits, void *motor) {
-  return Protocol_ReportFaultCallback(fault_bits, (MOTOR_DATA *)motor);
-}
 
 static bool App_StatePreCheck(MotorState target_state) {
   if (target_state == STATE_OPERATION_ENABLED) {
@@ -68,14 +63,6 @@ static bool App_StatePreCheck(MotorState target_state) {
   }
 
   return true;
-}
-
-static ProtocolType App_GetBootProtocol(void) {
-  if (g_protocol_type <= PROTOCOL_MIT) {
-    return (ProtocolType)g_protocol_type;
-  }
-  g_protocol_type = PROTOCOL_VECTOR;
-  return PROTOCOL_VECTOR;
 }
 
 static bool App_CaptureInitialFeedback(void) {
@@ -130,6 +117,11 @@ void App_Init(void) {
   Safety_Init(NULL);
   __enable_irq();
 
+  if (ParameterBindingsSettings_Install() != PARAM_OK) {
+    ERROR_REPORT(ERROR_PARAM_INVALID_VALUE,
+                 "Parameter target binding initialization failed");
+    Error_Handler();
+  }
   EncoderCalibrationSettings_InstallAdapter();
   Param_SystemInitOnce();
   if (!adc_bsp_init()) {
@@ -167,11 +159,7 @@ void App_Init(void) {
   }
   s_initial_safety_scan_ready = true;
 
-  BSP_CAN_Init();
-  CAN_Transport_Init();
-  Protocol_RegisterTransport(CAN_Transport_GetInterface());
-  Protocol_Init(App_GetBootProtocol());
-  Safety_RegisterFaultCallback(App_ReportFaultCallback);
+  AppComm_Bootstrap();
 
   Init_Motor_No_Calib(&motor_data);
   MHAL_PWM_Disable();

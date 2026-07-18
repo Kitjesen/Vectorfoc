@@ -66,13 +66,4 @@ void Detection_SetCANTimeout(uint32_t timeout_ms);
  * @return 配置指针（非 NULL）
  */
 DetectionConfig *Detection_GetConfig(void);
-
-/**
- * @brief 检测配置全局实例（仅供 param_table.c 静态初始化器使用）
- *
- * 嵌入式参数表需要在编译时取地址（.ptr = &s_config.field），
- * 因此无法通过 Detection_GetConfig() 替代。
- * 其他模块应通过 Detection_GetConfig() 获取指针，不得直接操作此变量。
- */
-extern DetectionConfig s_config;
 #endif /* FAULT_DETECTION_H */

@@ -13,9 +13,9 @@ VectorFOC 是基于 STM32G431 的无刷电机 FOC 固件。它面向电机控制
 | FOC 算法 | `Src/ALGO/foc/` | Clarke/Park、SVPWM、三角函数、FOC 电流环 |
 | 控制器 | `Src/ALGO/control/`, `Src/ALGO/pid/`, `Src/ALGO/trajectory/` | PID、LADRC、前馈、弱磁、限幅、梯形轨迹、速率限制 |
 | 电机状态与标定 | `Src/ALGO/motor/` | DS402 风格状态机、Rs/Ls/flux/编码器标定上下文；PWM HAL 操作在短 critical section 外执行，过渡期故障直接关闭桥臂输出 |
-| 传感器与板级抽象 | `Src/HAL/`, `Src/config/` | VectorFOC 与 X-STAR-S 两套板级配置，MT6816/TMR3109/Hall/ABZ 路由 |
-| 通信 | `Src/COMM/`, `Src/UI/vofa/` | Vector/Inovxio、MIT、CANopen 风格帧，USB CDC 文本命令；Vector GET_ID 仅接受扩展帧、CANopen STOP 只接受 NMT；控制指令经统一 executor 原子发布；重启/进入 Bootloader 仅在 CAN ACK 的 FDCAN Tx event 确认后执行 |
-| 参数存储 | `Src/UI/parameter/`, `Src/APP/settings/`, `Src/HAL/bsp/bsp_flash.*` | Flash 参数页、CRC32、提交标记与回退测试；参数 module 只校验、保存、通知及 portable calibration snapshot 映射，APP adapters 分别在正确时序应用运行时设置和具体 encoder calibration；持久化修改通过维护租约串行化，scheduled save 终态失败会恢复最后有效镜像或默认参数 |
+| 传感器与板级抽象 | `Src/HAL/`, `Src/config/` | VectorFOC 与 X-STAR-S 两套板级配置，MT6816/TMR3109/Hall/ABZ 路由；Vector SPI 编码器在启动期按编译选择调用具体驱动初始化 |
+| 通信 | `Src/COMM/`, `Src/UI/vofa/`, `Src/APP/init/app_comm_bootstrap.*` | Vector/Inovxio、MIT、CANopen 风格帧，USB CDC 文本命令；启动边界按 CAN、transport、protocol、safety callback 的固定顺序组合；Vector GET_ID 仅接受扩展帧、CANopen STOP 只接受 NMT；控制指令经统一 executor 原子发布；重启/进入 Bootloader 仅在 CAN ACK 的 FDCAN Tx event 确认后执行 |
+| 参数存储 | `Src/UI/parameter/`, `Src/APP/settings/`, `Src/HAL/bsp/bsp_flash.*` | Flash 参数页、CRC32、提交标记与回退测试；参数 module 只校验、保存、通知、不可变元数据及 portable calibration snapshot 映射，APP adapters 在正确时序绑定运行时 RAM target、应用运行时设置并处理具体 encoder calibration；持久化修改通过维护租约串行化，scheduled save 终态失败会恢复最后有效镜像或默认参数 |
 | 安全保护 | `Src/SAFE/`, `Src/APP/isr/` | 故障检测、ADC 样本保护、编码器失败计数、CAN timeout watchdog、看门狗监督；启动 ISR readiness gate、X-STAR ADC paired-sample gate、shared ADC IRQ 分发与状态感知的故障清除 |
 | Bootloader/OTA | `Src/BOOT/`, `scripts/ota_upload.py`, `scripts/patch_app_header.py` | USB CDC OTA、App Header 生成/验证、Flash 擦写协议；设备布局预检在擦除前完成 |
 
@@ -77,11 +77,14 @@ cmake --build build-test --parallel
 ctest --test-dir build-test --output-on-failure
 ```
 
-当前 `test/CMakeLists.txt` 注册 46 个自动 CTest 测试；最近一次干净 Clang/Ninja 主机构建通过 46/46。覆盖范围包括：
+当前 `test/CMakeLists.txt` 注册 54 个自动 CTest 测试；最近一次干净 Clang/Ninja 主机构建通过 54/54。覆盖范围包括：
 
 - FOC 基础算法、PID、LADRC、轨迹、速率限制、三角函数；
 - 参数运行时通知 seam 与 APP `RuntimeSettings` 适配器的单参数映射、批量重放和编码器 offset 错误传播；
 - 参数 encoder-calibration seam：快照保存/恢复、无效元数据拒绝、默认回退清空校准状态；
+- 参数 target-binding seam：40 个表项的完整 type/target/default 验证、无效 rebind 原子拒绝，以及生产 APP adapter 映射；
+- 编码器启动：MT6816/TMR3109/Hall/ABZ 四种已支持构建分支均验证初始化分发；非法传感器模式必须失败；
+- APP 通信启动边界：CAN、transport、protocol 和 safety fault callback 的顺序、传输接口注册、非法协议值回退与故障回调失败传播；
 - `test_runner_integration` 简化 PMSM 闭环仿真：电流/速度/负载扰动、速度设定切换、位置设定和参数扫掠；
 - 真实 `MotorStateTask` + mock HAL/motor plant 闭环回归，以及确定性 ADC 噪声稳定性回归；
 - ADC ISR readiness gate：未完成初始化时 injected callback 不得读取传感器、状态机或 PWM 路径；X-STAR-S 还要求 ADC1/ADC2 注入完成标记配对且无错误；
@@ -101,10 +104,10 @@ Windows/MSVC 与 GCC/Ninja 都是 CI 的一等验证目标；提交前的干净�
 
 | 镜像 | RAM | CCMRAM | Flash |
 |---|---:|---:|---:|
-| VectorFOC / MT6816 | 20,960 / 22,512 B（93.11%） | 9,024 / 10,240 B（88.12%） | 101,384 / 110,592 B（91.67%） |
-| VectorFOC / TMR3109 | 20,968 / 22,512 B（93.14%） | 9,024 / 10,240 B（88.12%） | 101,532 / 110,592 B（91.81%） |
-| X-STAR-S / HALL | 14,216 / 22,512 B（63.15%） | 1,024 / 10,240 B（10.00%） | 79,424 / 126,976 B（62.55%） |
-| X-STAR-S / ABZ | 14,208 / 22,512 B（63.11%） | 1,024 / 10,240 B（10.00%） | 79,136 / 126,976 B（62.32%） |
+| VectorFOC / MT6816 | 20,984 / 22,512 B（93.21%） | 9,024 / 10,240 B（88.12%） | 103,452 / 110,592 B（93.54%） |
+| VectorFOC / TMR3109 | 20,992 / 22,512 B（93.25%） | 9,024 / 10,240 B（88.12%） | 103,568 / 110,592 B（93.65%） |
+| X-STAR-S / HALL | 14,248 / 22,512 B（63.29%） | 1,024 / 10,240 B（10.00%） | 81,312 / 126,976 B（64.04%） |
+| X-STAR-S / ABZ | 14,232 / 22,512 B（63.22%） | 1,024 / 10,240 B（10.00%） | 81,024 / 126,976 B（63.81%） |
 | Bootloader | 7,352 / 22,512 B（32.66%） | 0 / 10,240 B | 13,932 / 16,384 B（85.03%） |
 
 这些数字是链接期静态占用，不是任务/中断栈安全证明，也没有为运行时峰值预留保证。

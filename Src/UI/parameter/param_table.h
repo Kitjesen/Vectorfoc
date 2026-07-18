@@ -131,18 +131,53 @@ typedef struct {
   uint8_t attr;      ///<  (PARAM_ATTR_*)
   uint8_t access;    ///<  (PARAM_ACCESS_*)
   const char *name;  ///< param
-  void *ptr;         ///< (actualposition)
+  void *ptr;         ///< Legacy compatibility field; production metadata is NULL.
   float min;         ///<
   float max;         ///<
-  float default_val; ///<
+  float default_val; ///< Legacy compatibility field; resolve defaults via binding.
   bool need_save;    ///< Flash
 } ParamEntry;
+
+/**
+ * @brief APP-owned storage target and reset default for one parameter entry.
+ *
+ * The parameter layer owns parameter metadata and validation.  The APP layer
+ * supplies the concrete RAM address and board-specific default so this layer
+ * does not need to include motor, safety, or board configuration headers.
+ */
+typedef struct {
+  uint16_t index;
+  ParamType type;
+  void *target;
+  float default_val;
+} ParamTargetBinding;
+
+/** Resolve one parameter's APP-owned runtime target and default value. */
+typedef bool (*ParamTargetBindingAdapter)(void *context, uint16_t index,
+                                          ParamType type,
+                                          ParamTargetBinding *binding);
 /* ============================================================================
  * param
  * ============================================================================
  */
 /**
- * @brief initparam()
+ * @brief Install the APP adapter that resolves parameter runtime storage.
+ *
+ * The adapter must resolve every table entry with its matching index and type,
+ * a non-NULL target, and a valid default.  The complete adapter is validated
+ * before it replaces a previously installed adapter.
+ */
+ParamResult ParamTable_SetBindingAdapter(ParamTargetBindingAdapter adapter,
+                                         void *context);
+/** @brief True after a complete parameter target binding has been installed. */
+bool ParamTable_IsBound(void);
+/** Resolve the APP-owned target and default associated with a table entry. */
+ParamResult ParamTable_GetBinding(const ParamEntry *entry,
+                                  ParamTargetBinding *binding);
+/**
+ * @brief Initialize bound parameter targets to their configured defaults.
+ *
+ * This is a no-op until ParamTable_SetBindingAdapter() has succeeded.
  */
 void ParamTable_Init(void);
 /**

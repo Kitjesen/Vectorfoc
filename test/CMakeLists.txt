@@ -230,6 +230,34 @@ add_executable(test_runner_param_typed_access
 )
 register_test_target(test_runner_param_typed_access)
 
+add_executable(test_runner_param_table_bindings
+    test_param_table_bindings.c
+    ${PROJ_ROOT}/Src/UI/parameter/param_table.c
+)
+register_test_target(test_runner_param_table_bindings)
+
+add_executable(test_runner_parameter_bindings_settings
+    test_parameter_bindings_settings.c
+    ${PROJ_ROOT}/Src/APP/settings/parameter_bindings_settings.c
+    ${PROJ_ROOT}/Src/UI/parameter/param_table.c
+)
+target_include_directories(test_runner_parameter_bindings_settings PRIVATE
+    ${PROJ_ROOT}/Src/SAFE
+)
+register_test_target(test_runner_parameter_bindings_settings)
+
+add_executable(test_runner_app_comm_bootstrap
+    test_app_comm_bootstrap.c
+    ${PROJ_ROOT}/Src/APP/init/app_comm_bootstrap.c
+)
+target_include_directories(test_runner_app_comm_bootstrap BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/app_comm_bootstrap_mocks
+)
+target_include_directories(test_runner_app_comm_bootstrap PRIVATE
+    ${PROJ_ROOT}/Src/APP/init
+)
+register_test_target(test_runner_app_comm_bootstrap)
+
 add_executable(test_runner_runtime_settings
     test_runtime_settings.c
     ${PROJ_ROOT}/Src/APP/settings/runtime_settings.c
@@ -326,6 +354,71 @@ target_include_directories(test_runner_encoder_position PRIVATE
     ${PROJ_ROOT}/Src/HAL/encoder
 )
 register_test_target(test_runner_encoder_position)
+
+# VectorFOC's SPI encoder HAL must initialize the compiled-in driver before
+# App_Init captures its first feedback sample. Build both supported sensor modes
+# against explicit test doubles so a no-op MHAL_Encoder_Init cannot regress.
+add_executable(test_runner_hal_encoder_init_mt6816
+    test_hal_encoder_init.c
+    ${PROJ_ROOT}/Src/HAL/stm32g4/hal_encoder.c
+)
+target_include_directories(test_runner_hal_encoder_init_mt6816 BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/encoder_init_mocks
+)
+target_compile_definitions(test_runner_hal_encoder_init_mt6816 PRIVATE
+    HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_MT6816
+)
+register_test_target(test_runner_hal_encoder_init_mt6816)
+
+add_executable(test_runner_hal_encoder_init_tmr3109
+    test_hal_encoder_init.c
+    ${PROJ_ROOT}/Src/HAL/stm32g4/hal_encoder.c
+)
+target_include_directories(test_runner_hal_encoder_init_tmr3109 BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/encoder_init_mocks
+)
+target_compile_definitions(test_runner_hal_encoder_init_tmr3109 PRIVATE
+    HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_TMR3109
+)
+register_test_target(test_runner_hal_encoder_init_tmr3109)
+
+add_executable(test_runner_hal_encoder_init_xstar_hall
+    test_hal_encoder_init.c
+    ${PROJ_ROOT}/Src/HAL/stm32g4/hal_encoder.c
+)
+target_include_directories(test_runner_hal_encoder_init_xstar_hall BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/encoder_init_mocks
+)
+target_compile_definitions(test_runner_hal_encoder_init_xstar_hall PRIVATE
+    BOARD_XSTAR
+    HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_HALL
+)
+register_test_target(test_runner_hal_encoder_init_xstar_hall)
+
+add_executable(test_runner_hal_encoder_init_xstar_abz
+    test_hal_encoder_init.c
+    ${PROJ_ROOT}/Src/HAL/stm32g4/hal_encoder.c
+)
+target_include_directories(test_runner_hal_encoder_init_xstar_abz BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/encoder_init_mocks
+)
+target_compile_definitions(test_runner_hal_encoder_init_xstar_abz PRIVATE
+    BOARD_XSTAR
+    HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_ABZ
+)
+register_test_target(test_runner_hal_encoder_init_xstar_abz)
+
+add_executable(test_runner_hal_encoder_init_unsupported
+    test_hal_encoder_init.c
+    ${PROJ_ROOT}/Src/HAL/stm32g4/hal_encoder.c
+)
+target_include_directories(test_runner_hal_encoder_init_unsupported BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/encoder_init_mocks
+)
+target_compile_definitions(test_runner_hal_encoder_init_unsupported PRIVATE
+    HW_POSITION_SENSOR_MODE=99u
+)
+register_test_target(test_runner_hal_encoder_init_unsupported)
 
 
 add_executable(test_runner_encoder_failure_guard

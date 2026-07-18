@@ -205,8 +205,9 @@ include_directories(
     Src/UI/error
 )
 
-# Source files
-file(GLOB_RECURSE SOURCES
+# Source files.  CONFIGURE_DEPENDS lets supported generators discover a new
+# source file on the next build instead of linking a stale source list.
+set(SOURCE_GLOBS
     "Lib/Core/Src/*.c"
     "Lib/Drivers/STM32G4xx_HAL_Driver/Src/*.c"
     "Lib/Middlewares/Third_Party/FreeRTOS/Source/*.c"
@@ -221,6 +222,12 @@ file(GLOB_RECURSE SOURCES
     "Src/UI/*.c"
     "Src/BOOT/bootloader.c"
 )
+
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.12")
+    file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS ${SOURCE_GLOBS})
+else()
+    file(GLOB_RECURSE SOURCES ${SOURCE_GLOBS})
+endif()
 
 list(APPEND SOURCES "Src/APP/isr/encoder_failure_guard.c")
 

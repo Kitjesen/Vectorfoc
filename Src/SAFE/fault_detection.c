@@ -28,7 +28,7 @@
 #include "mt6816_encoder.h"
 #endif
 #include <math.h>
-DetectionConfig s_config; // Exported for param_table
+static DetectionConfig s_config;
 static DetectionState s_state = {0};
 static bool s_can_timeout_armed = false;
 void Detection_Init(const DetectionConfig *config) {

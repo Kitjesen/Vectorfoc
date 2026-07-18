@@ -13,7 +13,7 @@ VectorFOC 是面向 STM32G431 电机控制板的开源 FOC 固件。项目包含
 - 控制模式：力矩、速度、位置、轨迹、开环、MIT 阻抗接口。
 - 状态机：DS402 风格状态切换，空闲/故障态保持去使能，运行/标定态显式上电。逻辑状态更新保持短 critical section；常规 PWM HAL 调用在锁外执行，过渡期间发生故障会直接关闭 TIM1 桥臂输出并阻止重入。
 - 启动保护：ADC 注入转换虽可在外设启动后立即触发，但 FOC ISR 会在电机、传感器和安全对象全部初始化完成前保持惰性，避免启动窗口访问半初始化状态。X-STAR-S 还要求 ADC1 与 ADC2 注入序列均完成且无错误才接受一个 FOC 样本，并在接受后清除 ADC2 完成标记，避免复用陈旧样本。
-- 位置传感器：VectorFOC 板支持 MT6816、TMR3109；X-STAR-S 支持 Hall、ABZ。
+- 位置传感器：VectorFOC 板支持 MT6816、TMR3109；X-STAR-S 支持 Hall、ABZ。启动时 HAL 会按已编译的 Vector SPI 传感器型号初始化具体驱动，避免以未初始化的速度 PLL 发布 FOC ready。
 - 通信：CAN 上的 Vector/Inovxio、MIT、CANopen 风格帧；USB CDC 调试与 VOFA+/VectorStudio 命令。Vector `GET_ID` 快路径只接受 29-bit 扩展帧；CANopen stopped 状态只处理 NMT，忽略 RPDO/SDO。CAN 的 `RESET`/`BOOTLOADER` ACK 必须由 FDCAN Tx event 确认完成后才执行动作；等待期间功率桥保持去使能，超时会取消待发请求、报告通信超时且不复位。
 - 参数与安全边界：Flash 参数页带 CRC/提交标记；显式保存和外部命令触发的持久化参数修改会先取得安全维护租约，运行/标定/其他维护占用时明确返回 `busy`。异步保存连续三次失败进入终态时，会丢弃对应保存代际并重新加载最后有效提交镜像；没有可加载镜像时恢复默认参数并清除编码器标定有效状态。
 - 故障处理：过压、欠压、过流、过温、堵转、CAN 超时、ADC/编码器异常等保护逻辑有主机回归；CAN timeout 默认 1000 ms，只有有效 CAN 通信已喂狗且处于 `STATE_MODE_RUNNING` 时才触发，设为 `0` 可禁用。故障反应态未完成时拒绝清故障，避免对外报告“已清除”而 FSM 仍处于故障态。
@@ -85,7 +85,7 @@ cmake --build build-test --parallel
 ctest --test-dir build-test --output-on-failure
 ```
 
-当前 CTest 注册 46 个自动测试。最近一次从零配置的 Clang/Ninja 主机构建已通过 46/46，覆盖算法、通信、参数存储、运行时设置与 encoder-calibration 适配器、Bootloader 协议、App Header 工具、安全保护、ADC/编码器保护，以及 VectorFOC/X-STAR-S 通信分支。新增实际路径回归覆盖 ADC shared IRQ 分发、独立注册的 X-STAR 双 ADC 新鲜度门控、FSM 过渡期桥臂关断、保存终态回滚、ADC ISR 启动门控、`MotorStateTask`、闭环 plant、确定性 ADC 噪声、故障清除状态契约、保存维护租约、FreeRTOS 栈水位采样和 CAN 受确认的重启/Bootloader ACK。若使用 Visual Studio 多配置生成器运行测试，需要加配置参数，例如：
+当前 CTest 注册 54 个自动测试。最近一次从零配置的 Clang/Ninja 主机构建已通过 54/54，覆盖算法、通信、参数存储、运行时设置、参数目标绑定与 encoder-calibration 适配器、Bootloader 协议、App Header 工具、安全保护、ADC/编码器保护，以及 VectorFOC/X-STAR-S 通信分支。新增实际路径回归覆盖 MT6816、TMR3109、Hall、ABZ 和非法模式的编码器初始化分发、通信启动的 CAN/transport/protocol/safety 调用顺序与故障回调失败传播、ADC shared IRQ 分发、独立注册的 X-STAR 双 ADC 新鲜度门控、FSM 过渡期桥臂关断、保存终态回滚、ADC ISR 启动门控、`MotorStateTask`、闭环 plant、确定性 ADC 噪声、故障清除状态契约、保存维护租约、FreeRTOS 栈水位采样和 CAN 受确认的重启/Bootloader ACK。若使用 Visual Studio 多配置生成器运行测试，需要加配置参数，例如：
 
 ```powershell
 cmake --build build-test --config Debug --parallel
@@ -116,10 +116,10 @@ CSV 和 PNG 是构建目录中的可再生输出，未提交到版本库；提�
 
 | 镜像 | RAM | CCMRAM | Flash |
 |---|---:|---:|---:|
-| VectorFOC / MT6816 | 20,960 / 22,512 B（93.11%） | 9,024 / 10,240 B（88.12%） | 101,384 / 110,592 B（91.67%） |
-| VectorFOC / TMR3109 | 20,968 / 22,512 B（93.14%） | 9,024 / 10,240 B（88.12%） | 101,532 / 110,592 B（91.81%） |
-| X-STAR-S / HALL | 14,216 / 22,512 B（63.15%） | 1,024 / 10,240 B（10.00%） | 79,424 / 126,976 B（62.55%） |
-| X-STAR-S / ABZ | 14,208 / 22,512 B（63.11%） | 1,024 / 10,240 B（10.00%） | 79,136 / 126,976 B（62.32%） |
+| VectorFOC / MT6816 | 20,984 / 22,512 B（93.21%） | 9,024 / 10,240 B（88.12%） | 103,452 / 110,592 B（93.54%） |
+| VectorFOC / TMR3109 | 20,992 / 22,512 B（93.25%） | 9,024 / 10,240 B（88.12%） | 103,568 / 110,592 B（93.65%） |
+| X-STAR-S / HALL | 14,248 / 22,512 B（63.29%） | 1,024 / 10,240 B（10.00%） | 81,312 / 126,976 B（64.04%） |
+| X-STAR-S / ABZ | 14,232 / 22,512 B（63.22%） | 1,024 / 10,240 B（10.00%） | 81,024 / 126,976 B（63.81%） |
 | Bootloader | 7,352 / 22,512 B（32.66%） | 0 / 10,240 B | 13,932 / 16,384 B（85.03%） |
 
 VectorFOC 两个组合的 RAM/CCMRAM/Flash 余量仍偏紧，不能据此推断运行时栈安全；发布前必须复核同一工具链下的实际链接输出。

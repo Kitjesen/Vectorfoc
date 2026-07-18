@@ -19,6 +19,10 @@ Encoder calibration 的 Flash 快照由 `param_encoder_calibration` module 管�
 它只认识 portable 的 `valid + offset_lut` snapshot；具体的 Hall、ABZ、MT6816
 和 TMR3109 状态由 APP 的 adapter 管理，避免参数层依赖板级 encoder headers。
 
+参数表本身只保存不可变的协议元数据（index、type、范围、属性和名称）。APP 的
+`ParameterBindingsSettings` adapter 在启动期提供具体 RAM target 与默认值，因此
+`param_table.c` 不依赖 `motor.h`、`fault_detection.h`、`config.h` 或板级 headers。
+
 应用层优先使用 `param_access.h` 中的接口。`param_table.h` 和 `param_storage.h` 主要供参数模块内部、测试代码或低层维护逻辑使用。
 
 ## 模块分层
@@ -26,17 +30,19 @@ Encoder calibration 的 Flash 快照由 `param_encoder_calibration` module 管�
 | 层 | 文件 | 职责 |
 | --- | --- | --- |
 | Access | `param_access.h/.c` | 公开读写 interface、范围校验、保存/恢复、运行时变更通知 |
-| Table | `param_table.h/.c` | 参数索引、类型、默认值、上下限、实际变量指针 |
+| Table | `param_table.h/.c` | 不可变参数索引、类型、上下限和 binding adapter contract |
 | Storage | `param_storage.h/.c` | 双页 Flash 镜像、CRC、generation、commit 标记、旧格式迁移 |
 | Calibration snapshot | `param_encoder_calibration.h/.c` | portable snapshot、Flash 字段映射、镜像校验与 adapter seam |
 | Runtime adapter | `Src/APP/settings/runtime_settings.h/.c` | 在 motor、encoder、protocol 就绪后，把变更应用到运行时对象 |
 | Calibration adapter | `Src/APP/settings/encoder_calibration_settings.h/.c` | 在参数加载前捕获、恢复或清空具体 encoder 的校准状态 |
+| Target binding adapter | `Src/APP/settings/parameter_bindings_settings.h/.c` | 在参数加载前解析具体 RAM target 与默认值，保留参数层的板级无关性 |
 
 ## 初始化流程
 
 应用启动时调用一次：
 
 ```c
+ParameterBindingsSettings_Install();
 EncoderCalibrationSettings_InstallAdapter();
 ParamResult result = Param_SystemInitOnce();
 if (result != PARAM_OK) {
@@ -44,7 +50,9 @@ if (result != PARAM_OK) {
 }
 ```
 
-`EncoderCalibrationSettings_InstallAdapter()` 必须先于 `Param_SystemInitOnce()` 调用，
+`ParameterBindingsSettings_Install()` 必须在 `Detection_Init()` 后、
+`Param_SystemInitOnce()` 前调用；它只验证完整 binding，不会触发 PID、CAN 或协议副作用。
+`EncoderCalibrationSettings_InstallAdapter()` 也必须先于 `Param_SystemInitOnce()` 调用，
 以保留现有的早期 encoder calibration 恢复时序。`Param_SystemInitOnce()` 会先执行
 `ParamTable_Init()`，再尝试 `Param_LoadFromFlash()`，且具备一次性保护。随后 APP 会在
 encoder、protocol 和 motor runtime 都就绪后安装 `RuntimeSettings` adapter，并调用
@@ -221,17 +229,24 @@ Flash 加载和恢复默认值会延迟单项副作用，在批量写入结束�
 ```c
 const ParamEntry *entry = NULL;
 if (Param_GetInfo(PARAM_LIMIT_CURRENT, &entry) == PARAM_OK) {
-    /* entry->name, entry->min, entry->max, entry->default_val */
+    ParamTargetBinding binding;
+    if (ParamTable_GetBinding(entry, &binding) == PARAM_OK) {
+        /* entry->name, entry->min, entry->max, binding.default_val */
+    }
 }
 ```
 
-遍历参数表时使用 `ParamTable_GetTable()` 和 `ParamTable_GetCount()`。普通应用逻辑不要直接改写 `ParamEntry::ptr` 指向的数据，应通过 Access 层写入，以保证校验和副作用生效。
+遍历参数表时使用 `ParamTable_GetTable()` 和 `ParamTable_GetCount()`。普通应用逻辑不要依赖
+`ParamEntry::ptr` 或 `ParamEntry::default_val` 的内部存储；需要低层 binding 信息时使用
+`ParamTable_GetBinding()`，实际写入仍应通过 Access 层完成，以保证校验和副作用生效。
 
 ## 已验证测试
 
 参数模块当前由主机侧测试覆盖关键行为：
 
 - `test_runner_param_typed_access`：强类型访问、float/整数转换、非有限值拒绝、保存重试、运行时副作用、已提交镜像回滚和默认值回退；
+- `test_runner_param_table_bindings`：未绑定保护、完整 binding 验证、无效 rebind 原子拒绝和默认值初始化；
+- `test_runner_parameter_bindings_settings`：生产 APP binding 覆盖 40 个参数，并保留 RAM target 与既有默认值；
 - `test_runner_param_storage`：双页事务写入、CRC、commit、generation、旧格式迁移；
 - `test_runner_cmd_service_persistent_rollback`：命令保存与直接标定式保存的三次失败终态、代际清理和运行时回滚；
 - `test_runner_comm_executor` 和 `test_runner_vofa_commands`：通信链路通过 `Param_ReadAsFloat()` / `Param_WriteFromFloat()` 访问参数。

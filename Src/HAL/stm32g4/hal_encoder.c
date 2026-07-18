@@ -18,11 +18,16 @@
  */
 #include "hal_encoder.h"
 
+#include "board_config.h"
 #include "motor.h"
 #include "platform.h"
 #ifdef BOARD_XSTAR
-#include "hall_encoder.h"
 #include "abz_encoder.h"
+#include "hall_encoder.h"
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
+#include "mt6816_encoder.h"
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#include "tmr3109_encoder.h"
 #endif
 
 static int MHAL_Encoder_ReadData(Motor_HAL_EncoderData_t *data) {
@@ -46,6 +51,15 @@ int MHAL_Encoder_Init(void) {
   Hall_Init();
 #elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
   Abz_Init();
+#else
+  return -1;
+#endif
+#else
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
+  MT6816_Init(&encoder_data, &HW_ENC_SPI, HW_ENC_CS_PORT, HW_ENC_CS_PIN);
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  TMR3109_Init(&tmr3109_encoder_data, &HW_ENC_SPI, HW_ENC_CS_PORT,
+               HW_ENC_CS_PIN);
 #else
   return -1;
 #endif
@@ -86,7 +100,8 @@ float MHAL_Encoder_GetElectricalAngle(uint8_t pole_pairs) {
 
 float MHAL_Encoder_GetElectricalVelocity(uint8_t pole_pairs) {
   Motor_HAL_EncoderData_t data = {0};
-  return MHAL_Encoder_ReadData(&data) == 0 ? data.velocity_rad * pole_pairs : 0.0f;
+  return MHAL_Encoder_ReadData(&data) == 0 ? data.velocity_rad * pole_pairs
+                                           : 0.0f;
 }
 
 int MHAL_Encoder_ZeroPosition(void) {
