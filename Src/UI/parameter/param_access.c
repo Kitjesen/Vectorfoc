@@ -47,6 +47,7 @@ extern MT6816_Handle_t encoder_data;
 #include <string.h>
 
 static volatile bool s_param_save_pending = false;
+static volatile uint32_t s_param_save_generation = 0U;
 static bool s_param_system_initialized = false;
 static bool s_runtime_side_effects_deferred = false;
 static FlashParamData s_flash_workspace;
@@ -1049,7 +1050,69 @@ static bool Param_TakeSavePending(void) {
   return pending;
 }
 
-void Param_ScheduleSave(void) { Param_SetSavePending(); }
+void Param_ScheduleSave(void) {
+#if defined(TEST_ENV)
+  s_param_save_generation++;
+  s_param_save_pending = true;
+#else
+  CRITICAL_SECTION_BEGIN();
+  s_param_save_generation++;
+  s_param_save_pending = true;
+  CRITICAL_SECTION_END();
+#endif
+}
+
+bool Param_HasScheduledSave(void) {
+  bool pending;
+#if defined(TEST_ENV)
+  pending = s_param_save_pending;
+#else
+  CRITICAL_SECTION_BEGIN();
+  pending = s_param_save_pending;
+  CRITICAL_SECTION_END();
+#endif
+  return pending;
+}
+
+uint32_t Param_GetScheduledSaveGeneration(void) {
+  uint32_t generation;
+#if defined(TEST_ENV)
+  generation = s_param_save_generation;
+#else
+  CRITICAL_SECTION_BEGIN();
+  generation = s_param_save_generation;
+  CRITICAL_SECTION_END();
+#endif
+  return generation;
+}
+
+void Param_DiscardScheduledSave(void) {
+#if defined(TEST_ENV)
+  s_param_save_pending = false;
+#else
+  CRITICAL_SECTION_BEGIN();
+  s_param_save_pending = false;
+  CRITICAL_SECTION_END();
+#endif
+}
+
+bool Param_DiscardScheduledSaveIfGeneration(uint32_t generation) {
+  bool discarded = false;
+#if defined(TEST_ENV)
+  if (s_param_save_generation == generation) {
+    s_param_save_pending = false;
+    discarded = true;
+  }
+#else
+  CRITICAL_SECTION_BEGIN();
+  if (s_param_save_generation == generation) {
+    s_param_save_pending = false;
+    discarded = true;
+  }
+  CRITICAL_SECTION_END();
+#endif
+  return discarded;
+}
 
 bool Param_ProcessScheduledSave(void) {
   if (!Param_TakeSavePending()) {

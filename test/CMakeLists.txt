@@ -289,6 +289,12 @@ add_executable(test_runner_comm_manager
 )
 register_test_target(test_runner_comm_manager)
 
+add_executable(test_runner_app_freertos_runtime_stats
+    test_app_freertos_runtime_stats.c
+    ${PROJ_ROOT}/Lib/Core/Src/app_freertos.c
+)
+register_test_target(test_runner_app_freertos_runtime_stats)
+
 # MIT/CANopen frame initialization tests
 add_executable(test_runner_comm_frame_builders
     test_comm_frame_builders.c
@@ -332,6 +338,23 @@ target_include_directories(test_runner_adc_sample_guard PRIVATE
     ${PROJ_ROOT}/Src/APP/isr
 )
 register_test_target(test_runner_adc_sample_guard)
+
+add_executable(test_runner_foc_readiness_gate
+    test_foc_readiness_gate.c
+    ${PROJ_ROOT}/Src/APP/isr/isr_foc.c
+    ${PROJ_ROOT}/Src/APP/isr/adc_sample_guard.c
+    ${PROJ_ROOT}/Src/APP/isr/encoder_failure_guard.c
+    ${PROJ_ROOT}/Src/SAFE/watchdog_supervisor.c
+)
+target_include_directories(test_runner_foc_readiness_gate BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/foc_readiness_mocks
+)
+target_include_directories(test_runner_foc_readiness_gate PRIVATE
+    ${PROJ_ROOT}/Src/APP/isr
+    ${PROJ_ROOT}/Src/SAFE
+    ${PROJ_ROOT}/Src/APP/init
+)
+register_test_target(test_runner_foc_readiness_gate)
 
 add_executable(test_runner_motor_adc_filters
     test_motor_adc_filters.c
@@ -383,31 +406,19 @@ target_compile_definitions(test_runner_fault_detection_safety PRIVATE
 register_test_target(test_runner_fault_detection_safety)
 
 # ===========================================================================
-# Legacy/manual tests
+# MotorStateTask smoke tests
 # ===========================================================================
 
-# FSM + MotorStateTask smoke test
-# Note: EXCLUDE_FROM_ALL ? not part of default build due to deep HAL mock requirements.
-# Build manually with: cmake --build . --target test_runner_foc_state
-add_executable(test_runner_foc_state EXCLUDE_FROM_ALL
+# FSM + MotorStateTask smoke test with typed ADC register mocks.
+add_executable(test_runner_foc_state
     test_foc_state.c
     mock_hal.c
-    motor_plant.c
     ${FOC_ALGO_SOURCES}
+    ${PROJ_ROOT}/Src/ALGO/foc/foc_algorithm.c
     ${PROJ_ROOT}/Src/ALGO/pid/pid.c
     ${PROJ_ROOT}/Src/ALGO/motor/motor.c
-    ${PROJ_ROOT}/Src/ALGO/motor/motor_api.c
-    ${PROJ_ROOT}/Src/ALGO/motor/motor_data.c
     ${PROJ_ROOT}/Src/ALGO/motor/fsm.c
-    ${PROJ_ROOT}/Src/ALGO/motor/calibration_context.c
-    ${PROJ_ROOT}/Src/ALGO/motor/rsls_calib.c
-    ${PROJ_ROOT}/Src/ALGO/motor/calib_encoder.c
-    ${PROJ_ROOT}/Src/ALGO/motor/calib_resistance.c
-    ${PROJ_ROOT}/Src/ALGO/motor/calib_inductance.c
     ${PROJ_ROOT}/Src/ALGO/motor/current_calib.c
-    ${PROJ_ROOT}/Src/ALGO/motor/flux_calib.c
-    ${PROJ_ROOT}/Src/ALGO/motor/fault_def.c
-    ${PROJ_ROOT}/Src/ALGO/motor/fault_detection.c
     ${PROJ_ROOT}/Src/ALGO/motor/safety_control.c
     ${PROJ_ROOT}/Src/ALGO/control/ladrc.c
     ${PROJ_ROOT}/Src/ALGO/control/feedforward.c
@@ -421,21 +432,66 @@ add_executable(test_runner_foc_state EXCLUDE_FROM_ALL
     ${PROJ_ROOT}/Src/ALGO/control/field_weakening.c
     ${PROJ_ROOT}/Src/ALGO/trajectory/trap_traj.c
     ${PROJ_ROOT}/Src/ALGO/trajectory/rate_limiter.c
-    ${PROJ_ROOT}/Src/ALGO/observer/smo_observer.c
-    ${PROJ_ROOT}/Src/UI/error/error_manager.c
-    ${PROJ_ROOT}/Src/UI/parameter/param_access.c
-    ${PROJ_ROOT}/Src/UI/parameter/param_table.c
-    ${PROJ_ROOT}/Src/UI/parameter/param_storage.c
 )
 if(NOT MSVC)
     target_link_libraries(test_runner_foc_state m)
 endif()
-# This legacy smoke target directly touches ADC register fields and therefore
-# remains a manual compile target until its hardware dependencies are mocked.
+register_test_target(test_runner_foc_state)
+
+add_executable(test_runner_foc_closed_loop
+    test_foc_closed_loop.c
+    mock_hal.c
+    motor_plant.c
+    ${FOC_ALGO_SOURCES}
+    ${PROJ_ROOT}/Src/ALGO/foc/foc_algorithm.c
+    ${PROJ_ROOT}/Src/ALGO/pid/pid.c
+    ${PROJ_ROOT}/Src/ALGO/motor/motor.c
+    ${PROJ_ROOT}/Src/ALGO/motor/fsm.c
+    ${PROJ_ROOT}/Src/ALGO/motor/current_calib.c
+    ${PROJ_ROOT}/Src/ALGO/motor/safety_control.c
+    ${PROJ_ROOT}/Src/ALGO/control/ladrc.c
+    ${PROJ_ROOT}/Src/ALGO/control/feedforward.c
+    ${PROJ_ROOT}/Src/ALGO/control/cogging.c
+    ${PROJ_ROOT}/Src/ALGO/control/control.c
+    ${PROJ_ROOT}/Src/ALGO/control/command_limiter.c
+    ${PROJ_ROOT}/Src/ALGO/control/torque_utils.c
+    ${PROJ_ROOT}/Src/ALGO/control/impl.c
+    ${PROJ_ROOT}/Src/ALGO/control/inner.c
+    ${PROJ_ROOT}/Src/ALGO/control/outer.c
+    ${PROJ_ROOT}/Src/ALGO/control/field_weakening.c
+    ${PROJ_ROOT}/Src/ALGO/trajectory/trap_traj.c
+    ${PROJ_ROOT}/Src/ALGO/trajectory/rate_limiter.c
+)
+register_test_target(test_runner_foc_closed_loop)
+
+add_executable(test_runner_fault_injection
+    test_fault_injection.c
+    mock_hal.c
+    motor_plant.c
+    ${FOC_ALGO_SOURCES}
+    ${PROJ_ROOT}/Src/ALGO/foc/foc_algorithm.c
+    ${PROJ_ROOT}/Src/ALGO/pid/pid.c
+    ${PROJ_ROOT}/Src/ALGO/motor/motor.c
+    ${PROJ_ROOT}/Src/ALGO/motor/fsm.c
+    ${PROJ_ROOT}/Src/ALGO/motor/current_calib.c
+    ${PROJ_ROOT}/Src/ALGO/motor/safety_control.c
+    ${PROJ_ROOT}/Src/ALGO/control/ladrc.c
+    ${PROJ_ROOT}/Src/ALGO/control/feedforward.c
+    ${PROJ_ROOT}/Src/ALGO/control/cogging.c
+    ${PROJ_ROOT}/Src/ALGO/control/control.c
+    ${PROJ_ROOT}/Src/ALGO/control/command_limiter.c
+    ${PROJ_ROOT}/Src/ALGO/control/torque_utils.c
+    ${PROJ_ROOT}/Src/ALGO/control/impl.c
+    ${PROJ_ROOT}/Src/ALGO/control/inner.c
+    ${PROJ_ROOT}/Src/ALGO/control/outer.c
+    ${PROJ_ROOT}/Src/ALGO/control/field_weakening.c
+    ${PROJ_ROOT}/Src/ALGO/trajectory/trap_traj.c
+    ${PROJ_ROOT}/Src/ALGO/trajectory/rate_limiter.c
+)
+register_test_target(test_runner_fault_injection)
 
 # ===========================================================================
 # Summary
 # ===========================================================================
 message(STATUS "VectorFOC Test targets registered:")
-message(STATUS "  Automated: core, control, safety, communication, storage, HAL filters, tooling")
-message(STATUS "  Manual: foc_state (requires deeper ADC register mocks)")
+message(STATUS "  Automated: core, control, safety, communication, storage, HAL filters, tooling, foc_state, foc_readiness_gate, foc_closed_loop, fault_injection")

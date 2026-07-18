@@ -323,9 +323,12 @@ static void handle_command(const char *cmd) {
       s_ctx.state = PROTO_STATE_WAIT_DATA;
 
       /* 发送 ACK 表示准备好接收数据 */
-      BootProto_SendAck(BOOT_OK);
+      if (!send_ack_checked(BOOT_OK)) {
+        BootProto_Reset();
+      }
     } else {
-      BootProto_SendAck(BOOT_ERR_INVALID_CMD);
+      (void)send_ack_checked(BOOT_ERR_INVALID_CMD);
+      BootProto_Reset();
     }
     return;
   }
@@ -495,10 +498,10 @@ void BootProto_ProcessData(const uint8_t *data, uint16_t len) {
           Flash_WriteData(s_ctx.write_addr, s_ctx.write_buf, s_ctx.write_len);
       Flash_Lock();
 
-      BootProto_SendAck(status);
+      bool ack_sent = send_ack_checked(status);
       BootProto_Reset();
 
-      if (status == BOOT_OK && len > to_copy) {
+      if (ack_sent && status == BOOT_OK && len > to_copy) {
         BootProto_ProcessData(&data[to_copy], (uint16_t)(len - to_copy));
       }
     }
@@ -584,7 +587,7 @@ bool BootProto_CheckTimeout(uint32_t current_tick) {
   flush_tx_queue();
   if (s_ctx.state == PROTO_STATE_WAIT_DATA) {
     if (current_tick - s_ctx.last_activity > BOOT_PROTOCOL_TIMEOUT_MS) {
-      BootProto_SendAck(BOOT_ERR_TIMEOUT);
+      (void)send_ack_checked(BOOT_ERR_TIMEOUT);
       BootProto_Reset();
       return true;
     }

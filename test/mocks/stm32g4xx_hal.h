@@ -28,6 +28,7 @@ typedef struct { void *Instance; } UART_HandleTypeDef;
 #define HAL_TIM_PWM_Start_DMA(h,ch,buf,len) HAL_OK
 #define HAL_TIM_PWM_Stop_DMA(h, ch)         ((void)0)
 #define HAL_SPI_TransmitReceive(h,t,r,s,to) HAL_OK
+#define __HAL_ADC_GET_FLAG(h, flag)         (((h)->Flags & (flag)) != 0u)
 #define HAL_RCC_DeInit()                    ((void)0)
 #define HAL_DeInit()                        ((void)0)
 #if defined(MOCK_HAL_RESET_OBSERVABLE)
@@ -45,6 +46,13 @@ void Test_HAL_NVIC_SystemReset(void);
 #define TIM_CHANNEL_2  1u
 #define TIM_CHANNEL_3  2u
 #define TIM_CHANNEL_4  3u
+
+/* ADC flags and errors used by ISR tests */
+#define ADC_FLAG_JEOS           (1u << 0)
+#define ADC_FLAG_OVR            (1u << 1)
+#define HAL_ADC_ERROR_OVR       (1u << 0)
+#define HAL_ADC_ERROR_JQOVF     (1u << 1)
+#define HAL_ADC_ERROR_INTERNAL  (1u << 2)
 
 /* SysTick / NVIC stubs */
 typedef struct { uint32_t CTRL; uint32_t LOAD; uint32_t VAL; } SysTick_Type;

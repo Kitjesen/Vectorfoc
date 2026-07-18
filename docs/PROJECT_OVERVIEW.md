@@ -14,10 +14,10 @@ VectorFOC 是基于 STM32G431 的无刷电机 FOC 固件。它面向电机控制
 | 控制器 | `Src/ALGO/control/`, `Src/ALGO/pid/`, `Src/ALGO/trajectory/` | PID、LADRC、前馈、弱磁、限幅、梯形轨迹、速率限制 |
 | 电机状态与标定 | `Src/ALGO/motor/` | DS402 风格状态机、Rs/Ls/flux/编码器标定上下文 |
 | 传感器与板级抽象 | `Src/HAL/`, `Src/config/` | VectorFOC 与 X-STAR-S 两套板级配置，MT6816/TMR3109/Hall/ABZ 路由 |
-| 通信 | `Src/COMM/`, `Src/UI/vofa/` | Vector/Inovxio、MIT、CANopen 风格帧，USB CDC 文本命令；控制指令经统一 executor 原子发布 |
-| 参数存储 | `Src/UI/parameter/`, `Src/HAL/bsp/bsp_flash.*` | Flash 参数页、CRC32、提交标记与回退测试 |
-| 安全保护 | `Src/SAFE/`, `Src/APP/isr/` | 故障检测、ADC 样本保护、编码器失败计数、看门狗监督 |
-| Bootloader/OTA | `Src/BOOT/`, `scripts/ota_upload.py`, `scripts/patch_app_header.py` | USB CDC OTA、App Header 生成/验证、Flash 擦写协议 |
+| 通信 | `Src/COMM/`, `Src/UI/vofa/` | Vector/Inovxio、MIT、CANopen 风格帧，USB CDC 文本命令；控制指令经统一 executor 原子发布；重启/进入 Bootloader 仅在 CAN ACK 的 FDCAN Tx event 确认后执行 |
+| 参数存储 | `Src/UI/parameter/`, `Src/HAL/bsp/bsp_flash.*` | Flash 参数页、CRC32、提交标记与回退测试；持久化修改通过维护租约串行化，运行/标定中明确拒绝 |
+| 安全保护 | `Src/SAFE/`, `Src/APP/isr/` | 故障检测、ADC 样本保护、编码器失败计数、看门狗监督；启动 ISR readiness gate 与状态感知的故障清除 |
+| Bootloader/OTA | `Src/BOOT/`, `scripts/ota_upload.py`, `scripts/patch_app_header.py` | USB CDC OTA、App Header 生成/验证、Flash 擦写协议；设备布局预检在擦除前完成 |
 
 ## 板型和传感器矩阵
 
@@ -52,7 +52,7 @@ cmake -S . -B build-boot -G Ninja \
 cmake --build build-boot --parallel
 ```
 
-已核验：该命令通过；当前 `VectorFoc_Bootloader.elf` Flash 占用 13,756 B，低于 16 KiB 分区限制。
+已核验：该命令通过；每次发布都应以 `arm-none-eabi-size` 复核 `VectorFoc_Bootloader.elf` 低于 16 KiB 分区限制。
 
 ### X-STAR-S
 
@@ -77,22 +77,27 @@ cmake --build build-test --parallel
 ctest --test-dir build-test --output-on-failure
 ```
 
-当前 `test/CMakeLists.txt` 注册 36 个自动 CTest 测试。覆盖范围包括：
+当前 `test/CMakeLists.txt` 注册 41 个自动 CTest 测试。覆盖范围包括：
 
 - FOC 基础算法、PID、LADRC、轨迹、速率限制、三角函数；
-- `test_runner_integration` 闭环仿真测试，包含速度设定切换场景；
+- `test_runner_integration` 简化 PMSM 闭环仿真：电流/速度/负载扰动、速度设定切换、位置设定和参数扫掠；
+- 真实 `MotorStateTask` + mock HAL/motor plant 闭环回归，以及确定性 ADC 噪声稳定性回归；
+- ADC ISR readiness gate：未完成初始化时 injected callback 不得读取传感器、状态机或 PWM 路径；
+- 故障清除与上报重试：快速故障的证据不会因清除/回调失败而丢失，且故障反应态不会被伪装为已恢复；
+- CAN reset/bootloader 仅在 Tx event 完成后执行，超时取消；
+- 持久化保存的维护租约、运行/标定 busy 响应和有界失败终态；
 - SMO、参数存储、Bootloader 协议、App Header 工具；
 - 通信协议、命令执行、协议管理器；
 - ADC 样本保护、编码器失败保护、看门狗、FSM 输出安全、故障检测。
+- FreeRTOS 任务栈高水位诊断：调度器和三个核心任务均就绪时采样 default/guard/comm 的剩余 stack word；未就绪时安全返回不可用。
 
-`test/test_foc_closed_loop.c` 和 `test/motor_plant.c` 也包含闭环仿真代码，但 `test_foc_closed_loop.c` 当前不是默认 CTest 注册目标；不要把它写作默认测试结果。
+Windows/MSVC 与 GCC/Ninja 都是 CI 的一等验证目标；提交前的干净构建记录与当前 CTest 数量应以 `ctest --test-dir <build-dir> --output-on-failure` 为准。仿真命令、模型假设和硬件验证缺口见 [SIMULATION.md](SIMULATION.md)。
 
-本轮核验结果：
+### 当前内存预算与测量方法
 
-- 新建主机构建目录执行完整 CTest：Clang 与 Visual Studio/MSVC 均为 36/36 通过。
-- `test_runner_integration`：1/1 通过。
-- `python ../test/analyze_results.py foc_setpoint_switch.csv`：最终速度 19.75 rad/s，目标 20.0 rad/s，误差 0.2450 rad/s，生成 `foc_setpoint_switch.png`。
-仿真命令和输出解释见 [SIMULATION.md](SIMULATION.md)。
+最新 Release 构建中，VectorFOC/MT6816 使用 RAM `20,952 / 22,512 B`（93.07%）、CCMRAM `9,024 / 10,240 B`（88.12%）和 Flash `100,220 / 110,592 B`（90.62%）；TMR3109 分别为 93.11%、88.12% 和 90.72%。X-STAR-S/HALL 与 ABZ 的 RAM 占用约为 63%，Flash 约为 61%。
+
+这些数值是链接期静态占用，不是任务/中断栈安全证明。`task_guard` 每秒输出 `stack_free_w=default/guard/comm`（FreeRTOS word），可与 `Protocol_GetStats()` 的 `rx_queue_peak` 一起记录。必须在硬件压力测试后再调整任务栈、VOFA/USB 队列或 CAN 队列；当前不得以主机仿真替代此结论。
 
 ## Bootloader 和 OTA
 
@@ -104,7 +109,7 @@ VectorFOC 的 Flash 布局来自 `Src/BOOT/boot_config.h`：
 | Application | `0x08004000` - `0x0801EFFF` | 108 KiB |
 | Config/Params | `0x0801F000` - `0x0801FFFF` | 4 KiB |
 
-App Header 位于 `APP_ADDR_START + 0x200`，即 `0x08004200`。App 构建后会调用 `scripts/patch_app_header.py` 生成并校验 Header，Bootloader 启动时检查栈指针、Reset Handler、Magic、Header 保留字段、payload size 和 CRC32。
+App Header 位于 `APP_ADDR_START + 0x200`，即 `0x08004200`。App 构建后会调用 `scripts/patch_app_header.py` 生成并校验 Header；缺失或损坏 Header 不再被当作可启动旧镜像。Bootloader 启动时检查栈指针、Reset Handler、Magic、Header 保留字段、payload size 和 CRC32。正常跳转 App 时 USB 不初始化，只有升级模式才启动 USB CDC。
 
 OTA 协议命令由 `Src/BOOT/boot_protocol.c` 处理，包括：
 
@@ -116,9 +121,9 @@ OTA 协议命令由 `Src/BOOT/boot_protocol.c` 处理，包括：
 | `boot_verify,crc,size` | 按 Header 和 payload CRC 校验镜像 |
 | `boot_reboot` | 校验 App 有效后跳转 |
 
-App 侧 VOFA/USB 命令 `boot_enter` 会先请求 DS402 状态机进入 `STATE_SWITCH_ON_DISABLED`，发送 ACK 后在任务上下文请求重启进入 Bootloader。
+App 侧 VOFA/USB 命令 `boot_enter` 会先请求 DS402 状态机进入 `STATE_SWITCH_ON_DISABLED`，发送 ACK 后在任务上下文请求重启进入 Bootloader。上传脚本在擦除前查询 `boot_info`，检查设备应用起始地址、区域大小和对齐后的镜像长度。
 
-CAN 的 `SAVE` 命令返回 `queued` 表示已安排写入；USB `save_flash=1` 先返回 `queued`，再由持有状态机维护租约的命令服务回报 `succeeded` 或 `retrying`。USB RX 队列满时会累计计数并发送 `rx_overflow=1` 诊断；Bootloader 队列满时会中止当前事务并返回 `BOOT_ERR_RX_OVERFLOW`。CAN 的 `RESET` 与 `BOOTLOADER` 命令会先把 ACK 放入 CAN 发送队列、执行安全停机，再由通信任务延后执行重启；X-STAR-S 为独立 App，`BOOTLOADER` 明确返回 `unsupported` 而不会假装进入不存在的 Bootloader。
+CAN 的 `SAVE` 命令只有在取得维护租约后才返回 `queued`，运行/标定/已有维护时返回 `busy`。USB `save_flash=1` 同样先取得租约；接受后会报告 `queued`，失败重试状态以 `retrying` 表示，三次失败后报告终态 `failed`。外部命令触发的会持久化参数修改会在改动运行时值前预留租约，避免“返回失败但参数已改变”。校准完成后的内部保存请求仍由命令服务在安全维护窗口处理。USB RX 队列满时会累计计数并发送 `rx_overflow=1` 诊断；Bootloader 队列满时会中止当前事务并返回 `BOOT_ERR_RX_OVERFLOW`。CAN 的 `RESET` 与 `BOOTLOADER` 命令会先使功率桥去使能、请求 DS402 切换禁止，并等待对应 ACK 的 FDCAN Tx event；等待期间不会全局关中断，以保证发送事件与超时仍能推进。确认完成才执行重启；超时则取消发送、保持功率桥去使能并报告通信超时，不重启。X-STAR-S 为独立 App，`BOOTLOADER` 明确返回 `unsupported` 而不会假装进入不存在的 Bootloader。
 
 本轮核验覆盖固件镜像生成、App Header 校验、Bootloader 编译和 OTA 脚本依赖检查；未连接 SWD/USB 硬件，未做实际烧录或真实 USB OTA 端到端验证。
 

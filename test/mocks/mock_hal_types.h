@@ -44,7 +44,16 @@ typedef struct {
 } TIM_HandleTypeDef;
 
 typedef struct {
-    void *Instance;
+    uint32_t JDR1;
+    uint32_t JDR2;
+    uint32_t JDR3;
+    uint32_t JDR4;
+} ADC_TypeDef;
+
+typedef struct {
+    ADC_TypeDef *Instance;
+    uint32_t ErrorCode;
+    uint32_t Flags;
 } ADC_HandleTypeDef;
 
 typedef void GPIO_TypeDef;

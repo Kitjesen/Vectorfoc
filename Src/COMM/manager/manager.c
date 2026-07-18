@@ -261,6 +261,7 @@ bool Protocol_SendFrame(const CAN_Frame *frame) {
     return false;
   }
   bool result = false;
+  CRITICAL_SECTION_BEGIN();
   /*  */
   if (s_transport != NULL && s_transport->send != NULL) {
     TransportFrame tf;
@@ -275,7 +276,89 @@ bool Protocol_SendFrame(const CAN_Frame *frame) {
   } else {
     s_comm_stats.tx_frames_failed++;
   }
+  CRITICAL_SECTION_END();
   return result;
+}
+
+bool Protocol_SendTrackedFrame(const CAN_Frame *frame,
+                               TransportTxTicket *ticket) {
+  if (frame == NULL || ticket == NULL) {
+    return false;
+  }
+  bool result = false;
+  memset(ticket, 0, sizeof(*ticket));
+  CRITICAL_SECTION_BEGIN();
+  if (s_transport != NULL) {
+    if (s_transport->send_tracked != NULL) {
+      TransportFrame tf;
+      Transport_FromCANFrame(frame, &tf);
+      result = s_transport->send_tracked(&tf, ticket);
+    }
+  } else {
+#ifdef BSP_CAN_HAS_TRACKED_TX
+    BSP_CAN_TxTicket bsp_ticket = {0};
+    result = BSP_CAN_SendTrackedFrame(frame, &bsp_ticket);
+    if (result) {
+      ticket->marker = bsp_ticket.marker;
+      ticket->tx_buffer_mask = bsp_ticket.tx_buffer_mask;
+    }
+#else
+    result = false;
+#endif
+  }
+  if (result) {
+    s_comm_stats.tx_frames_total++;
+  } else {
+    s_comm_stats.tx_frames_failed++;
+  }
+  CRITICAL_SECTION_END();
+  return result;
+}
+
+bool Protocol_TxTicketIsComplete(const TransportTxTicket *ticket) {
+  if (ticket == NULL || ticket->marker == 0U) {
+    return false;
+  }
+  bool result = false;
+  CRITICAL_SECTION_BEGIN();
+  if (s_transport != NULL) {
+    if (s_transport->tx_ticket_is_complete != NULL) {
+      result = s_transport->tx_ticket_is_complete(ticket);
+    }
+  } else {
+#ifdef BSP_CAN_HAS_TRACKED_TX
+    BSP_CAN_TxTicket bsp_ticket = {
+        .marker = ticket->marker,
+        .tx_buffer_mask = ticket->tx_buffer_mask,
+    };
+    result = BSP_CAN_TxTicketIsComplete(&bsp_ticket);
+#else
+    result = false;
+#endif
+  }
+  CRITICAL_SECTION_END();
+  return result;
+}
+
+void Protocol_CancelTrackedSend(const TransportTxTicket *ticket) {
+  if (ticket == NULL || ticket->marker == 0U) {
+    return;
+  }
+  CRITICAL_SECTION_BEGIN();
+  if (s_transport != NULL) {
+    if (s_transport->cancel_tracked_tx != NULL) {
+      s_transport->cancel_tracked_tx(ticket);
+    }
+  } else {
+#ifdef BSP_CAN_HAS_TRACKED_TX
+    BSP_CAN_TxTicket bsp_ticket = {
+        .marker = ticket->marker,
+        .tx_buffer_mask = ticket->tx_buffer_mask,
+    };
+    BSP_CAN_CancelTrackedSend(&bsp_ticket);
+#endif
+  }
+  CRITICAL_SECTION_END();
 }
 /**
  * @brief Rx (ISRsafety)
@@ -320,7 +403,7 @@ void Protocol_ProcessQueuedFrames(void) {
   if (had_overflow && dropped_snapshot != s_rx_overflow_reported_drops) {
     s_rx_overflow_reported_drops = dropped_snapshot;
     s_comm_stats.rx_overflow_events++;
-    ErrorManager_Report(ERROR_COMM_INVALID_FRAME, "Rx queue overflow");
+    ErrorManager_Report(ERROR_COMM_RX_QUEUE_OVERFLOW, "Rx queue overflow");
   }
   while (Protocol_DequeueRxFrame(&frame)) {
     Protocol_ProcessRxFrame(&frame);

@@ -107,6 +107,26 @@ bool Protocol_BuildCalibStatus(const MotorStatus *status, CAN_Frame *frame);
  */
 bool Protocol_SendFrame(const CAN_Frame *frame);
 /**
+ * @brief Send CAN frame and return a ticket for physical Tx completion.
+ * @param frame  CAN frame.
+ * @param ticket [out] Completion ticket, valid only when true is returned.
+ * @return true when a tracking-capable CAN transport accepted the frame.
+ * @note This API is fail-safe: unsupported/unknown transports return false.
+ *       Only one tracked request may be pending; use Protocol_TxTicketIsComplete
+ *       to consume completion or Protocol_CancelTrackedSend on timeout/abort.
+ */
+bool Protocol_SendTrackedFrame(const CAN_Frame *frame,
+                               TransportTxTicket *ticket);
+/**
+ * @brief Check and consume completion for a tracked Tx ticket.
+ * @return true exactly once when the matching frame has completed transmission.
+ */
+bool Protocol_TxTicketIsComplete(const TransportTxTicket *ticket);
+/**
+ * @brief Cancel a tracked Tx ticket after timeout/abort.
+ */
+void Protocol_CancelTrackedSend(const TransportTxTicket *ticket);
+/**
  * @brief  Process received CAN frame (integrated application logic).
  * @param  frame Received CAN frame.
  * @note   Call from task context; ISR should only call Protocol_QueueRxFrame().

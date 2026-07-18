@@ -67,6 +67,12 @@ static unsigned s_boot_request_count;
 static unsigned s_executor_count;
 static MotorCommand s_last_executor_cmd;
 static unsigned s_save_schedule_count;
+static unsigned s_save_begin_count;
+static unsigned s_save_commit_count;
+static unsigned s_save_cancel_count;
+static bool s_save_request_available;
+static bool s_save_commit_reports_success;
+static bool s_motor_clear_result;
 static char s_wire_log[2048];
 
 void USBD_CDC_SetTxBuffer(USBD_HandleTypeDef *pdev, uint8_t *pbuff,
@@ -118,6 +124,8 @@ static ParamEntry s_float_entry = {.index = PARAM_MOTOR_RS,
                                    .min = -1000.0f,
                                    .max = 1000.0f};
 
+void Vofa_ReportScheduledSaveResult(bool succeeded);
+
 const ParamEntry *ParamTable_Find(uint16_t index) {
   s_float_entry.index = index;
   s_float_entry.ptr = &s_backing_float;
@@ -154,6 +162,33 @@ ParamResult Param_ReadAsFloat(uint16_t index, float *value) {
 }
 
 void Param_ScheduleSave(void) { s_save_schedule_count++; }
+bool CmdService_BeginScheduledSave(void) {
+  if (!s_save_request_available ||
+      g_ds402_state_machine.current_state == STATE_OPERATION_ENABLED ||
+      g_ds402_state_machine.current_state == STATE_CALIBRATING) {
+    return false;
+  }
+  s_save_begin_count++;
+  return true;
+}
+
+void CmdService_CommitScheduledSave(void) {
+  s_save_commit_count++;
+  s_save_schedule_count++;
+  if (s_save_commit_reports_success) {
+    Vofa_ReportScheduledSaveResult(true);
+  }
+}
+
+void CmdService_CancelScheduledSave(void) { s_save_cancel_count++; }
+
+bool CmdService_RequestScheduledSave(void) {
+  if (!CmdService_BeginScheduledSave()) {
+    return false;
+  }
+  CmdService_CommitScheduledSave();
+  return true;
+}
 
 void CurrentLoop_UpdateGain(MOTOR_DATA *motor) { (void)motor; }
 void LADRC_Init(LADRC_State_t *state, const LADRC_Config_t *config) {
@@ -181,7 +216,7 @@ bool StateMachine_RequestState(StateMachine *sm, MotorState target_state) {
 }
 bool Motor_ClearFaults(MOTOR_DATA *motor) {
   (void)motor;
-  return true;
+  return s_motor_clear_result;
 }
 int MHAL_Encoder_ZeroPosition(void) { return 0; }
 void HAL_Delay(uint32_t ms) {
@@ -236,6 +271,12 @@ static void ResetHarness(void) {
   s_executor_count = 0U;
   memset(&s_last_executor_cmd, 0, sizeof(s_last_executor_cmd));
   s_save_schedule_count = 0U;
+  s_save_begin_count = 0U;
+  s_save_commit_count = 0U;
+  s_save_cancel_count = 0U;
+  s_save_request_available = true;
+  s_save_commit_reports_success = false;
+  s_motor_clear_result = true;
   s_hcdc.TxState = 0U;
   s_param_index = 0U;
   s_param_value = 0.0f;
@@ -262,6 +303,16 @@ static int Expect(bool condition, const char *message) {
     return 1;
   }
   return 0;
+}
+
+static unsigned CountWireOccurrences(const char *needle) {
+  unsigned count = 0U;
+  const char *cursor = s_wire_log;
+  while ((cursor = strstr(cursor, needle)) != NULL) {
+    count++;
+    cursor += strlen(needle);
+  }
+  return count;
 }
 
 static int TestUsbReceiveDefersCommandToTaskService(void) {
@@ -437,6 +488,21 @@ static int TestVofaMotorCommandsUseExecutor(void) {
                 "set_pos did not publish through executor");
 }
 
+static int TestClearFaultReportsRejectedState(void) {
+  uint8_t command[] = "clear_fault=1";
+  ResetHarness();
+  s_motor_clear_result = false;
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+
+  if (Expect(strstr(s_wire_log, "fault_clear=unsafe\n") != NULL,
+             "clear fault did not report a rejected state")) {
+    return 1;
+  }
+  return Expect(strstr(s_wire_log, "fault_clear=all\n") == NULL,
+                "clear fault reported success after rejection");
+}
+
 static int TestSaveFlashReportsQueuedThenSucceeded(void) {
   uint8_t command[] = "save_flash=1";
   ResetHarness();
@@ -456,6 +522,201 @@ static int TestSaveFlashReportsQueuedThenSucceeded(void) {
                 "save_flash did not emit succeeded acknowledgement");
 }
 
+static int TestSaveFlashArmsBeforeSynchronousSuccess(void) {
+  uint8_t command[] = "save_flash=1";
+  ResetHarness();
+  s_save_commit_reports_success = true;
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+
+  if (Expect(s_save_begin_count == 1U && s_save_commit_count == 1U,
+             "save_flash did not use the begin/commit transaction")) {
+    return 1;
+  }
+  if (Expect(strstr(s_wire_log, "ack=save_flash,queued\n") != NULL,
+             "save_flash did not emit queued acknowledgement before commit")) {
+    return 1;
+  }
+  CompleteTx();
+  return Expect(strstr(s_wire_log, "ack=save_flash,succeeded\n") != NULL,
+                "save_flash lost a synchronous success report from commit");
+}
+
+static int TestSaveFlashRetriesTerminalAckWhenQueueIsFull(void) {
+  uint8_t command[] = "save_flash=1";
+  ResetHarness();
+  s_save_commit_reports_success = true;
+
+  for (unsigned i = 0U; i < VOFA_TX_QUEUE_DEPTH - 1U; i++) {
+    char fill[16];
+    snprintf(fill, sizeof(fill), "fill%u", i);
+    if (Expect(Studio_SendText(fill), "failed to prefill VOFA TX queue")) {
+      return 1;
+    }
+  }
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+
+  if (Expect(s_save_commit_count == 1U, "save_flash did not commit")) {
+    return 1;
+  }
+  if (Expect(strstr(s_wire_log, "ack=save_flash,succeeded\n") == NULL,
+             "terminal ACK unexpectedly queued before TX space existed")) {
+    return 1;
+  }
+
+  for (unsigned i = 0U; i < VOFA_TX_QUEUE_DEPTH + 2U; i++) {
+    CompleteTx();
+    Vofa_Service();
+  }
+
+  return Expect(CountWireOccurrences("ack=save_flash,succeeded\n") == 1U,
+                "save_flash terminal ACK was not retried exactly once");
+}
+
+static int TestSaveFlashRejectsSecondRequestWhileTerminalAckPending(void) {
+  uint8_t command[] = "save_flash=1";
+  ResetHarness();
+  s_save_commit_reports_success = true;
+
+  for (unsigned i = 0U; i < VOFA_TX_QUEUE_DEPTH - 1U; i++) {
+    char fill[16];
+    snprintf(fill, sizeof(fill), "fill%u", i);
+    if (Expect(Studio_SendText(fill), "failed to prefill VOFA TX queue")) {
+      return 1;
+    }
+  }
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+  if (Expect(s_save_begin_count == 1U && s_save_commit_count == 1U,
+             "first save_flash did not commit")) {
+    return 1;
+  }
+  if (Expect(s_save_flash_result_pending &&
+                 s_save_flash_terminal_ack_pending ==
+                     SAVE_FLASH_TERMINAL_ACK_SUCCEEDED,
+             "first save_flash terminal ACK was not pending after full queue")) {
+    return 1;
+  }
+
+  if (Expect(Vofa_QueueReceive(command, (uint16_t)strlen((const char *)command)),
+             "failed to queue second save_flash through RX queue")) {
+    return 1;
+  }
+
+  CompleteTx();
+  Vofa_Service();
+
+  if (Expect(s_save_begin_count == 1U && s_save_commit_count == 1U,
+             "second save_flash acquired a lease while terminal ACK pending")) {
+    return 1;
+  }
+  if (Expect(s_save_flash_result_pending &&
+                 s_save_flash_terminal_ack_pending ==
+                     SAVE_FLASH_TERMINAL_ACK_SUCCEEDED,
+             "second save_flash cleared the first terminal ACK")) {
+    return 1;
+  }
+
+  for (unsigned i = 0U; i < VOFA_TX_QUEUE_DEPTH + 4U; i++) {
+    CompleteTx();
+    Vofa_Service();
+  }
+
+  if (Expect(CountWireOccurrences("ack=save_flash,busy\n") == 1U,
+             "second save_flash did not report busy exactly once")) {
+    return 1;
+  }
+  return Expect(CountWireOccurrences("ack=save_flash,succeeded\n") == 1U,
+                "first save_flash terminal ACK was not eventually delivered exactly once");
+}
+
+static int TestSaveFlashTerminalAckClaimPreventsDuplicateSender(void) {
+  uint8_t command[] = "save_flash=1";
+  ResetHarness();
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+  CompleteTx();
+
+  CRITICAL_SECTION_BEGIN();
+  s_save_flash_terminal_ack_pending = SAVE_FLASH_TERMINAL_ACK_SUCCEEDED;
+  s_save_flash_terminal_ack_sending = true;
+  CRITICAL_SECTION_END();
+
+  Vofa_Service();
+  if (Expect(CountWireOccurrences("ack=save_flash,succeeded\n") == 0U,
+             "save_flash terminal ACK duplicated while another sender held claim")) {
+    return 1;
+  }
+
+  CRITICAL_SECTION_BEGIN();
+  s_save_flash_terminal_ack_sending = false;
+  CRITICAL_SECTION_END();
+
+  Vofa_Service();
+  return Expect(CountWireOccurrences("ack=save_flash,succeeded\n") == 1U,
+                "save_flash terminal ACK was not sent after claim release");
+}
+
+static int TestSaveFlashCancelsWhenQueuedAckCannotBeSent(void) {
+  uint8_t command[] = "save_flash=1";
+  ResetHarness();
+
+  for (unsigned i = 0U; i < VOFA_TX_QUEUE_DEPTH; i++) {
+    char fill[16];
+    snprintf(fill, sizeof(fill), "fill%u", i);
+    if (Expect(Studio_SendText(fill), "failed to fill VOFA TX queue")) {
+      return 1;
+    }
+  }
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+
+  if (Expect(s_save_begin_count == 1U, "save_flash did not acquire lease")) {
+    return 1;
+  }
+  if (Expect(s_save_cancel_count == 1U,
+             "save_flash did not cancel the lease when ACK queueing failed")) {
+    return 1;
+  }
+  if (Expect(s_save_commit_count == 0U,
+             "save_flash committed after ACK queueing failed")) {
+    return 1;
+  }
+  Vofa_ReportScheduledSaveResult(true);
+  return Expect(strstr(s_wire_log, "ack=save_flash,succeeded\n") == NULL,
+                "save_flash reported success after the failed ACK was cancelled");
+}
+
+static int TestSaveFlashRetriesTerminalFailedAckWhenQueueIsFull(void) {
+  uint8_t command[] = "save_flash=1";
+  ResetHarness();
+
+  for (unsigned i = 0U; i < VOFA_TX_QUEUE_DEPTH - 1U; i++) {
+    char fill[16];
+    snprintf(fill, sizeof(fill), "fill%u", i);
+    if (Expect(Studio_SendText(fill), "failed to prefill VOFA TX queue")) {
+      return 1;
+    }
+  }
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+  Vofa_ReportScheduledSaveFailed();
+
+  if (Expect(strstr(s_wire_log, "ack=save_flash,failed\n") == NULL,
+             "failed terminal ACK unexpectedly queued before TX space existed")) {
+    return 1;
+  }
+
+  for (unsigned i = 0U; i < VOFA_TX_QUEUE_DEPTH + 2U; i++) {
+    CompleteTx();
+    Vofa_Service();
+  }
+
+  return Expect(CountWireOccurrences("ack=save_flash,failed\n") == 1U,
+                "failed terminal ACK was not retried exactly once");
+}
+
 static int TestSaveFlashReportsFailed(void) {
   uint8_t command[] = "save_flash=1";
   ResetHarness();
@@ -471,6 +732,34 @@ static int TestSaveFlashReportsFailed(void) {
   Vofa_ReportScheduledSaveResult(true);
   return Expect(strstr(s_wire_log, "ack=save_flash,succeeded\n") != NULL,
                 "save_flash did not acknowledge a later successful retry");
+}
+
+static int TestSaveFlashBusyWhileOperationEnabled(void) {
+  uint8_t command[] = "save_flash=1";
+  ResetHarness();
+  g_ds402_state_machine.current_state = STATE_OPERATION_ENABLED;
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+  if (Expect(s_save_schedule_count == 0U,
+             "operation-enabled save_flash scheduled a flash save")) {
+    return 1;
+  }
+  return Expect(strstr(s_wire_log, "ack=save_flash,busy\n") != NULL,
+                "operation-enabled save_flash did not report busy");
+}
+
+static int TestSaveFlashBusyWhileCalibrating(void) {
+  uint8_t command[] = "save_flash=1";
+  ResetHarness();
+  g_ds402_state_machine.current_state = STATE_CALIBRATING;
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+  if (Expect(s_save_schedule_count == 0U,
+             "calibrating save_flash scheduled a flash save")) {
+    return 1;
+  }
+  return Expect(strstr(s_wire_log, "ack=save_flash,busy\n") != NULL,
+                "calibrating save_flash did not report busy");
 }
 
 #if defined(BOARD_XSTAR)
@@ -747,9 +1036,27 @@ int main(void) {
     return 1;
   if (TestVofaMotorCommandsUseExecutor())
     return 1;
+  if (TestClearFaultReportsRejectedState())
+    return 1;
   if (TestSaveFlashReportsQueuedThenSucceeded())
     return 1;
+  if (TestSaveFlashArmsBeforeSynchronousSuccess())
+    return 1;
+  if (TestSaveFlashRetriesTerminalAckWhenQueueIsFull())
+    return 1;
+  if (TestSaveFlashRejectsSecondRequestWhileTerminalAckPending())
+    return 1;
+  if (TestSaveFlashTerminalAckClaimPreventsDuplicateSender())
+    return 1;
+  if (TestSaveFlashCancelsWhenQueuedAckCannotBeSent())
+    return 1;
+  if (TestSaveFlashRetriesTerminalFailedAckWhenQueueIsFull())
+    return 1;
   if (TestSaveFlashReportsFailed())
+    return 1;
+  if (TestSaveFlashBusyWhileOperationEnabled())
+    return 1;
+  if (TestSaveFlashBusyWhileCalibrating())
     return 1;
 #if defined(BOARD_XSTAR)
   if (TestXstarBootEnterReportsUnsupported())

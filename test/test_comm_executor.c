@@ -48,6 +48,9 @@ static unsigned s_protocol_set_count;
 static ProtocolType s_protocol_set_value;
 static unsigned s_run_mode_apply_count;
 static unsigned s_save_count;
+static unsigned s_save_cancel_count;
+static bool s_save_request_available;
+static unsigned s_error_report_count;
 static ParamEntry s_param_entry;
 
 static void reset_fixture(void) {
@@ -73,6 +76,9 @@ static void reset_fixture(void) {
   s_protocol_set_value = PROTOCOL_VECTOR;
   s_run_mode_apply_count = 0U;
   s_save_count = 0U;
+  s_save_cancel_count = 0U;
+  s_save_request_available = true;
+  s_error_report_count = 0U;
   memset(&s_param_entry, 0, sizeof(s_param_entry));
   s_param_entry.need_save = true;
   g_protocol_type = PROTOCOL_VECTOR;
@@ -290,6 +296,25 @@ static int test_run_mode_write_updates_runtime_mode_after_success(void) {
   return 0;
 }
 
+static int test_persistent_parameter_write_is_rejected_when_save_busy(void) {
+  reset_fixture();
+  s_save_request_available = false;
+  MotorCommand cmd = {0};
+  float run_mode = 5.0f;
+  cmd.is_param_write = true;
+  cmd.param_index = PARAM_RUN_MODE;
+  memcpy(&cmd.param_value, &run_mode, sizeof(run_mode));
+
+  Executor_ProcessCommand(&cmd);
+
+  CHECK(s_param_write_count == 0U);
+  CHECK(s_save_count == 0U);
+  CHECK(s_save_cancel_count == 0U);
+  CHECK(s_run_mode_apply_count == 0U);
+  CHECK(s_error_report_count == 1U);
+  return 0;
+}
+
 int main(void) {
   int failures = 0;
   failures +=
@@ -307,6 +332,7 @@ int main(void) {
   failures += test_successful_protocol_switch_persists_then_applies();
   failures += test_failed_parameter_write_has_no_runtime_or_save_side_effect();
   failures += test_run_mode_write_updates_runtime_mode_after_success();
+  failures += test_persistent_parameter_write_is_rejected_when_save_busy();
   if (failures == 0) {
     printf("All communication executor tests PASSED\n");
     return 0;
@@ -500,3 +526,18 @@ void Detection_SetCANTimeout(uint32_t timeout_ms) {
   s_configured_timeout_ms = timeout_ms;
 }
 void Param_ScheduleSave(void) { s_save_count++; }
+bool CmdService_BeginScheduledSave(void) { return s_save_request_available; }
+void CmdService_CommitScheduledSave(void) { s_save_count++; }
+void CmdService_CancelScheduledSave(void) { s_save_cancel_count++; }
+bool CmdService_RequestScheduledSave(void) {
+  if (!CmdService_BeginScheduledSave()) {
+    return false;
+  }
+  CmdService_CommitScheduledSave();
+  return true;
+}
+void ErrorManager_Report(uint32_t error_code, const char *message) {
+  (void)error_code;
+  (void)message;
+  s_error_report_count++;
+}

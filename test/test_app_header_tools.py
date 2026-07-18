@@ -66,6 +66,29 @@ class AppHeaderToolsTest(unittest.TestCase):
         self.assertEqual(loaded, image)
         self.assertEqual(parsed.size, 3)
 
+    def test_boot_info_preflight_accepts_matching_layout(self) -> None:
+        self.assertEqual(
+            ota_upload.parse_boot_info("boot_info,app_start=08004000,app_size=131072"),
+            (ota_upload.APP_ADDR_START, 131072),
+        )
+
+    def test_boot_info_preflight_rejects_layout_mismatch(self) -> None:
+        class FakeSerial:
+            in_waiting = 45
+
+            def write(self, payload: bytes) -> int:
+                return len(payload)
+
+            def flush(self) -> None:
+                pass
+
+            def read(self, count: int) -> bytes:
+                self.in_waiting = 0
+                return b"boot_info,app_start=08005000,app_size=110592\n"[:count]
+
+        with self.assertRaisesRegex(RuntimeError, "app_start mismatch"):
+            ota_upload.query_boot_info(FakeSerial(), len(self.packaged_image(b"ota")))
+
     def test_unpatched_image_is_rejected_before_serial_open(self) -> None:
         path = Path("VectorFoc.bin")
         with mock.patch.object(Path, "is_file", return_value=True), \

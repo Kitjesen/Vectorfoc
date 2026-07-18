@@ -17,6 +17,7 @@
  * @brief 200 Hz safety supervision and periodic diagnostic logging.
  */
 #include "FreeRTOS.h"
+#include "app_freertos.h"
 #include "bsp_log.h"
 #include "cmsis_os.h"
 #include "fsm.h"
@@ -29,6 +30,7 @@
 __attribute__((noreturn)) void StartGuardTask(void const *argument) {
   (void)argument;
   uint32_t diagnostic_count = 0u;
+  static AppFreertosRuntimeStats_t runtime_stats;
   WatchdogSupervisorState watchdog_state;
   WatchdogSupervisor_Init(
       &watchdog_state, HAL_GetSystemTick(), WATCHDOG_SUPERVISION_WINDOW_MS,
@@ -52,10 +54,20 @@ __attribute__((noreturn)) void StartGuardTask(void const *argument) {
       diagnostic_count = 0u;
       uint32_t faults = Safety_GetActiveFaultBits();
 
-      LOGINFO("FSM=%d mode=%d fault=%08X ctrl=%d",
-              (int)StateMachine_GetState(&g_ds402_state_machine),
-              (int)motor_data.state.State_Mode, (unsigned int)faults,
-              (int)motor_data.state.Control_Mode);
+      if (AppFreertos_GetRuntimeStats(&runtime_stats)) {
+        LOGINFO("FSM=%d mode=%d fault=%08X ctrl=%d stack_free_w=%lu/%lu/%lu",
+                (int)StateMachine_GetState(&g_ds402_state_machine),
+                (int)motor_data.state.State_Mode, (unsigned int)faults,
+                (int)motor_data.state.Control_Mode,
+                (unsigned long)runtime_stats.default_stack_high_water_words,
+                (unsigned long)runtime_stats.guard_stack_high_water_words,
+                (unsigned long)runtime_stats.comm_stack_high_water_words);
+      } else {
+        LOGINFO("FSM=%d mode=%d fault=%08X ctrl=%d stack_free_w=unavailable",
+                (int)StateMachine_GetState(&g_ds402_state_machine),
+                (int)motor_data.state.State_Mode, (unsigned int)faults,
+                (int)motor_data.state.Control_Mode);
+      }
     }
 
     osDelay(5u);

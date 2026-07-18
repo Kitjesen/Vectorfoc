@@ -52,6 +52,14 @@ extern "C" {
 
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
+/**
+ * @brief Immediately force TIM1 bridge outputs inactive without changing the
+ *        global interrupt state.
+ *
+ * Use this while an acknowledgement still depends on peripheral interrupts.
+ * Fatal paths must use Emergency_Shutdown() instead.
+ */
+void Emergency_DisableBridgeOutputs(void);
 void Emergency_Shutdown(void);
 
 /* USER CODE BEGIN EFP */

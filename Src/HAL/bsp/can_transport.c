@@ -33,6 +33,45 @@ static bool CAN_Transport_Send(const TransportFrame *frame) {
   //  BSP
   return BSP_CAN_SendFrame(&can_frame);
 }
+
+static bool CAN_Transport_SendTracked(const TransportFrame *frame,
+                                      TransportTxTicket *ticket) {
+  if (frame == NULL || ticket == NULL) {
+    return false;
+  }
+  CAN_Frame can_frame;
+  BSP_CAN_TxTicket bsp_ticket = {0};
+  Transport_ToCANFrame(frame, &can_frame);
+  if (!BSP_CAN_SendTrackedFrame(&can_frame, &bsp_ticket)) {
+    return false;
+  }
+  ticket->marker = bsp_ticket.marker;
+  ticket->tx_buffer_mask = bsp_ticket.tx_buffer_mask;
+  return true;
+}
+
+static bool CAN_Transport_TxTicketIsComplete(
+    const TransportTxTicket *ticket) {
+  if (ticket == NULL) {
+    return false;
+  }
+  BSP_CAN_TxTicket bsp_ticket = {
+      .marker = ticket->marker,
+      .tx_buffer_mask = ticket->tx_buffer_mask,
+  };
+  return BSP_CAN_TxTicketIsComplete(&bsp_ticket);
+}
+
+static void CAN_Transport_CancelTrackedTx(const TransportTxTicket *ticket) {
+  if (ticket == NULL) {
+    return;
+  }
+  BSP_CAN_TxTicket bsp_ticket = {
+      .marker = ticket->marker,
+      .tx_buffer_mask = ticket->tx_buffer_mask,
+  };
+  BSP_CAN_CancelTrackedSend(&bsp_ticket);
+}
 /**
  * @brief
  * @note CAN  BSP interrupt， Protocol_QueueRxFrame
@@ -56,6 +95,9 @@ static bool CAN_Transport_IsTxReady(void) {
  */
 static const TransportInterface s_can_transport = {
     .send = CAN_Transport_Send,
+    .send_tracked = CAN_Transport_SendTracked,
+    .tx_ticket_is_complete = CAN_Transport_TxTicketIsComplete,
+    .cancel_tracked_tx = CAN_Transport_CancelTrackedTx,
     .register_rx_callback = CAN_Transport_RegisterRxCallback,
     .is_tx_ready = CAN_Transport_IsTxReady,
     .type = TRANSPORT_CAN,

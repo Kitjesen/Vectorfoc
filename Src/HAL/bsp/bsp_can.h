@@ -35,6 +35,12 @@ typedef enum {
   BSP_CAN_BAUD_250K = 2U,
 } BSP_CAN_BaudrateId;
 
+typedef struct {
+  uint32_t marker; /**< Completion marker from the FDCAN Tx event FIFO. */
+  uint32_t tx_buffer_mask; /**< HAL Tx FIFO/Q request buffer bit for abort. */
+} BSP_CAN_TxTicket;
+#define BSP_CAN_HAS_TRACKED_TX 1
+
 /**
  * @brief FDCAN
  */
@@ -72,6 +78,23 @@ void BSP_CAN_Init(void);
  * @return true，false
  */
 bool BSP_CAN_SendFrame(const CAN_Frame *frame);
+/**
+ * @brief Send one CAN frame with Tx event tracking enabled.
+ * @param frame  CAN frame.
+ * @param ticket [out] Completion ticket, valid only on true.
+ * @return true if queued with a unique marker; false on busy or HAL failure.
+ * @note Only one tracked request may be pending. Normal BSP_CAN_SendFrame()
+ *       does not create Tx events.
+ */
+bool BSP_CAN_SendTrackedFrame(const CAN_Frame *frame, BSP_CAN_TxTicket *ticket);
+/**
+ * @brief Check and consume completion for a tracked send ticket.
+ */
+bool BSP_CAN_TxTicketIsComplete(const BSP_CAN_TxTicket *ticket);
+/**
+ * @brief Cancel a pending tracked send ticket after timeout/abort.
+ */
+void BSP_CAN_CancelTrackedSend(const BSP_CAN_TxTicket *ticket);
 /* ========== （） ========== */
 /**
  * @brief CAN

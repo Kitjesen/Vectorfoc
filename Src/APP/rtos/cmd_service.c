@@ -28,7 +28,14 @@
 #include "platform.h"
 #include "stm32g4xx_hal.h"
 #include "vofa.h"
+#define CMD_SERVICE_SAVE_RETRY_LIMIT 3U
+
 static bool s_report_enabled = false;
+static bool s_param_save_maintenance_reserved = false;
+static bool s_param_save_maintenance_held = false;
+static uint8_t s_param_save_attempts = 0U;
+static uint32_t s_param_save_generation = 0U;
+
 static inline void CmdService_SnapshotStatus(MotorStatus *status) {
   if (status == NULL)
     return;
@@ -58,6 +65,46 @@ static inline void CmdService_SnapshotStatus(MotorStatus *status) {
 
 void CmdService_Init(void) { LOGINFO("[CMD] Command service initialized"); }
 void CmdService_SetReportEnable(bool enable) { s_report_enabled = enable; }
+
+bool CmdService_BeginScheduledSave(void) {
+  if (!StateMachine_BeginMaintenance(&g_ds402_state_machine)) {
+    return false;
+  }
+  CRITICAL_SECTION_BEGIN();
+  s_param_save_maintenance_reserved = true;
+  s_param_save_attempts = 0U;
+  CRITICAL_SECTION_END();
+  return true;
+}
+
+void CmdService_CommitScheduledSave(void) {
+  Param_ScheduleSave();
+  uint32_t generation = Param_GetScheduledSaveGeneration();
+  CRITICAL_SECTION_BEGIN();
+  s_param_save_maintenance_reserved = false;
+  s_param_save_maintenance_held = true;
+  s_param_save_generation = generation;
+  CRITICAL_SECTION_END();
+}
+
+void CmdService_CancelScheduledSave(void) {
+  CRITICAL_SECTION_BEGIN();
+  s_param_save_maintenance_reserved = false;
+  s_param_save_maintenance_held = false;
+  s_param_save_attempts = 0U;
+  s_param_save_generation = 0U;
+  CRITICAL_SECTION_END();
+  StateMachine_EndMaintenance(&g_ds402_state_machine);
+}
+
+bool CmdService_RequestScheduledSave(void) {
+  if (!CmdService_BeginScheduledSave()) {
+    return false;
+  }
+  CmdService_CommitScheduledSave();
+  return true;
+}
+
 void CmdService_Process(void) {
   static uint32_t last_report_time = 0;
   static uint32_t last_calib_report_time = 0; // 1Hz progress report during calibration
@@ -69,11 +116,51 @@ void CmdService_Process(void) {
   static uint32_t next_param_save_attempt = 0;
   uint32_t now = HAL_GetTick();
   // param
-  if ((int32_t)(now - next_param_save_attempt) >= 0 &&
-      StateMachine_BeginMaintenance(&g_ds402_state_machine)) {
+  bool held_save = s_param_save_maintenance_held;
+  bool process_save = held_save;
+  bool release_maintenance = false;
+  /* A newly committed external save already owns the maintenance lease.  Do
+   * not make that lease wait behind the throttle from an unrelated previous
+   * save; only retry attempts are rate limited. */
+  bool initial_held_attempt = held_save && s_param_save_attempts == 0U;
+  if (!process_save && Param_HasScheduledSave() &&
+      (int32_t)(now - next_param_save_attempt) >= 0) {
+    process_save = StateMachine_BeginMaintenance(&g_ds402_state_machine);
+    release_maintenance = process_save;
+    if (process_save) {
+      uint32_t generation = Param_GetScheduledSaveGeneration();
+      if (generation != s_param_save_generation) {
+        s_param_save_attempts = 0U;
+        s_param_save_generation = generation;
+      }
+    }
+  }
+  if (process_save &&
+      (initial_held_attempt ||
+       (int32_t)(now - next_param_save_attempt) >= 0)) {
+    uint32_t generation = s_param_save_generation;
     bool save_succeeded = Param_ProcessScheduledSave();
-    Vofa_ReportScheduledSaveResult(save_succeeded);
-    StateMachine_EndMaintenance(&g_ds402_state_machine);
+    if (held_save) {
+      Vofa_ReportScheduledSaveResult(save_succeeded);
+    }
+    if (save_succeeded ||
+        ++s_param_save_attempts >= CMD_SERVICE_SAVE_RETRY_LIMIT) {
+      if (!save_succeeded) {
+        (void)Param_DiscardScheduledSaveIfGeneration(generation);
+        if (held_save) {
+          Vofa_ReportScheduledSaveFailed();
+        }
+      }
+      CRITICAL_SECTION_BEGIN();
+      s_param_save_maintenance_reserved = false;
+      s_param_save_maintenance_held = false;
+      s_param_save_attempts = 0U;
+      s_param_save_generation = 0U;
+      CRITICAL_SECTION_END();
+      StateMachine_EndMaintenance(&g_ds402_state_machine);
+    } else if (release_maintenance) {
+      StateMachine_EndMaintenance(&g_ds402_state_machine);
+    }
     next_param_save_attempt = now + 250U;
   }
   // motorstate

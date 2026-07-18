@@ -28,6 +28,7 @@
 #include "manager.h"
 #include "motor.h"
 #include "param_access.h"
+#include "platform.h"
 #define GET_CMD_TYPE(id) (((id) >> 24) & 0x1F)
 #define GET_TARGET_ID(id) ((id) & 0xFF)
 /* CAN（）
@@ -35,6 +36,10 @@
 static FDCANInstance fdcan_instance_pool[FDCAN_MX_REGISTER_CNT];
 static FDCANInstance *fdcan_instance[FDCAN_MX_REGISTER_CNT] = {NULL};
 static uint8_t idx;
+static volatile uint32_t s_tracked_tx_next_marker = 1U;
+static volatile uint32_t s_tracked_tx_pending_marker = 0U;
+static volatile uint32_t s_tracked_tx_pending_buffer_mask = 0U;
+static volatile uint32_t s_tracked_tx_completed_marker = 0U;
 /* ==========  ========== */
 /**
  * @brief CANinit
@@ -64,6 +69,8 @@ static bool FDCANServiceInit(void) {
                                            FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
   result |= HAL_FDCAN_ActivateNotification(&HW_CAN,
                                            FDCAN_IT_RX_FIFO1_NEW_MESSAGE, 0);
+  result |= HAL_FDCAN_ActivateNotification(&HW_CAN,
+                                           FDCAN_IT_TX_EVT_FIFO_NEW_DATA, 0);
   return result == HAL_OK;
 }
 /* ==========  ========== */
@@ -232,6 +239,53 @@ void FDCANSetDLC(FDCANInstance *_instance, uint8_t length) {
     break;
   }
 }
+
+static void BSP_CAN_FillTxHeader(const CAN_Frame *frame,
+                                 FDCAN_TxHeaderTypeDef *header,
+                                 uint32_t tx_event_control,
+                                 uint32_t marker) {
+  memset(header, 0, sizeof(*header));
+  header->Identifier = frame->id;
+  header->IdType = frame->is_extended ? FDCAN_EXTENDED_ID : FDCAN_STANDARD_ID;
+  header->TxFrameType = frame->is_rtr ? FDCAN_REMOTE_FRAME : FDCAN_DATA_FRAME;
+  switch (frame->dlc) {
+  case 0:
+    header->DataLength = FDCAN_DLC_BYTES_0;
+    break;
+  case 1:
+    header->DataLength = FDCAN_DLC_BYTES_1;
+    break;
+  case 2:
+    header->DataLength = FDCAN_DLC_BYTES_2;
+    break;
+  case 3:
+    header->DataLength = FDCAN_DLC_BYTES_3;
+    break;
+  case 4:
+    header->DataLength = FDCAN_DLC_BYTES_4;
+    break;
+  case 5:
+    header->DataLength = FDCAN_DLC_BYTES_5;
+    break;
+  case 6:
+    header->DataLength = FDCAN_DLC_BYTES_6;
+    break;
+  case 7:
+    header->DataLength = FDCAN_DLC_BYTES_7;
+    break;
+  case 8:
+    header->DataLength = FDCAN_DLC_BYTES_8;
+    break;
+  default:
+    header->DataLength = FDCAN_DLC_BYTES_8;
+    break;
+  }
+  header->ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+  header->BitRateSwitch = FDCAN_BRS_OFF;
+  header->FDFormat = FDCAN_CLASSIC_CAN;
+  header->TxEventFifoControl = tx_event_control;
+  header->MessageMarker = marker;
+}
 /**
  * @brief CAN ()
  * @param frame CAN
@@ -242,49 +296,74 @@ bool BSP_CAN_SendFrame(const CAN_Frame *frame) {
     return false;
   }
   FDCAN_TxHeaderTypeDef TxHeader;
-  TxHeader.Identifier = frame->id;
-  TxHeader.IdType = frame->is_extended ? FDCAN_EXTENDED_ID : FDCAN_STANDARD_ID;
-  TxHeader.TxFrameType = frame->is_rtr ? FDCAN_REMOTE_FRAME : FDCAN_DATA_FRAME;
-  // Mapping DLC
-  switch (frame->dlc) {
-  case 0:
-    TxHeader.DataLength = FDCAN_DLC_BYTES_0;
-    break;
-  case 1:
-    TxHeader.DataLength = FDCAN_DLC_BYTES_1;
-    break;
-  case 2:
-    TxHeader.DataLength = FDCAN_DLC_BYTES_2;
-    break;
-  case 3:
-    TxHeader.DataLength = FDCAN_DLC_BYTES_3;
-    break;
-  case 4:
-    TxHeader.DataLength = FDCAN_DLC_BYTES_4;
-    break;
-  case 5:
-    TxHeader.DataLength = FDCAN_DLC_BYTES_5;
-    break;
-  case 6:
-    TxHeader.DataLength = FDCAN_DLC_BYTES_6;
-    break;
-  case 7:
-    TxHeader.DataLength = FDCAN_DLC_BYTES_7;
-    break;
-  case 8:
-    TxHeader.DataLength = FDCAN_DLC_BYTES_8;
-    break;
-  default:
-    TxHeader.DataLength = FDCAN_DLC_BYTES_8;
-    break;
-  }
-  TxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-  TxHeader.BitRateSwitch = FDCAN_BRS_OFF;
-  TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
-  TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-  TxHeader.MessageMarker = 0;
+  BSP_CAN_FillTxHeader(frame, &TxHeader, FDCAN_NO_TX_EVENTS, 0U);
   return (HAL_FDCAN_AddMessageToTxFifoQ(&HW_CAN, &TxHeader,
                                         (uint8_t *)frame->data) == HAL_OK);
+}
+
+bool BSP_CAN_SendTrackedFrame(const CAN_Frame *frame, BSP_CAN_TxTicket *ticket) {
+  if (frame == NULL || ticket == NULL) {
+    return false;
+  }
+  bool queued = false;
+  memset(ticket, 0, sizeof(*ticket));
+  CRITICAL_SECTION_BEGIN();
+  if (s_tracked_tx_pending_marker == 0U &&
+      s_tracked_tx_completed_marker == 0U) {
+    uint32_t marker = s_tracked_tx_next_marker & 0xFFU;
+    if (marker == 0U) {
+      marker = 1U;
+    }
+    s_tracked_tx_next_marker = (marker == 0xFFU) ? 1U : (marker + 1U);
+
+    FDCAN_TxHeaderTypeDef tx_header;
+    BSP_CAN_FillTxHeader(frame, &tx_header, FDCAN_STORE_TX_EVENTS, marker);
+    if (HAL_FDCAN_AddMessageToTxFifoQ(&HW_CAN, &tx_header,
+                                      (uint8_t *)frame->data) == HAL_OK) {
+      uint32_t buffer_mask = HAL_FDCAN_GetLatestTxFifoQRequestBuffer(&HW_CAN);
+      s_tracked_tx_pending_marker = marker;
+      s_tracked_tx_pending_buffer_mask = buffer_mask;
+      ticket->marker = marker;
+      ticket->tx_buffer_mask = buffer_mask;
+      queued = true;
+    }
+  }
+  CRITICAL_SECTION_END();
+  return queued;
+}
+
+bool BSP_CAN_TxTicketIsComplete(const BSP_CAN_TxTicket *ticket) {
+  if (ticket == NULL || ticket->marker == 0U) {
+    return false;
+  }
+  bool complete = false;
+  CRITICAL_SECTION_BEGIN();
+  if (s_tracked_tx_completed_marker == ticket->marker) {
+    s_tracked_tx_completed_marker = 0U;
+    complete = true;
+  }
+  CRITICAL_SECTION_END();
+  return complete;
+}
+
+void BSP_CAN_CancelTrackedSend(const BSP_CAN_TxTicket *ticket) {
+  if (ticket == NULL || ticket->marker == 0U) {
+    return;
+  }
+  CRITICAL_SECTION_BEGIN();
+  if (s_tracked_tx_pending_marker == ticket->marker) {
+    if (s_tracked_tx_pending_buffer_mask != 0U &&
+        s_tracked_tx_pending_buffer_mask == ticket->tx_buffer_mask) {
+      (void)HAL_FDCAN_AbortTxRequest(&HW_CAN,
+                                     s_tracked_tx_pending_buffer_mask);
+    }
+    s_tracked_tx_pending_marker = 0U;
+    s_tracked_tx_pending_buffer_mask = 0U;
+  }
+  if (s_tracked_tx_completed_marker == ticket->marker) {
+    s_tracked_tx_completed_marker = 0U;
+  }
+  CRITICAL_SECTION_END();
 }
 /* ========== interrupt ========== */
 /**
@@ -333,5 +412,25 @@ void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hfdcan,
                                uint32_t RxFifo1ITs) {
   if ((RxFifo1ITs & FDCAN_IT_RX_FIFO1_NEW_MESSAGE) != RESET) {
     FDCANFIFOxCallback(hfdcan, FDCAN_RX_FIFO1);
+  }
+}
+
+void HAL_FDCAN_TxEventFifoCallback(FDCAN_HandleTypeDef *hfdcan,
+                                   uint32_t TxEventFifoITs) {
+  if (hfdcan != &HW_CAN) {
+    return;
+  }
+  if ((TxEventFifoITs & FDCAN_IT_TX_EVT_FIFO_NEW_DATA) == RESET) {
+    return;
+  }
+
+  FDCAN_TxEventFifoTypeDef tx_event;
+  while (HAL_FDCAN_GetTxEvent(hfdcan, &tx_event) == HAL_OK) {
+    uint32_t marker = tx_event.MessageMarker & 0xFFU;
+    if (marker != 0U && marker == s_tracked_tx_pending_marker) {
+      s_tracked_tx_pending_marker = 0U;
+      s_tracked_tx_pending_buffer_mask = 0U;
+      s_tracked_tx_completed_marker = marker;
+    }
   }
 }

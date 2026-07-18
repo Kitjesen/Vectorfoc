@@ -284,6 +284,56 @@ static void full_queue_reboot_does_not_arm_jump(void) {
   assert(jump_count == 0u);
 }
 
+static void full_queue_write_prepare_does_not_enter_data_phase(void) {
+  static const uint8_t command[] = "boot_write,08004000,8\n";
+  static const uint8_t data[8] = {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u};
+
+  reset_fakes();
+  auto_tx_complete = false;
+  cdc_tx_status = 1u;
+
+  BootProto_SendResponse("q0");
+  BootProto_SendResponse("q1");
+  BootProto_SendResponse("q2");
+  BootProto_SendResponse("q3");
+  process_data(command, (uint16_t)(sizeof(command) - 1u));
+
+  cdc_tx_status = 0u;
+  for (uint8_t i = 0u; i < 4u; ++i) {
+    BootProto_Service();
+    BootProto_OnTransmitComplete();
+  }
+  process_data(data, sizeof(data));
+  assert(flash_write_count == 0u);
+}
+
+static void failed_write_ack_resets_transaction_and_drops_trailing_command(void) {
+  static const uint8_t command[] = "boot_write,08004000,8\n";
+  static const uint8_t data_and_command[] = {1u,  2u,  3u,  4u,  5u,  6u,
+                                             7u,  8u,  'b', 'o', 'o', 't',
+                                             '_', 'i', 'n', 'f', 'o', '\n'};
+
+  reset_fakes();
+  process_data(command, (uint16_t)(sizeof(command) - 1u));
+  clear_tx();
+
+  auto_tx_complete = false;
+  cdc_tx_status = 1u;
+  BootProto_SendResponse("q0");
+  BootProto_SendResponse("q1");
+  BootProto_SendResponse("q2");
+  BootProto_SendResponse("q3");
+  process_data(data_and_command, sizeof(data_and_command));
+
+  assert(flash_write_count == 1u);
+  cdc_tx_status = 0u;
+  for (uint8_t i = 0u; i < 4u; ++i) {
+    BootProto_Service();
+    BootProto_OnTransmitComplete();
+  }
+  assert(strstr(tx_log, "boot_info") == NULL);
+}
+
 static void queued_usb_data_is_processed_only_by_service(void) {
   static const uint8_t command[] = "boot_erase\n";
 
@@ -363,5 +413,7 @@ int main(void) {
   sync_tx_completion_does_not_leave_queue_busy();
   queued_async_messages_flush_in_order();
   full_queue_reboot_does_not_arm_jump();
+  full_queue_write_prepare_does_not_enter_data_phase();
+  failed_write_ack_resets_transaction_and_drops_trailing_command();
   return 0;
 }

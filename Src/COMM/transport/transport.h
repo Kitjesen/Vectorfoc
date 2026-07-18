@@ -55,6 +55,16 @@ typedef struct {
   bool is_extended;   /**< True for an extended CAN identifier. */
 } TransportFrame;
 /**
+ * @brief Ticket returned by transports that can confirm physical Tx completion.
+ * @note A ticket is valid only for the single tracked send that created it.
+ *       Callers must treat unsupported tracked send as a hard failure when the
+ *       following state transition depends on the frame reaching the bus.
+ */
+typedef struct {
+  uint32_t marker; /**< Transport-owned completion marker. */
+  uint32_t tx_buffer_mask; /**< Transport-owned Tx FIFO/Q request buffer bit. */
+} TransportTxTicket;
+/**
  * @brief
  * @param frame
  */
@@ -70,6 +80,28 @@ typedef struct {
    * @return true=, false=
    */
   bool (*send)(const TransportFrame *frame);
+  /**
+   * @brief Queue one frame with Tx-completion tracking enabled.
+   * @param frame  Frame to transmit.
+   * @param ticket [out] Completion ticket, valid only when true is returned.
+   * @return true if the transport accepted a tracked frame, false on busy,
+   *         unsupported tracking, or queue failure.
+   * @note Only one tracked request may be pending per transport. Normal sends
+   *       must not create completion events.
+   */
+  bool (*send_tracked)(const TransportFrame *frame, TransportTxTicket *ticket);
+  /**
+   * @brief Check and consume completion for a tracked Tx ticket.
+   * @return true once the matching frame has completed on the transport.
+   * @note A true result consumes the completion; repeated checks of the same
+   *       ticket return false.
+   */
+  bool (*tx_ticket_is_complete)(const TransportTxTicket *ticket);
+  /**
+   * @brief Cancel a pending tracked Tx ticket after timeout/abort.
+   * @note Safe to call for an already-completed or invalid ticket.
+   */
+  void (*cancel_tracked_tx)(const TransportTxTicket *ticket);
   /**
    * @brief
    * @param cb

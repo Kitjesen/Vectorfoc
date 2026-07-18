@@ -15,6 +15,8 @@
 #include "vector_protocol.h"
 #include "../../../BOOT/bootloader.h"
 #include "calibration_context.h"
+#include "error_manager.h"
+#include "error_types.h"
 #include "fault_def.h"
 #include "main.h"
 #include "manager.h" // For Protocol_SendFrame
@@ -39,7 +41,7 @@
 #define VECTOR_ACK_STATUS_QUEUED 0u
 #define VECTOR_ACK_STATUS_BUSY 1u
 #define VECTOR_ACK_STATUS_UNSUPPORTED 2u
-#define VECTOR_POWER_ACTION_ACK_GRACE_MS 2u
+#define VECTOR_POWER_ACTION_ACK_TIMEOUT_MS 100u
 
 /* 量化工具函数由 protocol_utils.h 提供，本地名称别名保持向后兼容 */
 #define Uint16ToFloat  Proto_Uint16ToFloat
@@ -55,15 +57,21 @@ typedef enum {
 
 static VectorPowerAction s_pending_power_action;
 static uint32_t s_power_action_deadline;
+static TransportTxTicket s_power_action_ticket;
 
-static bool ProtocolVector_SendCommandAck(VectorCmdType cmd,
-                                          uint8_t status) {
+static void ProtocolVector_BuildCommandAck(VectorCmdType cmd, uint8_t status,
+                                           CAN_Frame *rsp) {
+  memset(rsp, 0, sizeof(*rsp));
+  rsp->id = ((uint32_t)cmd << 24) | ((uint32_t)g_can_id << 8) | 0xFDu;
+  rsp->is_extended = true;
+  rsp->dlc = 2;
+  rsp->data[0] = (uint8_t)cmd;
+  rsp->data[1] = status;
+}
+
+static bool ProtocolVector_SendCommandAck(VectorCmdType cmd, uint8_t status) {
   CAN_Frame rsp = {0};
-  rsp.id = ((uint32_t)cmd << 24) | ((uint32_t)g_can_id << 8) | 0xFDu;
-  rsp.is_extended = true;
-  rsp.dlc = 2;
-  rsp.data[0] = (uint8_t)cmd;
-  rsp.data[1] = status;
+  ProtocolVector_BuildCommandAck(cmd, status, &rsp);
   return Protocol_SendFrame(&rsp);
 }
 
@@ -82,16 +90,22 @@ static ParseResult ProtocolVector_RequestPowerAction(VectorCmdType cmd,
     return PARSE_OK;
   }
 
-  /* `Protocol_SendFrame` succeeds only after the frame is accepted by the
-   * selected transport.  Keep the action deferred for one comm-task interval
-   * so a reset cannot erase that queued acknowledgement immediately. */
-  if (!ProtocolVector_SendCommandAck(cmd, VECTOR_ACK_STATUS_QUEUED)) {
+  CAN_Frame rsp = {0};
+  TransportTxTicket ticket = {0};
+  ProtocolVector_BuildCommandAck(cmd, VECTOR_ACK_STATUS_QUEUED, &rsp);
+  if (!Protocol_SendTrackedFrame(&rsp, &ticket)) {
     return PARSE_ERR_INVALID_FRAME;
   }
 
-  Emergency_Shutdown();
+  /* The ACK completion and timeout both depend on interrupts and HAL tick.
+   * De-energize the bridge now, but reserve the full IRQ-disabling emergency
+   * shutdown for the instant immediately before reset / Bootloader handoff. */
+  Emergency_DisableBridgeOutputs();
+  (void)StateMachine_RequestState(&g_ds402_state_machine,
+                                  STATE_SWITCH_ON_DISABLED);
   s_pending_power_action = action;
-  s_power_action_deadline = HAL_GetTick() + VECTOR_POWER_ACTION_ACK_GRACE_MS;
+  s_power_action_ticket = ticket;
+  s_power_action_deadline = HAL_GetTick() + VECTOR_POWER_ACTION_ACK_TIMEOUT_MS;
   return PARSE_OK;
 }
 /**
@@ -236,10 +250,14 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   case VECTOR_CMD_SET_ID: // 7
     if (frame->dlc >= 4) { // Assumed layout: [NewID][0][0][0]
       uint8_t new_id = frame->data[0];
+      if (!CmdService_BeginScheduledSave()) {
+        return PARSE_ERR_INVALID_FRAME;
+      }
       if (Param_WriteUint8(PARAM_CAN_ID, new_id) == PARAM_OK) {
-        Param_ScheduleSave(); // deferred, ISR-safe request
+        CmdService_CommitScheduledSave();
         return PARSE_OK;
       }
+      CmdService_CancelScheduledSave();
     }
     return PARSE_ERR_INVALID_FRAME;
   case VECTOR_CMD_PARAM_READ: // 17
@@ -247,8 +265,11 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   case VECTOR_CMD_PARAM_WRITE: // 18
     return ParseParamCommand(frame, cmd, true);
   case VECTOR_CMD_SAVE: // 22
-    Param_ScheduleSave();
-    ProtocolVector_SendCommandAck(VECTOR_CMD_SAVE, VECTOR_ACK_STATUS_QUEUED);
+    if (CmdService_RequestScheduledSave()) {
+      ProtocolVector_SendCommandAck(VECTOR_CMD_SAVE, VECTOR_ACK_STATUS_QUEUED);
+    } else {
+      ProtocolVector_SendCommandAck(VECTOR_CMD_SAVE, VECTOR_ACK_STATUS_BUSY);
+    }
     return PARSE_OK;
   case VECTOR_CMD_GET_VERSION: // 26
     //
@@ -294,8 +315,11 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   case VECTOR_CMD_SET_BAUDRATE: // 23 — configure CAN baudrate (saved to Flash)
     if (frame->dlc >= 1) {
       uint8_t baud_id = frame->data[0]; /* 0=1M, 1=500k, 2=250k */
+      if (!CmdService_BeginScheduledSave()) {
+        return PARSE_ERR_INVALID_FRAME;
+      }
       if (Param_WriteUint8(PARAM_CAN_BAUDRATE, baud_id) == PARAM_OK) {
-        Param_ScheduleSave();
+        CmdService_CommitScheduledSave();
         /* Acknowledge on the current bitrate; the new rate applies after reboot. */
         CAN_Frame rsp = {0};
         rsp.id = (0x17u << 24) | ((uint32_t)g_can_id << 8) | 0xFDu;
@@ -305,6 +329,7 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
         Protocol_SendFrame(&rsp);
         return PARSE_OK;
       }
+      CmdService_CancelScheduledSave();
     }
     return PARSE_ERR_INVALID_FRAME;
   case VECTOR_CMD_SET_PROTOCOL: // 25 — switch active protocol
@@ -402,18 +427,45 @@ bool ProtocolVector_BuildFault(uint32_t fault_code, uint32_t warning_code,
  * @brief init Inovxio
  */
 void ProtocolVector_Init(void) {
+  if (s_power_action_ticket.marker != 0U) {
+    Protocol_CancelTrackedSend(&s_power_action_ticket);
+  }
   s_pending_power_action = VECTOR_POWER_ACTION_NONE;
+  memset(&s_power_action_ticket, 0, sizeof(s_power_action_ticket));
   s_power_action_deadline = 0u;
 }
 
 void ProtocolVector_Service(void) {
   VectorPowerAction action = s_pending_power_action;
-  if (action == VECTOR_POWER_ACTION_NONE ||
-      (int32_t)(HAL_GetTick() - s_power_action_deadline) < 0) {
+  if (action == VECTOR_POWER_ACTION_NONE) {
+    return;
+  }
+
+  bool ack_complete = Protocol_TxTicketIsComplete(&s_power_action_ticket);
+  if (!ack_complete) {
+    if ((int32_t)(HAL_GetTick() - s_power_action_deadline) >= 0) {
+      ack_complete = Protocol_TxTicketIsComplete(&s_power_action_ticket);
+      if (!ack_complete) {
+        Protocol_CancelTrackedSend(&s_power_action_ticket);
+        s_pending_power_action = VECTOR_POWER_ACTION_NONE;
+        memset(&s_power_action_ticket, 0, sizeof(s_power_action_ticket));
+        /* The first bridge disable is already effective.  Repeat it so this
+         * remains fail-closed if another path briefly touched the timer while
+         * the ACK was waiting. */
+        Emergency_DisableBridgeOutputs();
+        (void)StateMachine_RequestState(&g_ds402_state_machine,
+                                        STATE_SWITCH_ON_DISABLED);
+        ErrorManager_Report(ERROR_COMM_TIMEOUT, "Power action ACK timeout");
+      }
+    }
+  }
+  if (!ack_complete) {
     return;
   }
 
   s_pending_power_action = VECTOR_POWER_ACTION_NONE;
+  memset(&s_power_action_ticket, 0, sizeof(s_power_action_ticket));
+  Emergency_Shutdown();
   if (action == VECTOR_POWER_ACTION_BOOTLOADER) {
     Boot_RequestUpgrade();
   } else {

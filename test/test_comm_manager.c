@@ -5,6 +5,7 @@
 
 #include "calibration_context.h"
 #include "device_id.h"
+#include "error_types.h"
 #include "executor.h"
 #include "manager.h"
 #include "motor.h"
@@ -31,6 +32,7 @@ static unsigned s_parse_call_count;
 static unsigned s_send_count;
 static unsigned s_build_feedback_count;
 static unsigned s_error_report_count;
+static uint32_t s_last_error_code;
 static bool s_request_feedback;
 
 static void reset_fixture(void) {
@@ -42,6 +44,7 @@ static void reset_fixture(void) {
   s_send_count = 0U;
   s_build_feedback_count = 0U;
   s_error_report_count = 0U;
+  s_last_error_code = 0U;
   s_request_feedback = false;
   memset(&motor_data, 0, sizeof(motor_data));
   Protocol_RegisterTransport(NULL);
@@ -121,6 +124,7 @@ static int test_queue_overflow_events_are_reported_once_per_new_drop(void) {
   Protocol_GetStats(&stats);
   CHECK(stats.rx_overflow_events == 1U);
   CHECK(s_error_report_count == 1U);
+  CHECK(s_last_error_code == ERROR_COMM_RX_QUEUE_OVERFLOW);
 
   for (unsigned i = 0U; i < 40U; ++i) {
     (void)Protocol_QueueRxFrame(&frame);
@@ -129,6 +133,7 @@ static int test_queue_overflow_events_are_reported_once_per_new_drop(void) {
   Protocol_GetStats(&stats);
   CHECK(stats.rx_overflow_events == 2U);
   CHECK(s_error_report_count == 2U);
+  CHECK(s_last_error_code == ERROR_COMM_RX_QUEUE_OVERFLOW);
   return 0;
 }
 
@@ -152,9 +157,9 @@ void Detection_FeedWatchdog(uint32_t timestamp) {
   s_watchdog_timestamp = timestamp;
 }
 void ErrorManager_Report(uint32_t error_code, const char *message) {
-  (void)error_code;
   (void)message;
   s_error_report_count++;
+  s_last_error_code = error_code;
 }
 void ErrorManager_ReportFull(uint32_t error_code, const char *message,
                              const char *file, uint32_t line) {

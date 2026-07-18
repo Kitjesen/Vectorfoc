@@ -53,6 +53,7 @@
 #include "param_access.h"
 #include "param_table.h"
 #include "platform.h"
+#include "rtos/cmd_service.h"
 #include "safety_control.h"
 #include "usbd_cdc_if.h"
 #include "version.h"
@@ -84,6 +85,13 @@ typedef struct {
   uint16_t len;
 } VofaRxSlot;
 
+typedef enum {
+  SAVE_FLASH_TERMINAL_ACK_NONE = 0,
+  SAVE_FLASH_TERMINAL_ACK_RETRYING,
+  SAVE_FLASH_TERMINAL_ACK_SUCCEEDED,
+  SAVE_FLASH_TERMINAL_ACK_FAILED,
+} SaveFlashTerminalAck;
+
 static uint8_t send_buf[MAX_TXBUFFER_SIZE];
 static uint8_t receive_buf[MAX_RXBUFFER_SIZE];
 static uint16_t cnt = 0;
@@ -95,6 +103,8 @@ static volatile bool s_tx_busy;
 static volatile bool s_boot_upgrade_pending;
 static volatile bool s_save_flash_result_pending;
 static volatile bool s_save_flash_failure_reported;
+static volatile SaveFlashTerminalAck s_save_flash_terminal_ack_pending;
+static volatile bool s_save_flash_terminal_ack_sending;
 static volatile bool s_param_sync_active;
 static volatile uint32_t s_param_sync_index;
 
@@ -106,6 +116,7 @@ static volatile uint32_t s_rx_overflow_count;
 static uint32_t s_rx_overflow_reported_count;
 
 static void Studio_ProcessParamSync(void);
+static void Studio_TrySendSaveFlashTerminalAck(void);
 /* ============================================================================
  *
  * ============================================================================
@@ -206,29 +217,96 @@ uint32_t Vofa_GetReceiveOverflowCount(void) {
   return count;
 }
 
-void Vofa_ReportScheduledSaveResult(bool succeeded) {
-  bool report = false;
+static bool Studio_IsSaveFlashResultOutstanding(void) {
+  bool outstanding;
+  CRITICAL_SECTION_BEGIN();
+  outstanding = s_save_flash_result_pending ||
+                s_save_flash_terminal_ack_pending !=
+                    SAVE_FLASH_TERMINAL_ACK_NONE ||
+                s_save_flash_terminal_ack_sending;
+  CRITICAL_SECTION_END();
+  return outstanding;
+}
 
+void Vofa_ReportScheduledSaveResult(bool succeeded) {
   CRITICAL_SECTION_BEGIN();
   if (s_save_flash_result_pending) {
     if (succeeded) {
-      s_save_flash_result_pending = false;
-      s_save_flash_failure_reported = false;
-      report = true;
+      s_save_flash_terminal_ack_pending = SAVE_FLASH_TERMINAL_ACK_SUCCEEDED;
     } else if (!s_save_flash_failure_reported) {
       /* Param_ProcessScheduledSave keeps a failed request pending for retry.
        * Report the first failure honestly, then leave the request armed so a
        * later successful retry can still be acknowledged. */
       s_save_flash_failure_reported = true;
-      report = true;
+      s_save_flash_terminal_ack_pending = SAVE_FLASH_TERMINAL_ACK_RETRYING;
     }
   }
   CRITICAL_SECTION_END();
 
-  if (report) {
-    Studio_SendText(succeeded ? "ack=save_flash,succeeded"
-                              : "ack=save_flash,retrying");
+  Studio_TrySendSaveFlashTerminalAck();
+}
+
+void Vofa_ReportScheduledSaveFailed(void) {
+  CRITICAL_SECTION_BEGIN();
+  if (s_save_flash_result_pending) {
+    s_save_flash_terminal_ack_pending = SAVE_FLASH_TERMINAL_ACK_FAILED;
   }
+  CRITICAL_SECTION_END();
+
+  Studio_TrySendSaveFlashTerminalAck();
+}
+
+static void Studio_TrySendSaveFlashTerminalAck(void) {
+  SaveFlashTerminalAck pending = SAVE_FLASH_TERMINAL_ACK_NONE;
+  const char *ack = NULL;
+
+  CRITICAL_SECTION_BEGIN();
+  if (s_save_flash_terminal_ack_pending != SAVE_FLASH_TERMINAL_ACK_NONE &&
+      !s_save_flash_terminal_ack_sending) {
+    pending = s_save_flash_terminal_ack_pending;
+    s_save_flash_terminal_ack_sending = true;
+  }
+  CRITICAL_SECTION_END();
+
+  switch (pending) {
+  case SAVE_FLASH_TERMINAL_ACK_RETRYING:
+    ack = "ack=save_flash,retrying";
+    break;
+  case SAVE_FLASH_TERMINAL_ACK_SUCCEEDED:
+    ack = "ack=save_flash,succeeded";
+    break;
+  case SAVE_FLASH_TERMINAL_ACK_FAILED:
+    ack = "ack=save_flash,failed";
+    break;
+  case SAVE_FLASH_TERMINAL_ACK_NONE:
+  default:
+    return;
+  }
+
+  if (!Studio_SendText(ack)) {
+    CRITICAL_SECTION_BEGIN();
+    /* A newer result may have replaced `pending` while the enqueue attempt
+     * ran.  The claim still belongs to this sender, so always release it;
+     * otherwise the newer result would remain permanently blocked. */
+    s_save_flash_terminal_ack_sending = false;
+    CRITICAL_SECTION_END();
+    return;
+  }
+
+  CRITICAL_SECTION_BEGIN();
+  if (s_save_flash_terminal_ack_sending &&
+      s_save_flash_terminal_ack_pending == pending) {
+    s_save_flash_terminal_ack_pending = SAVE_FLASH_TERMINAL_ACK_NONE;
+    s_save_flash_terminal_ack_sending = false;
+    if (pending == SAVE_FLASH_TERMINAL_ACK_SUCCEEDED ||
+        pending == SAVE_FLASH_TERMINAL_ACK_FAILED) {
+      s_save_flash_result_pending = false;
+      s_save_flash_failure_reported = false;
+    }
+  } else if (s_save_flash_terminal_ack_sending) {
+    s_save_flash_terminal_ack_sending = false;
+  }
+  CRITICAL_SECTION_END();
 }
 
 static void Vofa_ProcessNextReceive(void) {
@@ -274,6 +352,7 @@ void Vofa_Service(void) {
   if (s_boot_upgrade_pending) {
     return;
   }
+  Studio_TrySendSaveFlashTerminalAck();
   CRITICAL_SECTION_BEGIN();
   rx_overflow_count = s_rx_overflow_count;
   CRITICAL_SECTION_END();
@@ -420,6 +499,8 @@ void Scope_Init(void) {
   s_boot_upgrade_pending = false;
   s_save_flash_result_pending = false;
   s_save_flash_failure_reported = false;
+  s_save_flash_terminal_ack_pending = SAVE_FLASH_TERMINAL_ACK_NONE;
+  s_save_flash_terminal_ack_sending = false;
   s_param_sync_active = false;
   s_param_sync_index = 0U;
   s_rx_overflow_count = 0U;
@@ -951,12 +1032,31 @@ void vofa_Receive(uint8_t *buf, uint16_t len) {
     return;
   }
   if (vofa_cmd_matches(recvStr, "save_flash=1")) {
-    Param_ScheduleSave();
+    if (Studio_IsSaveFlashResultOutstanding() ||
+        !CmdService_BeginScheduledSave()) {
+      Studio_SendText("ack=save_flash,busy");
+      return;
+    }
+
     CRITICAL_SECTION_BEGIN();
     s_save_flash_result_pending = true;
     s_save_flash_failure_reported = false;
+    s_save_flash_terminal_ack_pending = SAVE_FLASH_TERMINAL_ACK_NONE;
+    s_save_flash_terminal_ack_sending = false;
     CRITICAL_SECTION_END();
-    Studio_SendText("ack=save_flash,queued");
+
+    if (!Studio_SendText("ack=save_flash,queued")) {
+      CRITICAL_SECTION_BEGIN();
+      s_save_flash_result_pending = false;
+      s_save_flash_failure_reported = false;
+      s_save_flash_terminal_ack_pending = SAVE_FLASH_TERMINAL_ACK_NONE;
+      s_save_flash_terminal_ack_sending = false;
+      CRITICAL_SECTION_END();
+      CmdService_CancelScheduledSave();
+      return;
+    }
+
+    CmdService_CommitScheduledSave();
     return;
   }
   /* ── motor ── */

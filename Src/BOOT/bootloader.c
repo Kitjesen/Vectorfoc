@@ -29,6 +29,9 @@
 #include "usbd_cdc_if.h"
 #include <string.h>
 
+/* USB Device */
+extern void MX_USB_Device_Init(void);
+
 /* ============================================================================
  * 升级标志 (位于 RAM 末尾，复位不清除)
  * ============================================================================
@@ -67,8 +70,8 @@ bool Boot_CheckAppValid(void) {
   /* 检查 App Header */
   const AppHeader_t *header = Boot_GetAppHeader();
   if (header->magic != APP_MAGIC_NUMBER) {
-    /* Magic 不匹配，可能是旧固件，仍然允许启动 */
-    /* 但不进行 CRC 校验 */
+    /* A missing or corrupted header is not a valid application: without it
+     * the CRC/size contract cannot be verified. */
     return false;
   }
 
@@ -193,6 +196,9 @@ void Boot_JumpToApp(void) {
  * ============================================================================
  */
 void Boot_EnterUpgradeMode(void) {
+  /* Keep USB uninitialized on the normal jump-to-app path. */
+  MX_USB_Device_Init();
+
   /* 初始化协议 */
   BootProto_Init();
 

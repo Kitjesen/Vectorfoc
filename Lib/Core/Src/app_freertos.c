@@ -6,6 +6,7 @@
  */
 
 #include "FreeRTOS.h"
+#include "app_freertos.h"
 #include "cmsis_os.h"
 #include "main.h"
 #include "task.h"
@@ -22,13 +23,19 @@ osThreadId customtaskHandle;
 #define GUARD_TASK_STACK_DEPTH   256U
 #define COMM_TASK_STACK_DEPTH    512U
 
+#if defined(__GNUC__)
+#define APP_FREERTOS_CCM_STACK __attribute__((section(".ccm_bss"), aligned(8)))
+#else
+#define APP_FREERTOS_CCM_STACK
+#endif
+
 /*
  * The debug stack is CPU-only and shares CCM with the encoder calibration
  * workspace. Guard/communication stacks remain in regular SRAM to preserve
  * headroom in both physical RAM banks.
  */
 static StackType_t xDefaultTaskStack[DEFAULT_TASK_STACK_DEPTH]
-    __attribute__((section(".ccm_bss"), aligned(8)));
+    APP_FREERTOS_CCM_STACK;
 static StackType_t xGuardTaskStack[GUARD_TASK_STACK_DEPTH];
 static StackType_t xCommTaskStack[COMM_TASK_STACK_DEPTH];
 static StaticTask_t xDefaultTaskTCB;
@@ -76,6 +83,38 @@ void vApplicationGetIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffer,
   *ppxIdleTaskTCBBuffer = &xIdleTaskTCBBuffer;
   *ppxIdleTaskStackBuffer = &xIdleStack[0];
   *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
+}
+
+bool AppFreertos_GetRuntimeStats(AppFreertosRuntimeStats_t *stats) {
+  if (stats == NULL) {
+    return false;
+  }
+
+  stats->scheduler_running = false;
+  stats->task_handles_ready = false;
+  stats->default_stack_high_water_words = 0u;
+  stats->guard_stack_high_water_words = 0u;
+  stats->comm_stack_high_water_words = 0u;
+
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING) {
+    return false;
+  }
+  stats->scheduler_running = true;
+
+  if (defaultTaskHandle == NULL || guardtaskHandle == NULL ||
+      customtaskHandle == NULL) {
+    return false;
+  }
+  stats->task_handles_ready = true;
+
+  stats->default_stack_high_water_words =
+      (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)defaultTaskHandle);
+  stats->guard_stack_high_water_words =
+      (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)guardtaskHandle);
+  stats->comm_stack_high_water_words =
+      (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)customtaskHandle);
+
+  return true;
 }
 
 /**

@@ -141,12 +141,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 
 /**
  * @brief  Immediately force all TIM1 bridge outputs inactive.
- * @note   This function deliberately bypasses the motor HAL so it remains usable
- *         from fault handlers even when application state or the stack is corrupt.
+ * @note   This deliberately bypasses the motor HAL so it remains usable while
+ *         application state is transitioning.  It intentionally leaves IRQs
+ *         enabled; callers waiting for a CAN Tx event must still receive it.
  */
-void Emergency_Shutdown(void) {
-  __disable_irq();
-
+void Emergency_DisableBridgeOutputs(void) {
   TIM1->BDTR &= ~TIM_BDTR_MOE;
   TIM1->CCER &= ~(TIM_CCER_CC1E | TIM_CCER_CC1NE |
                   TIM_CCER_CC2E | TIM_CCER_CC2NE |
@@ -154,6 +153,16 @@ void Emergency_Shutdown(void) {
 
   __DSB();
   __ISB();
+}
+
+/**
+ * @brief  Put the bridge in its fatal shutdown state.
+ * @note   Fatal paths intentionally freeze all interrupts after outputs are
+ *         inactive.  Do not use this while awaiting peripheral completion.
+ */
+void Emergency_Shutdown(void) {
+  __disable_irq();
+  Emergency_DisableBridgeOutputs();
 }
 
 /**

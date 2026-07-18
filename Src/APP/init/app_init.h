@@ -18,6 +18,7 @@
  */
 #ifndef APP_INIT_H
 #define APP_INIT_H
+#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,6 +33,15 @@ extern "C" {
  *   6. Motor
  */
 void App_Init(void);
+
+/**
+ * @brief Whether the FOC ADC ISR may access the fully initialized motor HAL.
+ *
+ * ADC injected conversions can begin as soon as their TIM trigger starts,
+ * before App_Init has restored the encoder and initialized the control state.
+ * The ISR must remain inert until this returns true.
+ */
+bool App_IsFocRuntimeReady(void);
 #ifdef __cplusplus
 }
 #endif

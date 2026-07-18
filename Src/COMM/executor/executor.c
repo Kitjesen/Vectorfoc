@@ -27,6 +27,7 @@
 #include "param_access.h"
 #include "param_table.h"
 #include "platform.h"
+#include "rtos/cmd_service.h"
 #include "safety_control.h"
 #include <stdint.h>
 #include <string.h>
@@ -151,12 +152,19 @@ void Executor_ProcessCommand(const MotorCommand *cmd) {
   if (cmd->is_param_write) {
     float value = 0.0f;
     memcpy(&value, &cmd->param_value, sizeof(value));
+    const ParamEntry *entry = NULL;
+    bool need_save = Param_GetInfo(cmd->param_index, &entry) == PARAM_OK &&
+                     entry != NULL && entry->need_save;
+    if (need_save && !CmdService_BeginScheduledSave()) {
+      ErrorManager_Report(ERROR_PARAM_FLASH_WRITE, "Param write save busy");
+      return;
+    }
     ParamResult write_result = Param_WriteFromFloat(cmd->param_index, value);
-    if (write_result == PARAM_OK) {
-      const ParamEntry *entry = NULL;
-      if (Param_GetInfo(cmd->param_index, &entry) == PARAM_OK &&
-          entry != NULL && entry->need_save) {
-        Param_ScheduleSave();
+    if (need_save) {
+      if (write_result == PARAM_OK) {
+        CmdService_CommitScheduledSave();
+      } else {
+        CmdService_CancelScheduledSave();
       }
     }
   }
@@ -184,10 +192,18 @@ void Executor_ProcessCommand(const MotorCommand *cmd) {
   }
   // H.
   if (cmd->is_protocol_switch) {
-    if (cmd->target_protocol <= PROTOCOL_MIT &&
-        Param_WriteUint8(PARAM_PROTOCOL_TYPE, cmd->target_protocol) ==
-            PARAM_OK) {
-      Param_ScheduleSave();
+    if (cmd->target_protocol <= PROTOCOL_MIT) {
+      if (!CmdService_BeginScheduledSave()) {
+        ErrorManager_Report(ERROR_PARAM_FLASH_WRITE,
+                            "Protocol switch save busy");
+        return;
+      }
+      if (Param_WriteUint8(PARAM_PROTOCOL_TYPE, cmd->target_protocol) ==
+          PARAM_OK) {
+        CmdService_CommitScheduledSave();
+      } else {
+        CmdService_CancelScheduledSave();
+      }
     }
   }
 }

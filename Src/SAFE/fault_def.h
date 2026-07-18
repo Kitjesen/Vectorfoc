@@ -104,6 +104,8 @@ typedef struct {
   uint32_t pending_fault_bits; /**< /fault */
   uint32_t fault_count;        /**< fault */
   uint32_t last_fault_time;    /**< fault (ms) */
+  uint32_t pending_report_bits; /**< Fault callback reports awaiting delivery */
+  uint32_t fsm_reported_fault_bits; /**< Fault bits already sent to the FSM */
   bool initialized;
 } SafetyContext;
 /* protectionparam */

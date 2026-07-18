@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -15,12 +16,15 @@ except ImportError:  # Keep image validation usable without pyserial installed.
     serial = None
 
 try:
-    from .patch_app_header import APP_IMAGE_SIZE, AppHeader, validate_image
+    from .patch_app_header import AppHeader, validate_image
 except ImportError:
-    from patch_app_header import APP_IMAGE_SIZE, AppHeader, validate_image
+    from patch_app_header import AppHeader, validate_image
 
 APP_ADDR_START = 0x08004000
 BLOCK_SIZE = 256
+BOOT_INFO_RE = re.compile(
+    r"\bboot_info,app_start=([0-9a-fA-F]{8}),app_size=([0-9]+)\b"
+)
 
 
 def load_firmware(path: Path) -> tuple[bytes, AppHeader]:
@@ -59,6 +63,33 @@ def send_command(ser: Any, command: str) -> None:
     ser.flush()
 
 
+def parse_boot_info(response: str) -> tuple[int, int]:
+    match = BOOT_INFO_RE.search(response)
+    if match is None:
+        raise ValueError(f"malformed boot_info response: {response}")
+    app_start = int(match.group(1), 16)
+    app_size = int(match.group(2), 10)
+    return app_start, app_size
+
+
+def query_boot_info(ser: Any, image_length: int) -> tuple[int, int]:
+    send_command(ser, "boot_info")
+    app_start, app_size = parse_boot_info(wait_response(ser, "boot_info", timeout=3.0))
+    aligned_length = image_length + ((-image_length) % 8)
+    if app_start != APP_ADDR_START:
+        raise RuntimeError(
+            f"bootloader app_start mismatch: device=0x{app_start:08X}, "
+            f"uploader=0x{APP_ADDR_START:08X}"
+        )
+    if app_size <= 0:
+        raise RuntimeError(f"bootloader app_size is invalid: {app_size}")
+    if aligned_length > app_size:
+        raise RuntimeError(
+            f"image length {image_length} bytes exceeds bootloader app_size {app_size}"
+        )
+    return app_start, app_size
+
+
 def open_serial(port: str, baud: int, timeout: float = 8.0) -> Any:
     if serial is None:
         raise RuntimeError("pyserial is required: python -m pip install pyserial")
@@ -85,8 +116,6 @@ def reconnect_bootloader(ser: Any, port: str, baud: int) -> Any:
 
     boot_ser = open_serial(port, baud)
     boot_ser.reset_input_buffer()
-    send_command(boot_ser, "boot_info")
-    wait_response(boot_ser, "boot_info", timeout=3.0)
     return boot_ser
 
 
@@ -115,6 +144,8 @@ def upload_firmware(port: str, firmware_path: str, baud: int = 115200) -> bool:
         print("\n[1/5] Entering bootloader...")
         send_command(ser, "boot_enter")
         ser = reconnect_bootloader(ser, port, baud)
+        app_start, app_size = query_boot_info(ser, len(image))
+        print(f"Bootloader: app_start=0x{app_start:08X}, app_size={app_size} bytes")
 
         print("\n[2/5] Erasing application area...")
         send_command(ser, "boot_erase")
@@ -122,8 +153,8 @@ def upload_firmware(port: str, firmware_path: str, baud: int = 115200) -> bool:
 
         print(f"\n[3/5] Writing image ({len(image)} bytes)...")
         image_offset = 0
-        address = APP_ADDR_START
-        app_end_exclusive = APP_ADDR_START + APP_IMAGE_SIZE
+        address = app_start
+        app_end_exclusive = app_start + app_size
 
         while image_offset < len(image):
             raw_chunk = image[image_offset:image_offset + BLOCK_SIZE]

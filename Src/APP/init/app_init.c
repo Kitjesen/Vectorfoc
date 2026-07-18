@@ -44,6 +44,9 @@
 
 static bool s_current_offsets_ready = false;
 static bool s_initial_safety_scan_ready = false;
+static volatile bool s_foc_runtime_ready = false;
+
+bool App_IsFocRuntimeReady(void) { return s_foc_runtime_ready; }
 
 static bool App_ReportFaultCallback(uint32_t fault_bits, void *motor) {
   return Protocol_ReportFaultCallback(fault_bits, (MOTOR_DATA *)motor);
@@ -106,6 +109,7 @@ static bool App_CaptureInitialFeedback(void) {
 
 void App_Init(void) {
   __disable_irq();
+  s_foc_runtime_ready = false;
   BSPInit();
 #ifdef BOARD_XSTAR
   DWT_Delay(0.001f);
@@ -169,5 +173,10 @@ void App_Init(void) {
 
   Init_Motor_No_Calib(&motor_data);
   MHAL_PWM_Disable();
+  /* Publish readiness only after every object the 20 kHz ADC ISR dereferences
+   * has been initialized.  A data memory barrier prevents a future Cortex-M
+   * target from observing the flag before the preceding state writes. */
+  __DMB();
+  s_foc_runtime_ready = true;
   HAL_WatchdogFeed();
 }

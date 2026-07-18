@@ -110,6 +110,14 @@ ParamResult Param_GetInfo(uint16_t index, const ParamEntry **entry);
  * @note set，actual Param_ProcessScheduledSave
  */
 void Param_ScheduleSave(void);
+/** @brief true when a deferred Flash save request is pending. */
+bool Param_HasScheduledSave(void);
+/** @brief Monotonic generation for externally scheduled Flash save requests. */
+uint32_t Param_GetScheduledSaveGeneration(void);
+/** @brief Drop any pending deferred Flash save request. */
+void Param_DiscardScheduledSave(void);
+/** @brief Drop a pending save only if no newer request has arrived. */
+bool Param_DiscardScheduledSaveIfGeneration(uint32_t generation);
 /**
  * @brief  ()
  * @return true if save occurred, false otherwise

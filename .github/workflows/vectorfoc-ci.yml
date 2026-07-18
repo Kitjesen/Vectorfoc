@@ -111,3 +111,21 @@ jobs:
 
       - name: Run app-header and OTA tooling tests
         run: python3 -m unittest discover -s test -p "test_app_header_tools.py" -v
+
+  host-tests-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure host tests
+        run: cmake -S test -B test/build-ci-msvc -A x64
+
+      - name: Build host tests
+        run: cmake --build test/build-ci-msvc --config Debug --parallel
+
+      - name: Run C tests
+        run: ctest --test-dir test/build-ci-msvc -C Debug --output-on-failure
+
+      - name: Run app-header and OTA tooling tests
+        run: python -m unittest discover -s test -p "test_app_header_tools.py" -v

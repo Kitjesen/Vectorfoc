@@ -203,7 +203,9 @@ bool Motor_ClearFaults(MOTOR_DATA *motor) {
     return false;
   }
 
-  Safety_ClearFaults(&g_ds402_state_machine);
+  if (!Safety_ClearFaults(&g_ds402_state_machine)) {
+    return false;
+  }
   if (motor->state.State_Mode == STATE_MODE_GUARD) {
     // 1. fault
     motor->state.Fault_State = FAULT_STATE_NORMAL;

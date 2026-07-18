@@ -21,9 +21,6 @@
 #include "stm32g4xx_hal.h"
 #include "bootloader.h"
 
-/* USB Device */
-extern void MX_USB_Device_Init(void);
-
 /**
  * @brief  System clock configuration (simplified for bootloader)
  *         HSE 24MHz -> PLL -> 168MHz SYSCLK
@@ -83,9 +80,6 @@ int main(void)
     
     /* 初始化 GPIO */
     MX_GPIO_Init();
-    
-    /* 初始化 USB */
-    MX_USB_Device_Init();
     
     /* 进入 Bootloader 主逻辑 */
     Boot_Main();

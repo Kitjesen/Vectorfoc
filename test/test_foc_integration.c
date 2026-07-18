@@ -75,7 +75,33 @@ void Motor_Init(MotorModel_t *m) {
     m->Te = 0;
 }
 
+static int Motor_HasValidParams(const MotorModel_t *m, float dt) {
+    return m != NULL &&
+           isfinite(m->Rs) && m->Rs >= 0.0f &&
+           isfinite(m->Ld) && m->Ld > 0.0f &&
+           isfinite(m->Lq) && m->Lq > 0.0f &&
+           isfinite(m->flux) &&
+           isfinite(m->J) && m->J > 0.0f &&
+           isfinite(m->B) && m->B >= 0.0f &&
+           m->pole_pairs > 0 &&
+           isfinite(dt) && dt > 0.0f && dt <= 0.001f;
+}
+
+static int Motor_StateIsFinite(const MotorModel_t *m) {
+    return m != NULL &&
+           isfinite(m->Id) && isfinite(m->Iq) &&
+           isfinite(m->omega_e) && isfinite(m->omega_m) &&
+           isfinite(m->theta_e) && isfinite(m->theta_m) &&
+           isfinite(m->Ia) && isfinite(m->Ib) && isfinite(m->Ic) &&
+           isfinite(m->Te);
+}
+
 void Motor_Step(MotorModel_t *m, float Vd, float Vq, float dt, float load_torque) {
+    assert(Motor_HasValidParams(m, dt));
+    assert(isfinite(Vd));
+    assert(isfinite(Vq));
+    assert(isfinite(load_torque));
+
     // Current dynamics (simplified, ignoring cross-coupling)
     // dId/dt = (Vd - Rs*Id + omega_e*Lq*Iq) / Ld
     // dIq/dt = (Vq - Rs*Iq - omega_e*Ld*Id - omega_e*flux) / Lq
@@ -117,6 +143,8 @@ void Motor_Step(MotorModel_t *m, float Vd, float Vq, float dt, float load_torque
     m->Ia = Ialpha;
     m->Ib = -0.5f * Ialpha + 0.866f * Ibeta;
     m->Ic = -0.5f * Ialpha - 0.866f * Ibeta;
+
+    assert(Motor_StateIsFinite(m));
 }
 
 /*============================================================================
@@ -318,7 +346,70 @@ int test_load_disturbance_rejection(void) {
     return 1;
 }
 
-// Test 5: Clarke-Park-InversePark-InverseClarke round trip
+// Test 5: Position setpoint response through cascaded PID loops
+int test_position_setpoint_tracks_reference(void) {
+    MotorModel_t motor;
+    Motor_Init(&motor);
+
+    motor.theta_m = -0.25f;
+    motor.theta_e = motor.theta_m * motor.pole_pairs;
+    motor.omega_m = 0.0f;
+
+    PidTypeDef pid_position, pid_speed, pid_d, pid_q;
+    float position_gains[3] = {8.0f, 0.0f, 0.0f};
+    float speed_gains[3] = {0.08f, 0.8f, 0.0f};
+    float current_gains[3] = {10.0f, 100.0f, 0.0f};
+    PID_Init(&pid_position, PID_POSITION, position_gains, 20.0f, 0.0f);
+    PID_Init(&pid_speed, PID_POSITION, speed_gains, 4.0f, 2.0f);
+    PID_Init(&pid_d, PID_POSITION, current_gains, 24.0f, 10.0f);
+    PID_Init(&pid_q, PID_POSITION, current_gains, 24.0f, 10.0f);
+
+    const float initial_position = motor.theta_m;
+    const float position_ref = 1.00f;
+    const float dt = 0.0001f;
+    const int total_steps = 20000;
+    const float max_abs_speed = 30.0f;
+    const float max_abs_current = 8.0f;
+
+    float peak_abs_speed = 0.0f;
+    float peak_abs_current = 0.0f;
+
+    for (int i = 0; i < total_steps; i++) {
+        float speed_ref = PID_CalcDt(&pid_position, motor.theta_m,
+                                     position_ref, dt);
+        float Iq_ref = PID_CalcDt(&pid_speed, motor.omega_m, speed_ref, dt);
+        float Vd = PID_CalcDt(&pid_d, motor.Id, 0.0f, dt);
+        float Vq = PID_CalcDt(&pid_q, motor.Iq, Iq_ref, dt);
+
+        Motor_Step(&motor, Vd, Vq, dt, 0.0f);
+
+        ASSERT_TRUE(isfinite(motor.theta_m));
+        ASSERT_TRUE(isfinite(motor.omega_m));
+        ASSERT_TRUE(isfinite(motor.Id));
+        ASSERT_TRUE(isfinite(motor.Iq));
+
+        if (fabsf(motor.omega_m) > peak_abs_speed) {
+            peak_abs_speed = fabsf(motor.omega_m);
+        }
+        if (fabsf(motor.Iq) > peak_abs_current) {
+            peak_abs_current = fabsf(motor.Iq);
+        }
+
+        ASSERT_TRUE(peak_abs_speed <= max_abs_speed);
+        ASSERT_TRUE(peak_abs_current <= max_abs_current);
+    }
+
+    float final_error = fabsf(motor.theta_m - position_ref);
+    printf("initial=%.2f rad target=%.2f rad final=%.2f rad error=%.3f rad peak_speed=%.2f rad/s peak_iq=%.2f A ",
+           initial_position, position_ref, motor.theta_m, final_error,
+           peak_abs_speed, peak_abs_current);
+
+    ASSERT_NEAR(motor.theta_m, position_ref, 0.05f);
+
+    return 1;
+}
+
+// Test 6: Clarke-Park-InversePark-InverseClarke round trip
 int test_transform_roundtrip(void) {
     float Ia = 1.0f, Ib = -0.5f, Ic = -0.5f;
     float theta = 0.5f;  // arbitrary angle
@@ -347,7 +438,7 @@ int test_transform_roundtrip(void) {
     return 1;
 }
 
-// Test 6: SVPWM duty cycle validity
+// Test 7: SVPWM duty cycle validity
 int test_svpwm_duty_validity(void) {
     for (float angle = 0; angle < 2 * M_PI; angle += 0.1f) {
         float Valpha = cosf(angle);
@@ -365,7 +456,7 @@ int test_svpwm_duty_validity(void) {
     return 1;
 }
 
-// Test 7: Numerical stability - long run
+// Test 8: Numerical stability - long run
 int test_numerical_stability(void) {
     MotorModel_t motor;
     Motor_Init(&motor);
@@ -394,7 +485,78 @@ int test_numerical_stability(void) {
     return 1;
 }
 
-// Test 8: Zero crossing behavior
+// Test 9: Parameter sweep stability for the simplified harness
+int test_model_parameter_sweep_remains_finite(void) {
+    typedef struct {
+        float Rs;
+        float L;
+        float J;
+        float load;
+        float dt;
+    } SweepCase_t;
+
+    const SweepCase_t cases[] = {
+        {0.30f, 0.0008f, 0.00008f,  0.0000f, 0.00005f},
+        {0.50f, 0.0010f, 0.00010f,  0.0005f, 0.00010f},
+        {0.80f, 0.0015f, 0.00020f, -0.0005f, 0.00020f},
+        {0.40f, 0.0012f, 0.00015f,  0.0010f, 0.00010f},
+        {0.65f, 0.0009f, 0.00012f, -0.0010f, 0.00010f},
+    };
+
+    float max_abs_speed = 0.0f;
+    float max_abs_iq = 0.0f;
+
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        MotorModel_t motor;
+        Motor_Init(&motor);
+        motor.Rs = cases[c].Rs;
+        motor.Ld = cases[c].L;
+        motor.Lq = cases[c].L;
+        motor.J = cases[c].J;
+
+        ASSERT_TRUE(Motor_HasValidParams(&motor, cases[c].dt));
+        ASSERT_TRUE(Motor_StateIsFinite(&motor));
+
+        PidTypeDef pid_d, pid_q, pid_speed;
+        float current_gains[3] = {10.0f, 100.0f, 0.0f};
+        float speed_gains[3] = {0.05f, 0.5f, 0.0f};
+        PID_Init(&pid_d, PID_POSITION, current_gains, 24.0f, 10.0f);
+        PID_Init(&pid_q, PID_POSITION, current_gains, 24.0f, 10.0f);
+        PID_Init(&pid_speed, PID_POSITION, speed_gains, 5.0f, 3.0f);
+
+        for (int i = 0; i < 2500; i++) {
+            float speed_ref = (i < 1250) ? 40.0f : -10.0f;
+            float Iq_ref = PID_CalcDt(&pid_speed, motor.omega_m,
+                                      speed_ref, cases[c].dt);
+            float Vd = PID_CalcDt(&pid_d, motor.Id, 0.0f, cases[c].dt);
+            float Vq = PID_CalcDt(&pid_q, motor.Iq, Iq_ref, cases[c].dt);
+
+            ASSERT_TRUE(isfinite(Iq_ref));
+            ASSERT_TRUE(isfinite(Vd));
+            ASSERT_TRUE(isfinite(Vq));
+
+            Motor_Step(&motor, Vd, Vq, cases[c].dt, cases[c].load);
+
+            ASSERT_TRUE(Motor_StateIsFinite(&motor));
+            ASSERT_TRUE(fabsf(motor.omega_m) < 120.0f);
+            ASSERT_TRUE(fabsf(motor.Iq) < 12.0f);
+
+            if (fabsf(motor.omega_m) > max_abs_speed) {
+                max_abs_speed = fabsf(motor.omega_m);
+            }
+            if (fabsf(motor.Iq) > max_abs_iq) {
+                max_abs_iq = fabsf(motor.Iq);
+            }
+        }
+    }
+
+    printf("sweep_cases=%zu peak_speed=%.2f rad/s peak_iq=%.2f A ",
+           sizeof(cases) / sizeof(cases[0]), max_abs_speed, max_abs_iq);
+
+    return 1;
+}
+
+// Test 10: Zero crossing behavior
 int test_zero_crossing(void) {
     MotorModel_t motor;
     Motor_Init(&motor);
@@ -432,7 +594,7 @@ int test_zero_crossing(void) {
     return 1;
 }
 
-// Test 9: Edge cases - zero voltage
+// Test 11: Edge cases - zero voltage
 int test_edge_zero_voltage(void) {
     MotorModel_t motor;
     Motor_Init(&motor);
@@ -453,7 +615,7 @@ int test_edge_zero_voltage(void) {
     return 1;
 }
 
-// Test 10: Edge cases - maximum current
+// Test 12: Edge cases - maximum current
 int test_edge_max_current(void) {
     MotorModel_t motor;
     Motor_Init(&motor);
@@ -479,7 +641,7 @@ int test_edge_max_current(void) {
     return 1;
 }
 
-// Test 11: Frequency response - bandwidth check
+// Test 13: Frequency response - bandwidth check
 int test_current_loop_bandwidth(void) {
     MotorModel_t motor;
     Motor_Init(&motor);
@@ -535,9 +697,13 @@ int main(void) {
     TEST(speed_loop_step_response);
     TEST(speed_setpoint_switch_tracks_new_reference);
     TEST(load_disturbance_rejection);
+
+    printf("\n=== Position Loop Tests ===\n");
+    TEST(position_setpoint_tracks_reference);
     
     printf("\n=== Stability Tests ===\n");
     TEST(numerical_stability);
+    TEST(model_parameter_sweep_remains_finite);
     TEST(zero_crossing);
     
     printf("\n=== Edge Case Tests ===\n");

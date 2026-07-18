@@ -85,6 +85,8 @@ uint32_t Vofa_GetReceiveOverflowCount(void);
  * asynchronous USB acknowledgement.
  */
 void Vofa_ReportScheduledSaveResult(bool succeeded);
+/** @brief Publish terminal failure after bounded command-service retries. */
+void Vofa_ReportScheduledSaveFailed(void);
 /** @brief Release the in-flight queue slot from the USB TX-complete callback.
  */
 void Vofa_OnTransmitComplete(void);

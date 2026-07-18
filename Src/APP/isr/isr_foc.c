@@ -18,6 +18,7 @@
  * @note  motor_task.c
  */
 #include "isr_foc.h"
+#include "init/app_init.h"
 #include "adc_sample_guard.h"
 #include "adc.h"
 #include "encoder_failure_guard.h"
@@ -132,6 +133,12 @@ static inline void ISR_HandleInvalidAdcSample(void) {
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
   if (hadc->Instance != HW_ADC_CURRENT.Instance)
     return;
+  /* ADC interrupts are armed before App_Init completes encoder/control setup.
+   * Returning here is safe because the HAL has already acknowledged the JEOS
+   * interrupt before dispatching this callback. */
+  if (!App_IsFocRuntimeReady()) {
+    return;
+  }
 #if ADJUST_EN
   ISR_UpdateSensors(&motor_data);
 #else

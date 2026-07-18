@@ -16,7 +16,10 @@
 #include "motor_hal_api.h"
 #include "motor_plant.h"
 #include "fsm.h"
+#include "stm32g4xx_hal.h"
+#include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 
 // External access to mock
@@ -36,6 +39,35 @@ extern void MotorStateTask(MOTOR_DATA *motor);
 // Simple global for simulation
 static MotorPlant_t plant;
 static MOTOR_DATA motor;
+static ADC_TypeDef adc1_regs;
+static ADC_TypeDef adc2_regs;
+ADC_HandleTypeDef hadc1 = {.Instance = &adc1_regs};
+ADC_HandleTypeDef hadc2 = {.Instance = &adc2_regs};
+
+static int Fail(const char *message) {
+  printf("FAIL: %s\n", message);
+  return 1;
+}
+
+static int IsBoundedFinite(const char *name, float value, float limit) {
+  if (!isfinite(value)) {
+    printf("FAIL: %s is not finite: %.6f\n", name, value);
+    return 0;
+  }
+  if (fabsf(value) > limit) {
+    printf("FAIL: %s out of bounds: %.6f > %.6f\n", name, value, limit);
+    return 0;
+  }
+  return 1;
+}
+
+static int DutyIsValid(const char *name, float duty) {
+  if (!isfinite(duty) || duty < 0.0f || duty > 1.0f) {
+    printf("FAIL: %s duty out of range: %.6f\n", name, duty);
+    return 0;
+  }
+  return 1;
+}
 
 // Helper to convert Duty Cycle to Voltage
 void GetAppliedVoltage(float v_bus, float *v_alpha, float *v_beta) {
@@ -75,8 +107,18 @@ int main() {
   // Control Config
   motor.Controller.current_limit = 10.0f;
   motor.Controller.voltage_limit = 24.0f;
+  motor.Controller.vel_limit = 20.0f;
   motor.Controller.current_ctrl_p_gain = 10.0f;  // Roughly L * BW
   motor.Controller.current_ctrl_i_gain = 100.0f; // Roughly R * BW
+  motor.IdPID.Kp = motor.Controller.current_ctrl_p_gain;
+  motor.IdPID.Ki = motor.Controller.current_ctrl_i_gain;
+  motor.IqPID.Kp = motor.Controller.current_ctrl_p_gain;
+  motor.IqPID.Ki = motor.Controller.current_ctrl_i_gain;
+  motor.VelPID.Kp = 0.05f;
+  motor.VelPID.Ki = 1.0f;
+  motor.VelPID.max_out = motor.Controller.current_limit;
+  motor.VelPID.max_iout = motor.Controller.current_limit;
+  motor.params_updated = true;
 
   // Init State - set FSM to OPERATION_ENABLED so MotorStateTask maps to RUNNING
   StateMachine_Init(&g_ds402_state_machine);
@@ -84,10 +126,14 @@ int main() {
   motor.state.Control_Mode = CONTROL_MODE_VELOCITY;
 
   // Target
-  motor.Controller.vel_setpoint = 50.0f / M_2PI; // 50 rad/s
+  motor.Controller.input_velocity = 50.0f / M_2PI; // 50 rad/s
+  motor.Controller.vel_setpoint = motor.Controller.input_velocity;
 
   // 3. Open Log
   FILE *f = fopen("sim_response.csv", "w");
+  if (f == NULL) {
+    return Fail("could not open sim_response.csv");
+  }
   fprintf(f, "Time,RefVel,ActVel,Iq,Id,Ialpha_Sim,Ibeta_Sim\n");
 
   // 4. Run Loop
@@ -98,6 +144,13 @@ int main() {
     float v_alpha, v_beta;
     GetAppliedVoltage(24.0f, &v_alpha, &v_beta);
     MotorPlant_Step(&plant, v_alpha, v_beta, 0.0f); // 0 Load
+
+    if (!IsBoundedFinite("plant omega", plant.omega, 500.0f) ||
+        !IsBoundedFinite("plant i_alpha", plant.i_alpha, 80.0f) ||
+        !IsBoundedFinite("plant i_beta", plant.i_beta, 80.0f)) {
+      fclose(f);
+      return 1;
+    }
 
     // --- Feedback to Sensor ---
     float ia, ib, ic;
@@ -127,6 +180,16 @@ int main() {
     // 3. Run FOC Logic
     MotorStateTask(&motor);
 
+    float da, db, dc;
+    MockHAL_GetPWM(&da, &db, &dc);
+    if (!DutyIsValid("phase A", da) || !DutyIsValid("phase B", db) ||
+        !DutyIsValid("phase C", dc) ||
+        !IsBoundedFinite("Iq output", motor.algo_output.Iq, 10.5f) ||
+        !IsBoundedFinite("Id output", motor.algo_output.Id, 10.5f)) {
+      fclose(f);
+      return 1;
+    }
+
     // --- Log ---
     if (i % 10 == 0) { // Log every 10th step
       fprintf(f, "%.4f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f\n", t,
@@ -136,6 +199,12 @@ int main() {
   }
 
   fclose(f);
+  float final_error = fabsf(plant.omega - 50.0f);
+  if (final_error > 35.0f) {
+    printf("FAIL: final velocity error too high: %.6f rad/s\n", final_error);
+    return 1;
+  }
+
   printf("Simulation Complete. Data saved to sim_response.csv\n");
   return 0;
 }
