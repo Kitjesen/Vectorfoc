@@ -229,6 +229,15 @@ add_executable(test_runner_param_typed_access
 )
 register_test_target(test_runner_param_typed_access)
 
+add_executable(test_runner_runtime_settings
+    test_runtime_settings.c
+    ${PROJ_ROOT}/Src/APP/settings/runtime_settings.c
+)
+target_include_directories(test_runner_runtime_settings PRIVATE
+    ${PROJ_ROOT}/Src/SAFE
+)
+register_test_target(test_runner_runtime_settings)
+
 add_executable(test_runner_cmd_service_persistent_rollback
     test_cmd_service_persistent_rollback.c
     ${PROJ_ROOT}/Src/APP/rtos/cmd_service.c

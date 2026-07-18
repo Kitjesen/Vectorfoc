@@ -26,6 +26,9 @@ static FlashStorageResult s_storage_load_result = FLASH_STORAGE_OK;
 static bool s_storage_has_valid_data = true;
 static int s_storage_save_count;
 static FlashParamData s_storage_image;
+static int s_runtime_apply_count;
+static uint16_t s_runtime_last_index;
+static void *s_runtime_last_context;
 
 static const ParamEntry s_entries[] = {
     {.index = PARAM_MOTOR_RS,
@@ -176,6 +179,9 @@ static void ResetState(void) {
   s_storage_result = FLASH_STORAGE_OK;
   s_storage_load_result = FLASH_STORAGE_OK;
   s_storage_has_valid_data = true;
+  s_runtime_apply_count = 0;
+  s_runtime_last_index = 0U;
+  s_runtime_last_context = NULL;
   memset(&s_storage_image, 0, sizeof(s_storage_image));
   s_storage_image.motor_rs = 2.5f;
   s_storage_image.motor_ls = 1.0f;
@@ -218,6 +224,12 @@ static void ResetState(void) {
   s_storage_image.ladrc_max_output = 10.0f;
 }
 
+static void RuntimeApplySpy(void *context, uint16_t index) {
+  s_runtime_apply_count++;
+  s_runtime_last_context = context;
+  s_runtime_last_index = index;
+}
+
 static int TestReadMismatchDoesNotOverwrite(void) {
   struct {
     uint8_t before;
@@ -254,6 +266,49 @@ static int TestCorrectTypedAccess(void) {
   if (Param_WriteUint32(PARAM_CAN_TIMEOUT, 2500U) != PARAM_OK ||
       Param_ReadUint32(PARAM_CAN_TIMEOUT, &timeout) != PARAM_OK ||
       timeout != 2500U) {
+    return 1;
+  }
+  return 0;
+}
+
+static int TestRuntimeAdapterObservesAcceptedWritesAndBatchRestore(void) {
+  static int context_token;
+
+  ResetState();
+  Param_SetRuntimeApplyCallback(RuntimeApplySpy, &context_token);
+
+  if (Param_WriteUint32(PARAM_CAN_TIMEOUT, 2500U) != PARAM_OK ||
+      s_runtime_apply_count != 1 ||
+      s_runtime_last_context != &context_token ||
+      s_runtime_last_index != PARAM_CAN_TIMEOUT) {
+    Param_SetRuntimeApplyCallback(NULL, NULL);
+    return 1;
+  }
+
+  s_runtime_apply_count = 0;
+  if (Param_WriteFromFloat(PARAM_CAN_ID, 7.5f) != PARAM_ERR_OUT_OF_RANGE ||
+      s_runtime_apply_count != 0) {
+    Param_SetRuntimeApplyCallback(NULL, NULL);
+    return 1;
+  }
+
+  if (Param_LoadFromFlash() != PARAM_OK || s_runtime_apply_count != 1 ||
+      s_runtime_last_index != PARAM_RUNTIME_APPLY_ALL) {
+    Param_SetRuntimeApplyCallback(NULL, NULL);
+    return 1;
+  }
+
+  s_runtime_apply_count = 0;
+  if (Param_RestoreDefaults() != PARAM_OK || s_runtime_apply_count != 1 ||
+      s_runtime_last_index != PARAM_RUNTIME_APPLY_ALL) {
+    Param_SetRuntimeApplyCallback(NULL, NULL);
+    return 1;
+  }
+
+  Param_SetRuntimeApplyCallback(NULL, NULL);
+  s_runtime_apply_count = 0;
+  if (Param_WriteUint32(PARAM_CAN_TIMEOUT, 2501U) != PARAM_OK ||
+      s_runtime_apply_count != 0) {
     return 1;
   }
   return 0;
@@ -442,6 +497,10 @@ int main(void) {
   }
   if (TestCorrectTypedAccess()) {
     printf("FAIL correct typed access\n");
+    return 1;
+  }
+  if (TestRuntimeAdapterObservesAcceptedWritesAndBatchRestore()) {
+    printf("FAIL runtime adapter did not observe parameter changes\n");
     return 1;
   }
   if (TestWriteFromFloatRejectsNonFiniteValues()) {

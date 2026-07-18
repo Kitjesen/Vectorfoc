@@ -35,6 +35,31 @@
 #ifndef PARAM_ACCESS_H
 #define PARAM_ACCESS_H
 #include "param_table.h"
+
+/**
+ * Marker delivered to the runtime adapter after a batch restore or when the
+ * application explicitly asks for all runtime settings to be applied.
+ * ParamIndex values occupy the persisted range below this marker.
+ */
+#define PARAM_RUNTIME_APPLY_ALL UINT16_MAX
+
+/**
+ * Runtime adapter seam.  The callback runs after an accepted parameter write
+ * has left the parameter critical section, or once after a batch restore.
+ * It must not write parameters recursively.
+ */
+typedef void (*ParamRuntimeApplyCallback)(void *context, uint16_t index);
+
+/**
+ * Install or clear the runtime adapter.  Install it before runtime changes
+ * need to take effect; passing NULL clears the adapter.
+ */
+void Param_SetRuntimeApplyCallback(ParamRuntimeApplyCallback callback,
+                                   void *context);
+
+/** Ask the installed runtime adapter to apply every persisted runtime value. */
+void Param_ApplyRuntimeState(void);
+
 /**
  * @brief floatparam ()
  * @param index param

@@ -85,7 +85,7 @@ cmake --build build-test --parallel
 ctest --test-dir build-test --output-on-failure
 ```
 
-当前 CTest 注册 45 个自动测试。最近一次从零配置的 Clang/Ninja 主机构建已通过 45/45，覆盖算法、通信、参数存储、Bootloader 协议、App Header 工具、安全保护、ADC/编码器保护，以及 VectorFOC/X-STAR-S 通信分支。新增实际路径回归覆盖 ADC shared IRQ 分发、独立注册的 X-STAR 双 ADC 新鲜度门控、FSM 过渡期桥臂关断、保存终态回滚、ADC ISR 启动门控、`MotorStateTask`、闭环 plant、确定性 ADC 噪声、故障清除状态契约、保存维护租约、FreeRTOS 栈水位采样和 CAN 受确认的重启/Bootloader ACK。若使用 Visual Studio 多配置生成器运行测试，需要加配置参数，例如：
+当前 CTest 注册 46 个自动测试。最近一次从零配置的 Clang/Ninja 主机构建已通过 46/46，覆盖算法、通信、参数存储、运行时设置适配器、Bootloader 协议、App Header 工具、安全保护、ADC/编码器保护，以及 VectorFOC/X-STAR-S 通信分支。新增实际路径回归覆盖 ADC shared IRQ 分发、独立注册的 X-STAR 双 ADC 新鲜度门控、FSM 过渡期桥臂关断、保存终态回滚、ADC ISR 启动门控、`MotorStateTask`、闭环 plant、确定性 ADC 噪声、故障清除状态契约、保存维护租约、FreeRTOS 栈水位采样和 CAN 受确认的重启/Bootloader ACK。若使用 Visual Studio 多配置生成器运行测试，需要加配置参数，例如：
 
 ```powershell
 cmake --build build-test --config Debug --parallel

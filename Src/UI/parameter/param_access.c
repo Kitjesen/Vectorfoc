@@ -19,15 +19,9 @@
 #include "param_access.h"
 #include "error_manager.h"
 #include "error_types.h"
-#include "fault_detection.h"
 #include "param_storage.h"
 #if !defined(TEST_ENV)
-#include "control/control.h"
 #include "config.h"
-#include "hal_encoder.h"
-#include "main.h"
-#include "motor.h"
-#include "manager.h"
 #include "platform.h"
 #if defined(BOARD_XSTAR)
 #include "abz_encoder.h"
@@ -51,98 +45,25 @@ static volatile uint32_t s_param_save_generation = 0U;
 static bool s_param_system_initialized = false;
 static bool s_runtime_side_effects_deferred = false;
 static FlashParamData s_flash_workspace;
+static ParamRuntimeApplyCallback s_runtime_apply_callback = NULL;
+static void *s_runtime_apply_context = NULL;
 
-static void Param_ApplyAddOffset(float offset) {
-#if !defined(TEST_ENV)
-  (void)MHAL_Encoder_SetOffset(offset);
-#else
-  (void)offset;
-#endif
+void Param_SetRuntimeApplyCallback(ParamRuntimeApplyCallback callback,
+                                   void *context) {
+  s_runtime_apply_context = context;
+  s_runtime_apply_callback = callback;
 }
 
-#if !defined(TEST_ENV)
-static void Param_ApplyLadrcConfig(void) {
-  PID_clear(&motor_data.VelPID);
-  LADRC_Init(&motor_data.ladrc_state, &motor_data.ladrc_config);
-}
-
-static void Param_ApplyAllRuntimeState(void) {
-  CONTROL_MODE control_mode;
-  CurrentLoop_ApplyConfiguredGains(&motor_data);
-  Param_ApplyLadrcConfig();
-  Param_ApplyAddOffset(g_add_offset);
-  Detection_SetCANTimeout(g_can_timeout_ms);
-  if (Motor_RunModeToControlMode(g_run_mode, &control_mode)) {
-    motor_data.state.Control_Mode = control_mode;
-  }
-  if (g_protocol_type <= (uint8_t)PROTOCOL_MIT) {
-    Protocol_SetType((ProtocolType)g_protocol_type);
-  }
-}
-
-static void Param_ApplyRuntimeSideEffects(uint16_t index,
-                                          const ParamEntry *entry) {
-  if (s_runtime_side_effects_deferred) {
+static void Param_NotifyRuntimeChange(uint16_t index) {
+  if (s_runtime_side_effects_deferred || s_runtime_apply_callback == NULL) {
     return;
   }
-
-  switch (index) {
-  case PARAM_MOTOR_RS:
-  case PARAM_MOTOR_LS:
-  case PARAM_MOTOR_FLUX:
-  case PARAM_MOTOR_POLE_PAIRS:
-    motor_data.params_updated = true;
-    break;
-  case PARAM_CUR_KP:
-  case PARAM_CUR_KI:
-  case PARAM_LIMIT_CURRENT:
-  case PARAM_LIMIT_SPEED:
-    CurrentLoop_ApplyConfiguredGains(&motor_data);
-    break;
-  case PARAM_SPD_KP:
-  case PARAM_SPD_KI:
-    PID_clear(&motor_data.VelPID);
-    break;
-  case PARAM_POS_KP:
-    PID_clear(&motor_data.PosPID);
-    break;
-  case PARAM_RUN_MODE: {
-    CONTROL_MODE control_mode;
-    if (Motor_RunModeToControlMode(*(const uint8_t *)entry->ptr,
-                                   &control_mode)) {
-      motor_data.state.Control_Mode = control_mode;
-    }
-    break;
-  }
-  case PARAM_PROTOCOL_TYPE:
-    Protocol_SetType((ProtocolType)*(const uint8_t *)entry->ptr);
-    break;
-  default:
-    break;
-  }
-
-  if (index == PARAM_ADD_OFFSET) {
-    Param_ApplyAddOffset(*(const float *)entry->ptr);
-  }
-
-  if (index == PARAM_CAN_TIMEOUT && entry->type == PARAM_TYPE_UINT32) {
-    Detection_SetCANTimeout(*(const uint32_t *)entry->ptr);
-  }
-
-  if (index == PARAM_LADRC_ENABLE || index == PARAM_LADRC_OMEGA_O ||
-      index == PARAM_LADRC_OMEGA_C || index == PARAM_LADRC_B0 ||
-      index == PARAM_LADRC_MAX_OUT) {
-    Param_ApplyLadrcConfig();
-  }
+  s_runtime_apply_callback(s_runtime_apply_context, index);
 }
-#else
-static void Param_ApplyAllRuntimeState(void) {}
-static void Param_ApplyRuntimeSideEffects(uint16_t index,
-                                          const ParamEntry *entry) {
-  (void)index;
-  (void)entry;
+
+void Param_ApplyRuntimeState(void) {
+  Param_NotifyRuntimeChange(PARAM_RUNTIME_APPLY_ALL);
 }
-#endif
 
 static void Param_CollectEncoderCalibration(FlashParamData *flash_data) {
   if (flash_data == NULL) {
@@ -456,7 +377,7 @@ static ParamResult Param_WriteRaw(uint16_t index, const void *data) {
   CRITICAL_SECTION_END();
 #endif
   if (result == PARAM_OK) {
-    Param_ApplyRuntimeSideEffects(index, entry);
+    Param_NotifyRuntimeChange(index);
   }
   return result;
 }
@@ -852,7 +773,7 @@ static void ApplyParamsFromFlashData(const FlashParamData *flash_data) {
 #if !defined(TEST_ENV)
   CRITICAL_SECTION_END();
 #endif
-  Param_ApplyAllRuntimeState();
+  Param_ApplyRuntimeState();
 }
 
 static ParamResult Param_ValidateFloatValue(uint16_t index, float value) {
@@ -1037,7 +958,7 @@ ParamResult Param_RestoreDefaults(void) {
   CRITICAL_SECTION_END();
 #endif
   if (result == PARAM_OK) {
-    Param_ApplyAllRuntimeState();
+    Param_ApplyRuntimeState();
   }
   return result;
 }

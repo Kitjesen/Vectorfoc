@@ -9,8 +9,11 @@ Parameter 模块集中管理 VectorFOC 固件的运行参数。它负责：
 - 参数表初始化、默认值加载和元数据查询；
 - 类型安全读写、范围校验、读写权限校验；
 - 将通信链路上的 `float` 表示转换为参数表中的实际类型；
-- 参数写入后的运行时副作用同步；
 - 双页事务化 Flash 持久化和旧版数据迁移。
+
+参数写入后的运行时生效由 APP 的 `RuntimeSettings` adapter 负责。参数
+模块只在成功写入 RAM 后发布参数索引；它不直接控制 PID、协议、CAN timeout
+或编码器 offset HAL。
 
 应用层优先使用 `param_access.h` 中的接口。`param_table.h` 和 `param_storage.h` 主要供参数模块内部、测试代码或低层维护逻辑使用。
 
@@ -18,9 +21,10 @@ Parameter 模块集中管理 VectorFOC 固件的运行参数。它负责：
 
 | 层 | 文件 | 职责 |
 | --- | --- | --- |
-| Access | `param_access.h/.c` | 公开读写 API、范围校验、保存/恢复、运行时副作用 |
+| Access | `param_access.h/.c` | 公开读写 interface、范围校验、保存/恢复、运行时变更通知 |
 | Table | `param_table.h/.c` | 参数索引、类型、默认值、上下限、实际变量指针 |
 | Storage | `param_storage.h/.c` | 双页 Flash 镜像、CRC、generation、commit 标记、旧格式迁移 |
+| Runtime adapter | `Src/APP/settings/runtime_settings.h/.c` | 在 motor、encoder、protocol 就绪后，把变更应用到运行时对象 |
 
 ## 初始化流程
 
@@ -33,7 +37,7 @@ if (result != PARAM_OK) {
 }
 ```
 
-`Param_SystemInitOnce()` 会先执行 `ParamTable_Init()`，再尝试 `Param_LoadFromFlash()`。该函数具备一次性保护，重复调用会直接返回 `PARAM_OK`。
+`Param_SystemInitOnce()` 会先执行 `ParamTable_Init()`，再尝试 `Param_LoadFromFlash()`。该函数具备一次性保护，重复调用会直接返回 `PARAM_OK`。启动阶段它只恢复参数值；APP 会在 encoder、protocol 和 motor runtime 都就绪后安装 `RuntimeSettings` adapter，并调用 `Param_ApplyRuntimeState()` 统一重放。
 
 如果需要恢复出厂值：
 
@@ -77,6 +81,13 @@ ParamResult Param_WriteUint32(uint16_t index, uint32_t value);
 ParamResult Param_ReadInt32(uint16_t index, int32_t *value);
 ParamResult Param_WriteInt32(uint16_t index, int32_t value);
 ```
+
+### Runtime adapter seam
+
+`Param_SetRuntimeApplyCallback()` 为 APP 提供一个小 interface。成功的单次
+写入通知对应参数索引；从 Flash 批量恢复、恢复默认值或 APP 显式重放时，只
+通知一次 `PARAM_RUNTIME_APPLY_ALL`。callback 在参数 critical section 之外
+执行，且不得递归写参数。
 
 这些接口会检查：
 

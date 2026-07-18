@@ -40,6 +40,7 @@
 #include "motor.h"
 #include "param_access.h"
 #include "safety_control.h"
+#include "settings/runtime_settings.h"
 #include <math.h>
 
 static bool s_current_offsets_ready = false;
@@ -149,7 +150,7 @@ void App_Init(void) {
     ERROR_REPORT(ERROR_MOTOR_ENCODER_SPI, "Encoder init failed");
     Error_Handler();
   }
-  if (MHAL_Encoder_SetOffset(g_add_offset) != 0) {
+  if (RuntimeSettings_ApplyEncoderOffset() != 0) {
     ERROR_REPORT(ERROR_MOTOR_ENCODER_SPI, "Encoder offset restore failed");
   }
   if (!App_CaptureInitialFeedback()) {
@@ -168,11 +169,17 @@ void App_Init(void) {
   CAN_Transport_Init();
   Protocol_RegisterTransport(CAN_Transport_GetInterface());
   Protocol_Init(App_GetBootProtocol());
-  Detection_SetCANTimeout(g_can_timeout_ms);
   Safety_RegisterFaultCallback(App_ReportFaultCallback);
 
   Init_Motor_No_Calib(&motor_data);
   MHAL_PWM_Disable();
+  /*
+   * Parameter storage is intentionally initialized before the encoder,
+   * protocol and motor runtime exist.  Install the APP adapter only now, then
+   * replay the persisted values once every target module is ready.
+   */
+  RuntimeSettings_InstallAdapter();
+  Param_ApplyRuntimeState();
   /* Publish readiness only after every object the 20 kHz ADC ISR dereferences
    * has been initialized.  A data memory barrier prevents a future Cortex-M
    * target from observing the flag before the preceding state writes. */
