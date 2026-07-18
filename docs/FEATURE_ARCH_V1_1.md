@@ -1,5 +1,7 @@
 # VectorFOC v1.1 功能架构设计
 
+> **历史设计草案**：本文不覆盖当前 scheduled-save 运行时回滚、构建矩阵或安全验证状态；当前能力、验证结果和安全边界以 `README.md` 与 `PROJECT_OVERVIEW.md` 为准。
+
 > 状态：**草案（待评审）**
 > 作者：穹沛科技 · VectorFOC 团队
 > 版本：v1.1.0-draft

@@ -10,7 +10,8 @@ _Min_Stack_Size = 0x400;     /* required amount of stack */
 /* Specify the memory areas */
 MEMORY
 {
-RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 22K
+RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 0x57F0
+BOOTFLAG (rw)  : ORIGIN = 0x200057F0, LENGTH = 0x10
 CCMRAM (xrw)   : ORIGIN = 0x10000000, LENGTH = 10K
 /* Reserve pages 62 and 63 (last 4 KiB) for transactional parameters. */
 FLASH (rx)     : ORIGIN = 0x08000000, LENGTH = 124K
@@ -123,6 +124,13 @@ SECTIONS
     __bss_end__ = _ebss;
   } >RAM
 
+  .boot_flag (NOLOAD) :
+  {
+    . = ALIGN(4);
+    KEEP(*(.boot_flag))
+    . = ALIGN(4);
+  } >BOOTFLAG
+
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_heap_stack :
   {
@@ -144,5 +152,7 @@ SECTIONS
 
   .ARM.attributes 0 : { *(.ARM.attributes) }
 
+  ASSERT(SIZEOF(.boot_flag) <= LENGTH(BOOTFLAG), "boot flag exceeds reserved RAM")
+  ASSERT(ADDR(.boot_flag) == ORIGIN(BOOTFLAG), "boot flag address mismatch")
   ASSERT(SIZEOF(.ccm_bss) <= LENGTH(CCMRAM), "CCM RAM overflow")
 }

@@ -103,8 +103,24 @@ static inline bool ISR_ADCHasError(ADC_HandleTypeDef *hadc) {
   const uint32_t adc_error_mask = HAL_ADC_ERROR_OVR | HAL_ADC_ERROR_JQOVF |
                                   HAL_ADC_ERROR_INTERNAL;
   return (hadc->ErrorCode & adc_error_mask) != 0u ||
-         __HAL_ADC_GET_FLAG(hadc, ADC_FLAG_OVR) != 0u;
+         __HAL_ADC_GET_FLAG(hadc, ADC_FLAG_OVR) != 0u ||
+         __HAL_ADC_GET_FLAG(hadc, ADC_FLAG_JQOVF) != 0u;
 }
+
+#if defined(BOARD_XSTAR)
+static inline void ISR_ADCClearSequenceComplete(ADC_HandleTypeDef *hadc) {
+#if defined(__HAL_ADC_CLEAR_FLAG)
+  __HAL_ADC_CLEAR_FLAG(hadc, ADC_FLAG_JEOS);
+#elif defined(TEST_ENV)
+  hadc->Flags &= ~ADC_FLAG_JEOS;
+  if (hadc->Instance != NULL) {
+    hadc->Instance->ISR &= ~ADC_FLAG_JEOS;
+  }
+#else
+  (void)hadc;
+#endif
+}
+#endif
 
 static inline AdcSampleRaw ISR_ReadRawAdcSample(void) {
   AdcSampleRaw sample = {
@@ -118,9 +134,19 @@ static inline AdcSampleRaw ISR_ReadRawAdcSample(void) {
 
 static inline bool ISR_ADCValidateFreshSample(ADC_HandleTypeDef *hadc) {
   AdcSampleRaw sample = ISR_ReadRawAdcSample();
+  bool sequence_complete = ISR_ADCSequenceComplete(hadc);
+  bool adc_error = ISR_ADCHasError(hadc);
+#if defined(BOARD_XSTAR)
+  sequence_complete = sequence_complete && ISR_ADCSequenceComplete(&HW_ADC2_CURRENT);
+  adc_error = adc_error || ISR_ADCHasError(&HW_ADC2_CURRENT);
+#endif
   AdcSampleGuardStatus status = AdcSampleGuard_Check(
-      &s_adc_sample_guard, &sample, ISR_ADCSequenceComplete(hadc),
-      ISR_ADCHasError(hadc));
+      &s_adc_sample_guard, &sample, sequence_complete, adc_error);
+#if defined(BOARD_XSTAR)
+  if (status == ADC_SAMPLE_GUARD_OK) {
+    ISR_ADCClearSequenceComplete(&HW_ADC2_CURRENT);
+  }
+#endif
   return status == ADC_SAMPLE_GUARD_OK;
 }
 

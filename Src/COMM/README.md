@@ -1,6 +1,6 @@
 # Communication Module
 
-**Status**: ✅ Active - Production Ready
+**Status**: Active — host/source tested; HIL CAN-bus validation pending
 
 ## 概述
 
@@ -49,7 +49,7 @@ communication/
 | 8 | 触发校准 | Data[0]: 0=Full, 1=RL, 2=Enc |
 | 11 | 系统复位 | 软复位MCU |
 | 12 | 清除故障 | 恢复到IDLE状态 |
-| 13 | 进入Bootloader | 跳转到系统Bootloader (待完善) |
+| 13 | 进入Bootloader | VectorFOC 板在 ACK 的 Tx event 确认后请求进入 Bootloader；X-STAR-S 返回 `unsupported` |
 | 17 | 读取参数 | 读单个参数 |
 | 18 | 写入参数 | 写单个参数 |
 | 21 | 故障反馈 | 返回故障和警告 |
@@ -76,6 +76,8 @@ Bit 7-0:   Target Node ID
 - 位置、速度分别使用可配置的 units/rad；`6071h` 目标转矩使用转矩限制的千分比
 - Heartbeat（仅 CANopen 模式发送）
 - Emergency
+
+NMT `STOP` 后节点只处理 NMT；RPDO1 与 SDO download 会被忽略，不会改变电机命令或重新上电。
 
 ### 3. MIT Cheetah协议 (`mit/`)
 
@@ -137,6 +139,8 @@ ProtocolType Protocol_GetType(void);
 ParseResult Protocol_ParseFrame(const CAN_Frame*, MotorCommand*);
 bool Protocol_BuildFeedback(const MotorStatus*, CAN_Frame*);
 ```
+
+Vector `GET_ID` 快路径只接受 29-bit extended frame；标准帧、RTR 帧和不完整帧不会被该路径接受或用于喂 CAN watchdog。
 
 ## 共享类型 (`types.h`)
 
@@ -259,7 +263,7 @@ case PROTOCOL_MODBUS:
 | CAN速率 | 1Mbps |
 | 反馈频率 | 1kHz (可配置) |
 | 协议切换时间 | <1ms |
-| 内存占用 | ~5KB (所有协议) |
+| 内存占用 | 以每个 Release 链接输出为准 |
 
 
 

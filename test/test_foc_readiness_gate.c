@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 
 #include "isr_foc.h"
+#include "adc_sample_guard.h"
 #include "motor.h"
 #include "motor_hal_api.h"
 #include "watchdog_supervisor.h"
@@ -86,6 +87,7 @@ static void reset_fixture(bool ready) {
   s_adc1_regs.JDR2 = 1100u;
   s_adc1_regs.JDR3 = 1200u;
   s_adc1_regs.JDR4 = 3000u;
+  s_adc2_regs.JDR1 = 1050u;
   hadc1.ErrorCode = 0u;
   hadc1.Flags = ADC_FLAG_JEOS;
   hadc2.ErrorCode = 0u;
@@ -146,10 +148,65 @@ static int test_callback_enters_runtime_path_when_ready(void) {
   return 0;
 }
 
+#if defined(BOARD_XSTAR)
+static int test_xstar_rejects_missing_adc2_injected_completion(void) {
+  reset_fixture(true);
+  hadc2.Flags = 0u;
+  uint32_t heartbeat_before = WatchdogSupervisor_GetFOCHeartbeat();
+
+  HAL_ADCEx_InjectedConvCpltCallback(&hadc1);
+
+  if (s_adc_update_count != 0u || s_encoder_update_count != 0u ||
+      s_safety_fast_count != 0u || s_motor_state_count != 0u ||
+      s_observer_count != 0u || s_pwm_brake_count != 1u ||
+      s_fault_count != 0u ||
+      WatchdogSupervisor_GetFOCHeartbeat() != heartbeat_before) {
+    printf("FAIL X-STAR ISR accepted incomplete ADC2 injected sample\n");
+    return 1;
+  }
+
+  for (uint8_t i = 1u; i < ADC_SAMPLE_GUARD_FAILURE_LIMIT; ++i) {
+    HAL_ADCEx_InjectedConvCpltCallback(&hadc1);
+  }
+
+  if (s_pwm_brake_count != ADC_SAMPLE_GUARD_FAILURE_LIMIT ||
+      s_fault_count != 1u) {
+    printf("FAIL X-STAR stale ADC2 did not escalate to ADC stale fault\n");
+    return 1;
+  }
+  return 0;
+}
+
+static int test_xstar_accepting_sample_arms_next_adc2_completion_check(void) {
+  reset_fixture(true);
+
+  HAL_ADCEx_InjectedConvCpltCallback(&hadc1);
+
+  if ((hadc2.Flags & ADC_FLAG_JEOS) != 0u || s_adc_update_count != 1u ||
+      s_pwm_brake_count != 0u || s_fault_count != 0u) {
+    printf("FAIL X-STAR ISR did not accept and arm ADC2 freshness check\n");
+    return 1;
+  }
+
+  HAL_ADCEx_InjectedConvCpltCallback(&hadc1);
+
+  if (s_adc_update_count != 1u || s_pwm_brake_count != 1u ||
+      s_fault_count != 0u) {
+    printf("FAIL X-STAR ISR reused stale ADC2 completion marker\n");
+    return 1;
+  }
+  return 0;
+}
+#endif
+
 int main(void) {
   int failures = 0;
   failures += test_callback_does_not_touch_runtime_when_not_ready();
   failures += test_callback_enters_runtime_path_when_ready();
+#if defined(BOARD_XSTAR)
+  failures += test_xstar_rejects_missing_adc2_injected_completion();
+  failures += test_xstar_accepting_sample_arms_next_adc2_completion_check();
+#endif
   if (failures != 0) {
     printf("%d FOC readiness gate test(s) FAILED\n", failures);
     return 1;

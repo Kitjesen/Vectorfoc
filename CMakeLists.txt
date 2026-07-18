@@ -85,6 +85,9 @@ add_definitions(
 # MCU specific definitions
 set(MCU_FLAGS "-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb")
 add_definitions(-DSTM32G431xx -DUSE_HAL_DRIVER -DSTM32G4xx)
+# Keep CMSIS SystemCoreClockUpdate and HAL clock calculations aligned with the
+# VectorFOC board's physical HSE crystal.
+add_compile_definitions(HSE_VALUE=8000000U)
 
 # ---- Board selection ----
 option(BOARD_XSTAR "Build firmware for X-STAR-S STM32G431RBT6 board" OFF)

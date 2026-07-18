@@ -6,6 +6,9 @@ project(VectorFoc_Bootloader C CXX ASM)
 # MCU specific definitions
 set(MCU_FLAGS "-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb")
 add_definitions(-DSTM32G431xx -DUSE_HAL_DRIVER -DSTM32G4xx -DBOOTLOADER_BUILD)
+# system_stm32g4xx.c does not include stm32g4xx_hal_conf.h, so provide the
+# board oscillator explicitly to both CMSIS and HAL sources.
+add_compile_definitions(HSE_VALUE=8000000U)
 
 # Build type - always optimize for size
 set(CMAKE_BUILD_TYPE Release)

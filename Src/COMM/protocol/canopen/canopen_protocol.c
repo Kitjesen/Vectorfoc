@@ -241,6 +241,9 @@ ParseResult ProtocolCANopen_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   if (frame->id == CANOPEN_FC_NMT) {
     return ProtocolCANopen_HandleNMT(frame) ? PARSE_OK : PARSE_UNKNOWN_ID;
   }
+  if (s_node_state == CANOPEN_STATE_STOPPED) {
+    return PARSE_UNKNOWN_ID;
+  }
 
   /*
    * RPDO1 compact mapping:

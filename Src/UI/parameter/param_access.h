@@ -118,6 +118,8 @@ uint32_t Param_GetScheduledSaveGeneration(void);
 void Param_DiscardScheduledSave(void);
 /** @brief Drop a pending save only if no newer request has arrived. */
 bool Param_DiscardScheduledSaveIfGeneration(uint32_t generation);
+/** @brief Restore committed Flash or defaults after a terminal deferred-save failure. */
+ParamResult Param_RollbackScheduledSave(void);
 /**
  * @brief  ()
  * @return true if save occurred, false otherwise

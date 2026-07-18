@@ -93,7 +93,7 @@ void MX_IWDG_Init(void) {
 
 /**
  * @brief  System clock configuration.
- *         HSE 24MHz -> PLL -> 168MHz SYSCLK
+ *         HSE 8MHz -> PLL -> 168MHz SYSCLK
  */
 void SystemClock_Config(void) {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};

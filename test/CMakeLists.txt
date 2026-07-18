@@ -229,6 +229,12 @@ add_executable(test_runner_param_typed_access
 )
 register_test_target(test_runner_param_typed_access)
 
+add_executable(test_runner_cmd_service_persistent_rollback
+    test_cmd_service_persistent_rollback.c
+    ${PROJ_ROOT}/Src/APP/rtos/cmd_service.c
+)
+register_test_target(test_runner_cmd_service_persistent_rollback)
+
 add_executable(test_runner_vofa_commands
     test_vofa_commands.c
 )
@@ -339,6 +345,12 @@ target_include_directories(test_runner_adc_sample_guard PRIVATE
 )
 register_test_target(test_runner_adc_sample_guard)
 
+add_executable(test_runner_adc_shared_irq
+    test_adc_shared_irq.c
+    ${PROJ_ROOT}/Lib/Core/Src/stm32g4xx_it.c
+)
+register_test_target(test_runner_adc_shared_irq)
+
 add_executable(test_runner_foc_readiness_gate
     test_foc_readiness_gate.c
     ${PROJ_ROOT}/Src/APP/isr/isr_foc.c
@@ -355,6 +367,24 @@ target_include_directories(test_runner_foc_readiness_gate PRIVATE
     ${PROJ_ROOT}/Src/APP/init
 )
 register_test_target(test_runner_foc_readiness_gate)
+
+add_executable(test_runner_foc_readiness_gate_xstar
+    test_foc_readiness_gate.c
+    ${PROJ_ROOT}/Src/APP/isr/isr_foc.c
+    ${PROJ_ROOT}/Src/APP/isr/adc_sample_guard.c
+    ${PROJ_ROOT}/Src/APP/isr/encoder_failure_guard.c
+    ${PROJ_ROOT}/Src/SAFE/watchdog_supervisor.c
+)
+target_include_directories(test_runner_foc_readiness_gate_xstar BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/foc_readiness_mocks
+)
+target_include_directories(test_runner_foc_readiness_gate_xstar PRIVATE
+    ${PROJ_ROOT}/Src/APP/isr
+    ${PROJ_ROOT}/Src/SAFE
+    ${PROJ_ROOT}/Src/APP/init
+)
+target_compile_definitions(test_runner_foc_readiness_gate_xstar PRIVATE BOARD_XSTAR)
+register_test_target(test_runner_foc_readiness_gate_xstar)
 
 add_executable(test_runner_motor_adc_filters
     test_motor_adc_filters.c
@@ -377,6 +407,14 @@ add_test(
     COMMAND ${VECTORFOC_PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test_app_header_tools.py
 )
 set_tests_properties(test_app_header_tools PROPERTIES
+    WORKING_DIRECTORY ${PROJ_ROOT}
+)
+
+add_test(
+    NAME test_clock_configuration
+    COMMAND ${VECTORFOC_PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test_clock_configuration.py
+)
+set_tests_properties(test_clock_configuration PROPERTIES
     WORKING_DIRECTORY ${PROJ_ROOT}
 )
 

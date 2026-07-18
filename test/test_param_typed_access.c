@@ -22,6 +22,8 @@ static uint32_t s_uint32_value = 1000U;
 static int32_t s_int32_value = -1000;
 static int s_error_count;
 static FlashStorageResult s_storage_result = FLASH_STORAGE_OK;
+static FlashStorageResult s_storage_load_result = FLASH_STORAGE_OK;
+static bool s_storage_has_valid_data = true;
 static int s_storage_save_count;
 static FlashParamData s_storage_image;
 
@@ -31,31 +33,36 @@ static const ParamEntry s_entries[] = {
      .access = PARAM_ACCESS_RW,
      .ptr = &s_float_value,
      .min = 0.0f,
-     .max = 10.0f},
+     .max = 10.0f,
+     .default_val = 2.5f},
     {.index = PARAM_CAN_ID,
      .type = PARAM_TYPE_UINT8,
      .access = PARAM_ACCESS_RW,
      .ptr = &s_uint8_value,
      .min = 1.0f,
-     .max = 127.0f},
+     .max = 127.0f,
+     .default_val = 7.0f},
     {.index = PARAM_CAN_TIMEOUT,
      .type = PARAM_TYPE_UINT32,
      .access = PARAM_ACCESS_RW,
      .ptr = &s_uint32_value,
      .min = 0.0f,
-     .max = 10000.0f},
+     .max = 10000.0f,
+     .default_val = 1000.0f},
     {.index = TEST_PARAM_UINT16,
      .type = PARAM_TYPE_UINT16,
      .access = PARAM_ACCESS_RW,
      .ptr = &s_uint16_value,
      .min = 0.0f,
-     .max = 1000.0f},
+     .max = 1000.0f,
+     .default_val = 100.0f},
     {.index = TEST_PARAM_INT32,
      .type = PARAM_TYPE_INT32,
      .access = PARAM_ACCESS_RW,
      .ptr = &s_int32_value,
      .min = -2000.0f,
-     .max = 2000.0f},
+     .max = 2000.0f,
+     .default_val = -1000.0f},
 };
 
 static const ParamIndex s_restore_float_indices[] = {
@@ -148,12 +155,15 @@ FlashStorageResult ParamStorage_Save(FlashParamData *data) {
 }
 
 FlashStorageResult ParamStorage_Load(FlashParamData *data) {
+  if (s_storage_load_result != FLASH_STORAGE_OK) {
+    return s_storage_load_result;
+  }
   *data = s_storage_image;
   return FLASH_STORAGE_OK;
 }
 
 void ParamStorage_Init(void) {}
-bool ParamStorage_HasValidData(void) { return false; }
+bool ParamStorage_HasValidData(void) { return s_storage_has_valid_data; }
 
 static void ResetState(void) {
   s_float_value = 2.5f;
@@ -164,6 +174,8 @@ static void ResetState(void) {
   s_uint32_value = 1000U;
   s_int32_value = -1000;
   s_storage_result = FLASH_STORAGE_OK;
+  s_storage_load_result = FLASH_STORAGE_OK;
+  s_storage_has_valid_data = true;
   memset(&s_storage_image, 0, sizeof(s_storage_image));
   s_storage_image.motor_rs = 2.5f;
   s_storage_image.motor_ls = 1.0f;
@@ -355,6 +367,69 @@ static int TestScheduledSaveRetriesFailure(void) {
   return 0;
 }
 
+static int TestScheduledSaveRollbackRestoresCommittedRuntimeValues(void) {
+  ResetState();
+  s_storage_image.motor_rs = 3.25f;
+  s_storage_image.can_id = 11U;
+  if (Param_LoadFromFlash() != PARAM_OK) {
+    return 1;
+  }
+  if (Param_WriteFloat(PARAM_MOTOR_RS, 4.5f) != PARAM_OK ||
+      Param_WriteUint8(PARAM_CAN_ID, 42U) != PARAM_OK) {
+    return 1;
+  }
+  if (s_float_value != 4.5f || s_uint8_value != 42U) {
+    return 1;
+  }
+  Param_ScheduleSave();
+  if (Param_RollbackScheduledSave() != PARAM_OK) {
+    return 1;
+  }
+  return s_float_value != 3.25f || s_uint8_value != 11U;
+}
+
+static int TestScheduledSaveRollbackRestoresDefaultsWithoutCommittedImage(void) {
+  ResetState();
+  s_storage_load_result = FLASH_STORAGE_ERR_MAGIC;
+  if (Param_LoadFromFlash() != PARAM_ERR_STORAGE) {
+    return 1;
+  }
+  s_storage_load_result = FLASH_STORAGE_OK;
+  s_storage_has_valid_data = false;
+  if (Param_WriteFloat(PARAM_MOTOR_RS, 4.5f) != PARAM_OK ||
+      Param_WriteUint8(PARAM_CAN_ID, 42U) != PARAM_OK) {
+    return 1;
+  }
+  Param_ScheduleSave();
+  if (Param_RollbackScheduledSave() != PARAM_OK) {
+    return 1;
+  }
+  return s_float_value != 2.5f || s_uint8_value != 7U;
+}
+
+static int TestRollbackUsesLatestCommittedImageAfterInterleavedSchedules(void) {
+  ResetState();
+  s_storage_image.motor_rs = 3.25f;
+  s_storage_image.can_id = 11U;
+  if (Param_LoadFromFlash() != PARAM_OK) {
+    return 1;
+  }
+  if (Param_WriteFloat(PARAM_MOTOR_RS, 4.5f) != PARAM_OK) {
+    return 1;
+  }
+  Param_ScheduleSave();
+  s_storage_image.motor_rs = 4.5f;
+  if (Param_WriteFloat(PARAM_MOTOR_RS, 5.5f) != PARAM_OK) {
+    return 1;
+  }
+  Param_ScheduleSave();
+
+  if (Param_RollbackScheduledSave() != PARAM_OK) {
+    return 1;
+  }
+  return s_float_value != 4.5f;
+}
+
 int main(void) {
   ResetState();
   if (TestReadMismatchDoesNotOverwrite()) {
@@ -395,6 +470,18 @@ int main(void) {
   }
   if (TestScheduledSaveRetriesFailure()) {
     printf("FAIL scheduled save request was lost or duplicated\n");
+    return 1;
+  }
+  if (TestScheduledSaveRollbackRestoresCommittedRuntimeValues()) {
+    printf("FAIL scheduled save rollback did not restore committed values\n");
+    return 1;
+  }
+  if (TestScheduledSaveRollbackRestoresDefaultsWithoutCommittedImage()) {
+    printf("FAIL scheduled save rollback did not restore defaults\n");
+    return 1;
+  }
+  if (TestRollbackUsesLatestCommittedImageAfterInterleavedSchedules()) {
+    printf("FAIL scheduled save rollback did not use latest committed image\n");
     return 1;
   }
   if (s_error_count < 9) {

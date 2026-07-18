@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "fault_detection.h"
+#include "config.h"
 #include "error_types.h"
 #include "motor.h"
 #include "fsm.h"
@@ -58,6 +59,7 @@ static bool test_fault_callback(uint32_t fault_bits, void *motor) {
 static MOTOR_DATA make_motor(CONTROL_MODE mode) {
   MOTOR_DATA motor;
   memset(&motor, 0, sizeof(motor));
+  motor.state.State_Mode = STATE_MODE_IDLE;
   motor.state.Control_Mode = mode;
   motor.algo_input.Vbus = 24.0f;
   motor.feedback.temperature = 25.0f;
@@ -129,6 +131,7 @@ static void test_stall_timeout_uses_elapsed_milliseconds(void) {
 
 static void test_can_timeout_configuration_and_recovery(void) {
   MOTOR_DATA motor = make_motor(CONTROL_MODE_TORQUE);
+  motor.state.State_Mode = STATE_MODE_RUNNING;
   Detection_Init(NULL);
   DetectionConfig *config = Detection_GetConfig();
   config->enable_voltage_protection = false;
@@ -139,6 +142,7 @@ static void test_can_timeout_configuration_and_recovery(void) {
   Detection_SetCANTimeout(100u);
   assert(config->enable_can_timeout);
   assert(config->can_timeout_ms == 100u);
+  Detection_FeedWatchdog(s_tick_ms);
   s_tick_ms = 2100u;
   assert((Detection_Check_Slow(&motor) & FAULT_CAN_TIMEOUT) == 0u);
   s_tick_ms = 2101u;
@@ -151,6 +155,63 @@ static void test_can_timeout_configuration_and_recovery(void) {
   assert(!config->enable_can_timeout);
   s_tick_ms += 10000u;
   assert((Detection_Check_Slow(&motor) & FAULT_CAN_TIMEOUT) == 0u);
+}
+
+static void test_default_can_timeout_is_nonzero_but_unarmed_until_can_frame(void) {
+  MOTOR_DATA motor = make_motor(CONTROL_MODE_TORQUE);
+  Detection_Init(NULL);
+  DetectionConfig *config = Detection_GetConfig();
+  config->enable_voltage_protection = false;
+  config->enable_temp_protection = false;
+  config->enable_stall_protection = false;
+
+  assert(DEFAULT_CAN_TIMEOUT_MS > 0u);
+
+  s_tick_ms = 7000u;
+  Detection_SetCANTimeout(DEFAULT_CAN_TIMEOUT_MS);
+  assert(config->enable_can_timeout);
+  assert(config->can_timeout_ms == DEFAULT_CAN_TIMEOUT_MS);
+
+  s_tick_ms = 7000u + DEFAULT_CAN_TIMEOUT_MS + 1u;
+  assert((Detection_Check_Slow(&motor) & FAULT_CAN_TIMEOUT) == 0u);
+
+  motor.state.State_Mode = STATE_MODE_RUNNING;
+  s_tick_ms += DEFAULT_CAN_TIMEOUT_MS + 1u;
+  assert((Detection_Check_Slow(&motor) & FAULT_CAN_TIMEOUT) == 0u);
+
+  Detection_FeedWatchdog(s_tick_ms);
+  s_tick_ms += DEFAULT_CAN_TIMEOUT_MS;
+  assert((Detection_Check_Slow(&motor) & FAULT_CAN_TIMEOUT) == 0u);
+  s_tick_ms++;
+  assert((Detection_Check_Slow(&motor) & FAULT_CAN_TIMEOUT) != 0u);
+
+  Detection_SetCANTimeout(0u);
+  assert(!config->enable_can_timeout);
+  s_tick_ms += DEFAULT_CAN_TIMEOUT_MS + 1u;
+  assert((Detection_Check_Slow(&motor) & FAULT_CAN_TIMEOUT) == 0u);
+}
+
+static void test_can_timeout_ignores_idle_and_calibration_when_armed(void) {
+  MOTOR_DATA motor = make_motor(CONTROL_MODE_TORQUE);
+  Detection_Init(NULL);
+  DetectionConfig *config = Detection_GetConfig();
+  config->enable_voltage_protection = false;
+  config->enable_temp_protection = false;
+  config->enable_stall_protection = false;
+
+  s_tick_ms = 9000u;
+  Detection_SetCANTimeout(100u);
+  Detection_FeedWatchdog(s_tick_ms);
+
+  s_tick_ms = 9101u;
+  assert((Detection_Check_Slow(&motor) & FAULT_CAN_TIMEOUT) == 0u);
+
+  motor.state.State_Mode = STATE_MODE_DETECTING;
+  s_tick_ms = 9202u;
+  assert((Detection_Check_Slow(&motor) & FAULT_CAN_TIMEOUT) == 0u);
+
+  motor.state.State_Mode = STATE_MODE_RUNNING;
+  assert((Detection_Check_Slow(&motor) & FAULT_CAN_TIMEOUT) != 0u);
 }
 
 static void test_clear_faults_reports_pending_fast_path_fault(void) {
@@ -287,6 +348,8 @@ int main(void) {
   test_non_finite_sensor_values_fail_safe();
   test_stall_timeout_uses_elapsed_milliseconds();
   test_can_timeout_configuration_and_recovery();
+  test_default_can_timeout_is_nonzero_but_unarmed_until_can_frame();
+  test_can_timeout_ignores_idle_and_calibration_when_armed();
   test_clear_faults_reports_pending_fast_path_fault();
   test_clear_faults_retries_failed_callback_without_duplicate_history();
   test_slow_publish_does_not_repeat_fast_fsm_fault();

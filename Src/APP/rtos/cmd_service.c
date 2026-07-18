@@ -20,6 +20,7 @@
 #include "cmd_service.h"
 #include "bsp_log.h"
 #include "calibration_context.h"
+#include "error_manager.h"
 #include "manager.h"
 #include "motor.h"
 #include "config.h"
@@ -146,7 +147,11 @@ void CmdService_Process(void) {
     if (save_succeeded ||
         ++s_param_save_attempts >= CMD_SERVICE_SAVE_RETRY_LIMIT) {
       if (!save_succeeded) {
-        (void)Param_DiscardScheduledSaveIfGeneration(generation);
+        bool discarded = Param_DiscardScheduledSaveIfGeneration(generation);
+        if (discarded && Param_RollbackScheduledSave() != PARAM_OK) {
+          ErrorManager_Report(ERROR_PARAM_FLASH_WRITE,
+                              "Scheduled save rollback failed");
+        }
         if (held_save) {
           Vofa_ReportScheduledSaveFailed();
         }

@@ -2,6 +2,14 @@
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR ARM)
 
+if(CMAKE_GENERATOR MATCHES "Visual Studio")
+    message(FATAL_ERROR
+        "The ARM GCC toolchain does not support the '${CMAKE_GENERATOR}' generator here; "
+        "Visual Studio generators select MSVC project tooling instead of arm-none-eabi-gcc. "
+        "Configure with -G Ninja or -G \"Unix Makefiles\" and "
+        "-DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake.")
+endif()
+
 # 工具链前缀
 if(MINGW OR CYGWIN OR WIN32)
     set(UTIL_SEARCH_CMD where)

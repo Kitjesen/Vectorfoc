@@ -12,11 +12,11 @@ VectorFOC 是基于 STM32G431 的无刷电机 FOC 固件。它面向电机控制
 |---|---|---|
 | FOC 算法 | `Src/ALGO/foc/` | Clarke/Park、SVPWM、三角函数、FOC 电流环 |
 | 控制器 | `Src/ALGO/control/`, `Src/ALGO/pid/`, `Src/ALGO/trajectory/` | PID、LADRC、前馈、弱磁、限幅、梯形轨迹、速率限制 |
-| 电机状态与标定 | `Src/ALGO/motor/` | DS402 风格状态机、Rs/Ls/flux/编码器标定上下文 |
+| 电机状态与标定 | `Src/ALGO/motor/` | DS402 风格状态机、Rs/Ls/flux/编码器标定上下文；PWM HAL 操作在短 critical section 外执行，过渡期故障直接关闭桥臂输出 |
 | 传感器与板级抽象 | `Src/HAL/`, `Src/config/` | VectorFOC 与 X-STAR-S 两套板级配置，MT6816/TMR3109/Hall/ABZ 路由 |
-| 通信 | `Src/COMM/`, `Src/UI/vofa/` | Vector/Inovxio、MIT、CANopen 风格帧，USB CDC 文本命令；控制指令经统一 executor 原子发布；重启/进入 Bootloader 仅在 CAN ACK 的 FDCAN Tx event 确认后执行 |
-| 参数存储 | `Src/UI/parameter/`, `Src/HAL/bsp/bsp_flash.*` | Flash 参数页、CRC32、提交标记与回退测试；持久化修改通过维护租约串行化，运行/标定中明确拒绝 |
-| 安全保护 | `Src/SAFE/`, `Src/APP/isr/` | 故障检测、ADC 样本保护、编码器失败计数、看门狗监督；启动 ISR readiness gate 与状态感知的故障清除 |
+| 通信 | `Src/COMM/`, `Src/UI/vofa/` | Vector/Inovxio、MIT、CANopen 风格帧，USB CDC 文本命令；Vector GET_ID 仅接受扩展帧、CANopen STOP 只接受 NMT；控制指令经统一 executor 原子发布；重启/进入 Bootloader 仅在 CAN ACK 的 FDCAN Tx event 确认后执行 |
+| 参数存储 | `Src/UI/parameter/`, `Src/HAL/bsp/bsp_flash.*` | Flash 参数页、CRC32、提交标记与回退测试；持久化修改通过维护租约串行化，scheduled save 终态失败会恢复最后有效镜像或默认参数 |
+| 安全保护 | `Src/SAFE/`, `Src/APP/isr/` | 故障检测、ADC 样本保护、编码器失败计数、CAN timeout watchdog、看门狗监督；启动 ISR readiness gate、X-STAR ADC paired-sample gate、shared ADC IRQ 分发与状态感知的故障清除 |
 | Bootloader/OTA | `Src/BOOT/`, `scripts/ota_upload.py`, `scripts/patch_app_header.py` | USB CDC OTA、App Header 生成/验证、Flash 擦写协议；设备布局预检在擦除前完成 |
 
 ## 板型和传感器矩阵
@@ -34,7 +34,7 @@ VectorFOC 是基于 STM32G431 的无刷电机 FOC 固件。它面向电机控制
 
 ```bash
 cmake -S . -B build-vector -G Ninja \
-  --toolchain cmake/gcc-arm-none-eabi.cmake \
+  "-DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake" \
   -DCMAKE_BUILD_TYPE=Release \
   -DPOSITION_SENSOR=MT6816
 cmake --build build-vector --parallel
@@ -46,7 +46,7 @@ cmake --build build-vector --parallel
 
 ```bash
 cmake -S . -B build-boot -G Ninja \
-  --toolchain cmake/gcc-arm-none-eabi.cmake \
+  "-DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake" \
   -DCMAKE_BUILD_TYPE=Release \
   -DBOOTLOADER_BUILD=ON
 cmake --build build-boot --parallel
@@ -58,7 +58,7 @@ cmake --build build-boot --parallel
 
 ```bash
 cmake -S . -B build-xstar-hall -G Ninja \
-  --toolchain cmake/gcc-arm-none-eabi.cmake \
+  "-DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake" \
   -DCMAKE_BUILD_TYPE=Release \
   -DBOARD_XSTAR=ON \
   -DPOSITION_SENSOR=HALL
@@ -77,25 +77,35 @@ cmake --build build-test --parallel
 ctest --test-dir build-test --output-on-failure
 ```
 
-当前 `test/CMakeLists.txt` 注册 41 个自动 CTest 测试。覆盖范围包括：
+当前 `test/CMakeLists.txt` 注册 45 个自动 CTest 测试；最近一次干净 Clang/Ninja 主机构建通过 45/45。覆盖范围包括：
 
 - FOC 基础算法、PID、LADRC、轨迹、速率限制、三角函数；
 - `test_runner_integration` 简化 PMSM 闭环仿真：电流/速度/负载扰动、速度设定切换、位置设定和参数扫掠；
 - 真实 `MotorStateTask` + mock HAL/motor plant 闭环回归，以及确定性 ADC 噪声稳定性回归；
-- ADC ISR readiness gate：未完成初始化时 injected callback 不得读取传感器、状态机或 PWM 路径；
+- ADC ISR readiness gate：未完成初始化时 injected callback 不得读取传感器、状态机或 PWM 路径；X-STAR-S 还要求 ADC1/ADC2 注入完成标记配对且无错误；
 - 故障清除与上报重试：快速故障的证据不会因清除/回调失败而丢失，且故障反应态不会被伪装为已恢复；
 - CAN reset/bootloader 仅在 Tx event 完成后执行，超时取消；
-- 持久化保存的维护租约、运行/标定 busy 响应和有界失败终态；
+- 持久化保存的维护租约、运行/标定 busy 响应、有界失败终态，以及最后有效镜像/默认参数回滚；
 - SMO、参数存储、Bootloader 协议、App Header 工具；
 - 通信协议、命令执行、协议管理器；
-- ADC 样本保护、编码器失败保护、看门狗、FSM 输出安全、故障检测。
+- ADC 样本保护、ADC shared IRQ、编码器失败保护、看门狗、CAN timeout arm/run-state 语义、FSM 输出安全、故障检测。
 - FreeRTOS 任务栈高水位诊断：调度器和三个核心任务均就绪时采样 default/guard/comm 的剩余 stack word；未就绪时安全返回不可用。
 
 Windows/MSVC 与 GCC/Ninja 都是 CI 的一等验证目标；提交前的干净构建记录与当前 CTest 数量应以 `ctest --test-dir <build-dir> --output-on-failure` 为准。仿真命令、模型假设和硬件验证缺口见 [SIMULATION.md](SIMULATION.md)。
 
 ### 当前内存预算与测量方法
 
-最新 Release 构建中，VectorFOC/MT6816 使用 RAM `20,952 / 22,512 B`（93.07%）、CCMRAM `9,024 / 10,240 B`（88.12%）和 Flash `100,220 / 110,592 B`（90.62%）；TMR3109 分别为 93.11%、88.12% 和 90.72%。X-STAR-S/HALL 与 ABZ 的 RAM 占用约为 63%，Flash 约为 61%。
+最新 ARM Release 矩阵已在同一 xPack GNU Arm GCC 13.3.1 工具链下构建。`BOOTFLAG` 的 `16 / 16 B` 是链接脚本刻意保留的交接区，不计入一般 RAM 余量：
+
+| 镜像 | RAM | CCMRAM | Flash |
+|---|---:|---:|---:|
+| VectorFOC / MT6816 | 20,960 / 22,512 B（93.11%） | 9,024 / 10,240 B（88.12%） | 101,384 / 110,592 B（91.67%） |
+| VectorFOC / TMR3109 | 20,968 / 22,512 B（93.14%） | 9,024 / 10,240 B（88.12%） | 101,532 / 110,592 B（91.81%） |
+| X-STAR-S / HALL | 14,216 / 22,512 B（63.15%） | 1,024 / 10,240 B（10.00%） | 79,424 / 126,976 B（62.55%） |
+| X-STAR-S / ABZ | 14,208 / 22,512 B（63.11%） | 1,024 / 10,240 B（10.00%） | 79,136 / 126,976 B（62.32%） |
+| Bootloader | 7,352 / 22,512 B（32.66%） | 0 / 10,240 B | 13,932 / 16,384 B（85.03%） |
+
+这些数字是链接期静态占用，不是任务/中断栈安全证明，也没有为运行时峰值预留保证。
 
 这些数值是链接期静态占用，不是任务/中断栈安全证明。`task_guard` 每秒输出 `stack_free_w=default/guard/comm`（FreeRTOS word），可与 `Protocol_GetStats()` 的 `rx_queue_peak` 一起记录。必须在硬件压力测试后再调整任务栈、VOFA/USB 队列或 CAN 队列；当前不得以主机仿真替代此结论。
 
@@ -123,7 +133,7 @@ OTA 协议命令由 `Src/BOOT/boot_protocol.c` 处理，包括：
 
 App 侧 VOFA/USB 命令 `boot_enter` 会先请求 DS402 状态机进入 `STATE_SWITCH_ON_DISABLED`，发送 ACK 后在任务上下文请求重启进入 Bootloader。上传脚本在擦除前查询 `boot_info`，检查设备应用起始地址、区域大小和对齐后的镜像长度。
 
-CAN 的 `SAVE` 命令只有在取得维护租约后才返回 `queued`，运行/标定/已有维护时返回 `busy`。USB `save_flash=1` 同样先取得租约；接受后会报告 `queued`，失败重试状态以 `retrying` 表示，三次失败后报告终态 `failed`。外部命令触发的会持久化参数修改会在改动运行时值前预留租约，避免“返回失败但参数已改变”。校准完成后的内部保存请求仍由命令服务在安全维护窗口处理。USB RX 队列满时会累计计数并发送 `rx_overflow=1` 诊断；Bootloader 队列满时会中止当前事务并返回 `BOOT_ERR_RX_OVERFLOW`。CAN 的 `RESET` 与 `BOOTLOADER` 命令会先使功率桥去使能、请求 DS402 切换禁止，并等待对应 ACK 的 FDCAN Tx event；等待期间不会全局关中断，以保证发送事件与超时仍能推进。确认完成才执行重启；超时则取消发送、保持功率桥去使能并报告通信超时，不重启。X-STAR-S 为独立 App，`BOOTLOADER` 明确返回 `unsupported` 而不会假装进入不存在的 Bootloader。
+CAN 的 `SAVE` 命令只有在取得维护租约后才返回 `queued`，运行/标定/已有维护时返回 `busy`。USB `save_flash=1` 同样先取得租约；接受后会报告 `queued`，失败重试状态以 `retrying` 表示，三次失败后报告终态 `failed`。外部命令触发的会持久化参数修改会在改动运行时值前预留租约，避免“返回失败但参数已改变”。校准完成后的内部保存请求会直接调度 `Param_ScheduleSave()`，命令服务随后在可取得维护窗口时处理；终态失败也会回滚到最后有效提交镜像，或在没有可加载镜像时恢复默认参数并清除编码器标定有效状态。USB RX 队列满时会累计计数并发送 `rx_overflow=1` 诊断；Bootloader 队列满时会中止当前事务并返回 `BOOT_ERR_RX_OVERFLOW`。CAN 的 `RESET` 与 `BOOTLOADER` 命令会先使功率桥去使能、请求 DS402 切换禁止，并等待对应 ACK 的 FDCAN Tx event；等待期间不会全局关中断，以保证发送事件与超时仍能推进。确认完成才执行重启；超时则取消发送、保持功率桥去使能并报告通信超时，不重启。X-STAR-S 为独立 App，`BOOTLOADER` 明确返回 `unsupported` 而不会假装进入不存在的 Bootloader。
 
 本轮核验覆盖固件镜像生成、App Header 校验、Bootloader 编译和 OTA 脚本依赖检查；未连接 SWD/USB 硬件，未做实际烧录或真实 USB OTA 端到端验证。
 

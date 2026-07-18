@@ -198,6 +198,33 @@ static void Param_RestoreEncoderCalibration(const FlashParamData *flash_data) {
 #endif
 #endif
 }
+
+static void Param_ClearEncoderCalibration(void) {
+#if !defined(TEST_ENV)
+#if defined(BOARD_XSTAR)
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
+  hall_data.calib_valid = false;
+  hall_data.offset_rad = 0.0f;
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
+  abz_data.calib_valid = false;
+  abz_data.offset_counts = 0;
+  abz_data.offset_rad = 0.0f;
+#endif
+#else
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+  tmr3109_encoder_data.calib_valid = false;
+  tmr3109_encoder_data.offset_counts = 0;
+  memset(tmr3109_encoder_data.offset_lut, 0,
+         sizeof(tmr3109_encoder_data.offset_lut));
+#else
+  encoder_data.calib_valid = false;
+  encoder_data.is_calibrated = false;
+  encoder_data.offset_counts = 0;
+  memset(encoder_data.offset_lut, 0, sizeof(encoder_data.offset_lut));
+#endif
+#endif
+#endif
+}
 static inline bool ParamTable_IsReadable(const ParamEntry *entry) {
   return (entry != NULL) && (entry->access & PARAM_ACCESS_R);
 }
@@ -1112,6 +1139,19 @@ bool Param_DiscardScheduledSaveIfGeneration(uint32_t generation) {
   CRITICAL_SECTION_END();
 #endif
   return discarded;
+}
+
+ParamResult Param_RollbackScheduledSave(void) {
+  ParamResult result = Param_LoadFromFlash();
+  if (result == PARAM_OK) {
+    return PARAM_OK;
+  }
+
+  result = Param_RestoreDefaults();
+  if (result == PARAM_OK) {
+    Param_ClearEncoderCalibration();
+  }
+  return result;
 }
 
 bool Param_ProcessScheduledSave(void) {

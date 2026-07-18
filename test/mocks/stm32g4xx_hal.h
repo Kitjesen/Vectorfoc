@@ -12,11 +12,7 @@
 #define STM32G4xx_HAL_CONF_H
 #define STM32G431xx_H
 
-/* FDCAN / UART 仅在此占位（mock_hal_types.h 已有 SPI/TIM/ADC） */
-typedef struct { void *Instance; } FDCAN_HandleTypeDef;
-#ifndef UART_HandleTypeDef
-typedef struct { void *Instance; } UART_HandleTypeDef;
-#endif
+/* FDCAN / UART / DMA / PCD 占位类型由 mock_hal_types.h 提供 */
 
 /* 常用 HAL 宏 */
 #define __HAL_TIM_GET_AUTORELOAD(h)         (0u)
@@ -48,8 +44,12 @@ void Test_HAL_NVIC_SystemReset(void);
 #define TIM_CHANNEL_4  3u
 
 /* ADC flags and errors used by ISR tests */
+#ifndef ADC_FLAG_JEOS
 #define ADC_FLAG_JEOS           (1u << 0)
+#endif
+#ifndef ADC_FLAG_OVR
 #define ADC_FLAG_OVR            (1u << 1)
+#endif
 #define HAL_ADC_ERROR_OVR       (1u << 0)
 #define HAL_ADC_ERROR_JQOVF     (1u << 1)
 #define HAL_ADC_ERROR_INTERNAL  (1u << 2)

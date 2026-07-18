@@ -432,7 +432,7 @@ void Protocol_ProcessRxFrame(const CAN_Frame *frame) {
   }
   // 0. Vector GET_ID fast-path (before full parse)
   // ，motor
-  if (s_current_protocol == PROTOCOL_VECTOR) {
+  if (s_current_protocol == PROTOCOL_VECTOR && frame->is_extended) {
     uint8_t cmd_type = (frame->id >> 24) & 0x1F;
     if (cmd_type == VECTOR_CMD_GET_ID) {
       uint8_t target = frame->id & 0xFF;

@@ -1,6 +1,6 @@
 # Parameter Module (参数管理模块)
 
-**Status**: Production ready
+**Status**: Active — host-tested; hardware Flash fault-injection pending
 
 ## 概述
 
@@ -116,12 +116,15 @@ ParamResult Param_SaveToFlash(void);
 ParamResult Param_LoadFromFlash(void);
 void Param_ScheduleSave(void);
 bool Param_ProcessScheduledSave(void);
+ParamResult Param_RollbackScheduledSave(void);
 ```
 
 - `Param_SaveToFlash()` 从当前参数表收集 `FlashParamData`，先进行完整校验，再调用 `ParamStorage_Save()`。
 - `Param_LoadFromFlash()` 从存储层读取有效镜像，完整校验后一次性恢复到运行时参数。
 - `Param_ScheduleSave()` 只设置待保存标志，可用于不适合立即擦写 Flash 的路径。
 - `Param_ProcessScheduledSave()` 在任务上下文中处理挂起保存；保存失败时会重新置位，后续继续重试。
+- 命令服务对同一保存代际最多重试三次；终态失败时会丢弃该代际，再调用 `Param_RollbackScheduledSave()`。
+- `Param_RollbackScheduledSave()` 重新加载当前双页存储中最新的有效提交镜像；若没有可加载镜像，则恢复默认参数并清除编码器校准有效状态。它不是完整的 RAM 快照回滚。直接标定路径调用的 `Param_ScheduleSave()` 也使用这条终态回滚路径。
 
 存储层当前签名为：
 
@@ -199,6 +202,7 @@ if (Param_GetInfo(PARAM_LIMIT_CURRENT, &entry) == PARAM_OK) {
 
 参数模块当前由主机侧测试覆盖关键行为：
 
-- `test_runner_param_typed_access`：强类型访问、float/整数转换、非有限值拒绝、保存重试、运行时副作用；
+- `test_runner_param_typed_access`：强类型访问、float/整数转换、非有限值拒绝、保存重试、运行时副作用、已提交镜像回滚和默认值回退；
 - `test_runner_param_storage`：双页事务写入、CRC、commit、generation、旧格式迁移；
+- `test_runner_cmd_service_persistent_rollback`：命令保存与直接标定式保存的三次失败终态、代际清理和运行时回滚；
 - `test_runner_comm_executor` 和 `test_runner_vofa_commands`：通信链路通过 `Param_ReadAsFloat()` / `Param_WriteFromFloat()` 访问参数。

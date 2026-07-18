@@ -232,6 +232,37 @@ static int test_canopen_rpdo_torque_uses_per_mille_of_torque_limit(void) {
   return 0;
 }
 
+static int test_canopen_stopped_state_blocks_rpdo_and_sdo_commands(void) {
+  memset(&motor_data, 0, sizeof(motor_data));
+  motor_data.Controller.torque_limit = 2.0f;
+  ProtocolCANopen_Init();
+  s_sent_frame_count = 0U;
+
+  CAN_Frame nmt_stop = {0};
+  nmt_stop.id = 0x000U;
+  nmt_stop.dlc = 2U;
+  nmt_stop.data[0] = 0x02U;
+  nmt_stop.data[1] = g_can_id;
+  MotorCommand parsed = {0};
+  CHECK(ProtocolCANopen_Parse(&nmt_stop, &parsed) == PARSE_OK);
+
+  CAN_Frame rpdo = {0};
+  rpdo.id = 0x200U + g_can_id;
+  rpdo.dlc = 8U;
+  rpdo.data[2] = CANOPEN_MODE_CST;
+  rpdo.data[4] = 0xF4U;
+  rpdo.data[5] = 0x01U;
+  CHECK(ProtocolCANopen_Parse(&rpdo, &parsed) == PARSE_UNKNOWN_ID);
+  CHECK(s_sent_frame_count == 0U);
+
+  CAN_Frame sdo = make_canopen_sdo(0x2BU, CANOPEN_OBJ_TARGET_TORQUE, 0U);
+  sdo.data[4] = 0xF4U;
+  sdo.data[5] = 0x01U;
+  CHECK(ProtocolCANopen_Parse(&sdo, &parsed) == PARSE_UNKNOWN_ID);
+  CHECK(s_sent_frame_count == 0U);
+  return 0;
+}
+
 int main(void) {
   int failures = 0;
   failures += test_mit_builders_initialize_frame_metadata_and_unused_bytes();
@@ -241,6 +272,7 @@ int main(void) {
   failures += test_canopen_sdo_downloads_use_standard_layout_and_ack();
   failures += test_canopen_sdo_rejects_bad_size_and_unknown_object();
   failures += test_canopen_rpdo_torque_uses_per_mille_of_torque_limit();
+  failures += test_canopen_stopped_state_blocks_rpdo_and_sdo_commands();
   if (failures == 0) {
     printf("All cross-protocol frame builder tests PASSED\n");
   }

@@ -1079,7 +1079,7 @@ void vofa_Receive(uint8_t *buf, uint16_t len) {
     if (calib_enable > 0.5f) {
       s_status.last_calib_active = false; //
       s_status.last_calib_step = -1;
-      StateMachine_RequestState(&g_ds402_state_machine, STATE_CALIBRATING);
+      Motor_RequestCalibration(&motor_data, 1U);
       Studio_SendText("calib_step=0");
     }
     return;

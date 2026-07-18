@@ -30,6 +30,7 @@
 #include <math.h>
 DetectionConfig s_config; // Exported for param_table
 static DetectionState s_state = {0};
+static bool s_can_timeout_armed = false;
 void Detection_Init(const DetectionConfig *config) {
   if (config != NULL) {
     s_config = *config;
@@ -51,6 +52,7 @@ void Detection_Reset(void) {
   s_state.vbus_initialized = false;
   s_state.temp_initialized = false;
   s_state.last_can_time = HAL_GetSystemTick();
+  s_can_timeout_armed = false;
 }
 /**
  * @brief voltageprotection
@@ -197,8 +199,10 @@ static inline uint32_t Detection_CheckStall(MOTOR_DATA *m, float i_a, float i_b,
  * @return fault（）
  */
 static inline uint32_t Detection_CheckCANTimeout(MOTOR_DATA *m) {
-  (void)m;
-  if (!s_config.enable_can_timeout || s_config.can_timeout_ms == 0) {
+  if (!s_config.enable_can_timeout || s_config.can_timeout_ms == 0 ||
+      !s_can_timeout_armed || m == NULL ||
+      m->state.State_Mode != STATE_MODE_RUNNING) {
+    s_state.is_can_timeout = false;
     return FAULT_NONE;
   }
   uint32_t elapsed = HAL_GetSystemTick() - s_state.last_can_time;
@@ -352,12 +356,16 @@ uint32_t Detection_Check_Slow(void *motor) {
 const DetectionState *Detection_GetState(void) { return &s_state; }
 void Detection_FeedWatchdog(uint32_t timestamp) {
   s_state.last_can_time = timestamp;
+  if (s_config.enable_can_timeout && s_config.can_timeout_ms > 0U) {
+    s_can_timeout_armed = true;
+  }
 }
 void Detection_SetCANTimeout(uint32_t timeout_ms) {
   uint32_t now_ms = HAL_GetSystemTick();
   CRITICAL_SECTION_BEGIN();
   s_config.enable_can_timeout = false;
   s_config.can_timeout_ms = timeout_ms;
+  s_can_timeout_armed = false;
   s_state.is_can_timeout = false;
   s_state.last_can_time = now_ms;
   s_config.enable_can_timeout = timeout_ms > 0U;

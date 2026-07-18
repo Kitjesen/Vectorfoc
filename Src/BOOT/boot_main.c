@@ -21,16 +21,20 @@
 #include "stm32g4xx_hal.h"
 #include "bootloader.h"
 
+void Error_Handler(void);
+
 /**
  * @brief  System clock configuration (simplified for bootloader)
- *         HSE 24MHz -> PLL -> 168MHz SYSCLK
+ *         HSE 8MHz -> PLL -> 168MHz SYSCLK
  */
 static void SystemClock_Config(void)
 {
     RCC_OscInitTypeDef RCC_OscInitStruct = {0};
     RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-    HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
+    if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST) != HAL_OK) {
+        Error_Handler();
+    }
 
     /* Configure HSE + HSI48 + PLL */
     RCC_OscInitStruct.OscillatorType =
@@ -44,7 +48,9 @@ static void SystemClock_Config(void)
     RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
     RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
     RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
-    HAL_RCC_OscConfig(&RCC_OscInitStruct);
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+        Error_Handler();
+    }
 
     /* Configure HCLK, SYSCLK, PCLK1, PCLK2 */
     RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK |
@@ -53,7 +59,9 @@ static void SystemClock_Config(void)
     RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
     RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
     RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
-    HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4);
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK) {
+        Error_Handler();
+    }
 }
 
 /**

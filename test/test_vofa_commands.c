@@ -66,6 +66,9 @@ static unsigned s_delay_call_count;
 static unsigned s_boot_request_count;
 static unsigned s_executor_count;
 static MotorCommand s_last_executor_cmd;
+static unsigned s_calibration_request_count;
+static uint8_t s_last_calibration_type;
+static MOTOR_DATA *s_last_calibration_motor;
 static unsigned s_save_schedule_count;
 static unsigned s_save_begin_count;
 static unsigned s_save_commit_count;
@@ -214,6 +217,11 @@ bool StateMachine_RequestState(StateMachine *sm, MotorState target_state) {
   (void)target_state;
   return true;
 }
+void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type) {
+  s_calibration_request_count++;
+  s_last_calibration_motor = motor;
+  s_last_calibration_type = calibration_type;
+}
 bool Motor_ClearFaults(MOTOR_DATA *motor) {
   (void)motor;
   return s_motor_clear_result;
@@ -270,6 +278,9 @@ static void ResetHarness(void) {
   s_boot_request_count = 0U;
   s_executor_count = 0U;
   memset(&s_last_executor_cmd, 0, sizeof(s_last_executor_cmd));
+  s_calibration_request_count = 0U;
+  s_last_calibration_type = 0U;
+  s_last_calibration_motor = NULL;
   s_save_schedule_count = 0U;
   s_save_begin_count = 0U;
   s_save_commit_count = 0U;
@@ -486,6 +497,27 @@ static int TestVofaMotorCommandsUseExecutor(void) {
                     s_last_executor_cmd.position_ref ==
                         Protocol_TurnsToRadians(4.5f),
                 "set_pos did not publish through executor");
+}
+
+static int TestCalibCommandRequestsDefaultCalibration(void) {
+  uint8_t command[] = "calib=1";
+  ResetHarness();
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+  if (Expect(s_calibration_request_count == 1U,
+             "calib=1 did not request motor calibration")) {
+    return 1;
+  }
+  if (Expect(s_last_calibration_motor == &motor_data,
+             "calib=1 requested calibration on the wrong motor")) {
+    return 1;
+  }
+  if (Expect(s_last_calibration_type == 1U,
+             "calib=1 used the wrong calibration type")) {
+    return 1;
+  }
+  return Expect(strstr(s_wire_log, "calib_step=0\n") != NULL,
+                "calib=1 did not send the start acknowledgement");
 }
 
 static int TestClearFaultReportsRejectedState(void) {
@@ -1035,6 +1067,8 @@ int main(void) {
   if (TestMalformedCommandsDoNotMutateControlState())
     return 1;
   if (TestVofaMotorCommandsUseExecutor())
+    return 1;
+  if (TestCalibCommandRequestsDefaultCalibration())
     return 1;
   if (TestClearFaultReportsRejectedState())
     return 1;

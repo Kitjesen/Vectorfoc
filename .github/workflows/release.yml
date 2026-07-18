@@ -9,28 +9,122 @@ permissions:
   contents: write  # 允许创建 Release 和上传文件
 
 jobs:
-  build-release:
+  build-firmware:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: vector-mt6816
+            board_xstar: "OFF"
+            sensor: MT6816
+          - name: vector-tmr3109
+            board_xstar: "OFF"
+            sensor: TMR3109
+          - name: xstar-hall
+            board_xstar: "ON"
+            sensor: HALL
+          - name: xstar-abz
+            board_xstar: "ON"
+            sensor: ABZ
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi cmake make python3
+
+      - name: Configure ${{ matrix.name }}
+        run: |
+          cmake -S . -B "build-${{ matrix.name }}" \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBOARD_XSTAR=${{ matrix.board_xstar }} \
+            -DPOSITION_SENSOR=${{ matrix.sensor }}
+
+      - name: Build ${{ matrix.name }}
+        run: cmake --build "build-${{ matrix.name }}" -j2
+
+      - name: Prepare release asset names
+        run: |
+          mkdir -p "release-assets/${{ matrix.name }}"
+          cp "build-${{ matrix.name }}/VectorFoc.elf" "release-assets/${{ matrix.name }}/VectorFoc-${{ matrix.name }}.elf"
+          cp "build-${{ matrix.name }}/VectorFoc.bin" "release-assets/${{ matrix.name }}/VectorFoc-${{ matrix.name }}.bin"
+          cp "build-${{ matrix.name }}/VectorFoc.hex" "release-assets/${{ matrix.name }}/VectorFoc-${{ matrix.name }}.hex"
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.name }}-release
+          path: release-assets/${{ matrix.name }}/*
+          retention-days: 30
+
+  build-bootloader:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: .
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # 需要完整历史来生成 changelog
 
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-arm-none-eabi cmake make
 
-      - name: Build firmware
+      - name: Configure bootloader
         run: |
-          mkdir -p build
-          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
-          cmake --build build -j2
+          cmake -S . -B build-bootloader \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBOOTLOADER_BUILD=ON
+
+      - name: Build bootloader
+        run: cmake --build build-bootloader -j2
+
+      - name: Prepare release asset names
+        run: |
+          mkdir -p release-assets/bootloader
+          cp build-bootloader/VectorFoc_Bootloader.elf release-assets/bootloader/VectorFoc-bootloader.elf
+          cp build-bootloader/VectorFoc_Bootloader.bin release-assets/bootloader/VectorFoc-bootloader.bin
+          cp build-bootloader/VectorFoc_Bootloader.hex release-assets/bootloader/VectorFoc-bootloader.hex
+
+      - name: Upload bootloader artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-bootloader-release
+          path: release-assets/bootloader/*
+          retention-days: 30
+
+  create-release:
+    needs:
+      - build-firmware
+      - build-bootloader
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 需要完整历史来生成 changelog
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: firmware-*-release
+          path: release-assets
+          merge-multiple: true
 
       - name: Extract version from tag
         id: get_version
@@ -51,10 +145,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            build/VectorFoc.elf
-            build/VectorFoc.bin
-            build/VectorFoc.hex
+          files: release-assets/*
           body_path: release_notes.md
           draft: false
           prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}

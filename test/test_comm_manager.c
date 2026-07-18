@@ -109,6 +109,50 @@ static int test_mit_get_state_sends_feedback_without_executing_command(void) {
   return 0;
 }
 
+static int test_vector_get_id_fast_path_accepts_only_valid_query_frames(void) {
+  reset_fixture();
+  CAN_Frame frame = {0};
+  frame.id = ((uint32_t)VECTOR_CMD_GET_ID << 24) | g_can_id;
+  frame.dlc = 0U;
+  frame.is_extended = true;
+
+  Protocol_ProcessRxFrame(&frame);
+  CHECK(s_parse_call_count == 0U);
+  CHECK(s_execute_count == 0U);
+  CHECK(s_send_count == 1U);
+  CHECK(s_watchdog_feed_count == 1U);
+
+  frame.id = ((uint32_t)VECTOR_CMD_GET_ID << 24) | 0x7FU;
+  Protocol_ProcessRxFrame(&frame);
+  CHECK(s_parse_call_count == 0U);
+  CHECK(s_send_count == 2U);
+  CHECK(s_watchdog_feed_count == 2U);
+
+  s_parse_result = PARSE_ERR_INVALID_FRAME;
+  frame.id = ((uint32_t)VECTOR_CMD_GET_ID << 24) | g_can_id;
+  frame.is_extended = false;
+  Protocol_ProcessRxFrame(&frame);
+  CHECK(s_parse_call_count == 1U);
+  CHECK(s_send_count == 2U);
+  CHECK(s_watchdog_feed_count == 2U);
+
+  frame.is_extended = true;
+  frame.is_rtr = true;
+  Protocol_ProcessRxFrame(&frame);
+  CHECK(s_parse_call_count == 1U);
+  CHECK(s_send_count == 2U);
+  CHECK(s_watchdog_feed_count == 2U);
+
+  s_parse_result = PARSE_UNKNOWN_ID;
+  frame.is_rtr = false;
+  frame.id = ((uint32_t)VECTOR_CMD_GET_ID << 24) | (g_can_id + 1U);
+  Protocol_ProcessRxFrame(&frame);
+  CHECK(s_parse_call_count == 2U);
+  CHECK(s_send_count == 2U);
+  CHECK(s_watchdog_feed_count == 2U);
+  return 0;
+}
+
 static int test_queue_overflow_events_are_reported_once_per_new_drop(void) {
   reset_fixture();
   CAN_Frame frame = {0};
@@ -141,6 +185,7 @@ int main(void) {
   int failures = test_only_valid_frames_feed_can_watchdog();
   failures += test_rtr_frames_are_rejected_before_protocol_parse();
   failures += test_mit_get_state_sends_feedback_without_executing_command();
+  failures += test_vector_get_id_fast_path_accepts_only_valid_query_frames();
   failures += test_queue_overflow_events_are_reported_once_per_new_drop();
   if (failures == 0) {
     printf("All communication manager tests PASSED\n");
