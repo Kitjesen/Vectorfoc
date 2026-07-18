@@ -41,6 +41,12 @@ typedef enum {
  */
 void ProtocolVector_Init(void);
 /**
+ * @brief Complete deferred reset/bootloader transitions after their ACK frame
+ *        has had a short chance to leave the CAN controller.
+ * @note Call from the communication task.
+ */
+void ProtocolVector_Service(void);
+/**
  * @brief   Parse a received CAN frame
  * @param  frame  CAN frame
  * @param  cmd    [out] parsed command

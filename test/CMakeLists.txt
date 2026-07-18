@@ -46,6 +46,11 @@ add_definitions(-DTEST_ENV)
 # Compiler flags for warnings
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -Wno-unused-parameter -Wno-unused-function)
+elseif(MSVC)
+    # The firmware sources contain UTF-8 comments.  Without this flag MSVC
+    # falls back to the active Windows code page and can misparse a source
+    # file after issuing C4819 encoding warnings.
+    add_compile_options(/utf-8)
 endif()
 
 function(register_test_target target)
@@ -233,13 +238,42 @@ target_include_directories(test_runner_vofa_commands PRIVATE
 )
 register_test_target(test_runner_vofa_commands)
 
+add_executable(test_runner_vofa_commands_xstar
+    test_vofa_commands.c
+)
+target_include_directories(test_runner_vofa_commands_xstar PRIVATE
+    ${PROJ_ROOT}/Src/BOOT
+    ${PROJ_ROOT}/Src/UI/vofa
+)
+target_compile_definitions(test_runner_vofa_commands_xstar PRIVATE BOARD_XSTAR)
+register_test_target(test_runner_vofa_commands_xstar)
+
 # Vector CAN protocol encode/decode tests
 # CalibContext_GetProgress and RSLSCalib_GetProgress are stubbed in test_comm_protocol.c
 add_executable(test_runner_comm_protocol
     test_comm_protocol.c
     ${PROJ_ROOT}/Src/COMM/protocol/vector/vector_protocol.c
 )
+target_compile_definitions(test_runner_comm_protocol PRIVATE
+    FW_VERSION_MAJOR=9
+    FW_VERSION_MINOR=8
+    FW_VERSION_PATCH=7
+    MOCK_HAL_RESET_OBSERVABLE
+)
 register_test_target(test_runner_comm_protocol)
+
+add_executable(test_runner_comm_protocol_xstar
+    test_comm_protocol.c
+    ${PROJ_ROOT}/Src/COMM/protocol/vector/vector_protocol.c
+)
+target_compile_definitions(test_runner_comm_protocol_xstar PRIVATE
+    BOARD_XSTAR
+    FW_VERSION_MAJOR=9
+    FW_VERSION_MINOR=8
+    FW_VERSION_PATCH=7
+    MOCK_HAL_RESET_OBSERVABLE
+)
+register_test_target(test_runner_comm_protocol_xstar)
 
 # Communication command execution and SI/internal unit boundary tests
 add_executable(test_runner_comm_executor

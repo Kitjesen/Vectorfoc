@@ -75,6 +75,16 @@ void Scope_Process(void);
 void Vofa_Service(void);
 /** @brief Copy one USB OUT packet into the ISR-to-task receive queue. */
 bool Vofa_QueueReceive(const uint8_t *buf, uint16_t len);
+/** @brief Number of packets dropped because the receive queue was full. */
+uint32_t Vofa_GetReceiveOverflowCount(void);
+/**
+ * @brief Publish the result of a previously queued Flash save.
+ *
+ * The command service owns the actual write because it first obtains the
+ * motor-state maintenance lease.  This function only emits the corresponding
+ * asynchronous USB acknowledgement.
+ */
+void Vofa_ReportScheduledSaveResult(bool succeeded);
 /** @brief Release the in-flight queue slot from the USB TX-complete callback.
  */
 void Vofa_OnTransmitComplete(void);

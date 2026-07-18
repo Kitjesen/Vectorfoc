@@ -136,6 +136,7 @@ typedef enum {
     BOOT_ERR_TIMEOUT,
     BOOT_ERR_INVALID_CMD,
     BOOT_ERR_APP_INVALID,
+    BOOT_ERR_RX_OVERFLOW,
 } BootStatus_t;
 
 #endif /* BOOT_CONFIG_H */

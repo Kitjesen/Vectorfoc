@@ -80,6 +80,9 @@ void BootProto_Init(void);
  */
 bool BootProto_QueueData(const uint8_t *data, uint16_t len);
 
+/** @brief Number of USB packets discarded because the RX queue was full. */
+uint32_t BootProto_GetReceiveOverflowCount(void);
+
 /**
  * @brief 处理接收到的数据
  * @param data 数据指针

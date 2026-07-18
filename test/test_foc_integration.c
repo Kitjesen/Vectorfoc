@@ -214,7 +214,67 @@ int test_speed_loop_step_response(void) {
     return 1;
 }
 
-// Test 3: Load disturbance rejection
+// Test 3: Speed loop setpoint switch response
+int test_speed_setpoint_switch_tracks_new_reference(void) {
+    MotorModel_t motor;
+    Motor_Init(&motor);
+
+    PidTypeDef pid_d, pid_q, pid_speed;
+    float current_gains[3] = {10.0f, 100.0f, 0.0f};
+    float speed_gains[3] = {0.05f, 0.5f, 0.0f};
+    PID_Init(&pid_d, PID_POSITION, current_gains, 24.0f, 10.0f);
+    PID_Init(&pid_q, PID_POSITION, current_gains, 24.0f, 10.0f);
+    PID_Init(&pid_speed, PID_POSITION, speed_gains, 5.0f, 3.0f);
+
+    const float initial_ref = 50.0f;
+    const float switched_ref = 20.0f;
+    const float dt = 0.0001f;
+    const int switch_step = 2500;
+    const int total_steps = 5000;
+
+    FILE *csv = fopen("foc_setpoint_switch.csv", "w");
+    if (csv != NULL) {
+        fprintf(csv, "Time,RefSpeed,ActualSpeed,Iq,Id\n");
+    }
+
+    float peak_after_switch = -1.0e9f;
+    for (int i = 0; i < total_steps; i++) {
+        float speed_ref = (i < switch_step) ? initial_ref : switched_ref;
+        float Iq_ref = PID_CalcDt(&pid_speed, motor.omega_m, speed_ref, dt);
+        float Vd = PID_CalcDt(&pid_d, motor.Id, 0.0f, dt);
+        float Vq = PID_CalcDt(&pid_q, motor.Iq, Iq_ref, dt);
+
+        Motor_Step(&motor, Vd, Vq, dt, 0.0f);
+
+        ASSERT_TRUE(isfinite(motor.omega_m));
+        ASSERT_TRUE(isfinite(motor.Id));
+        ASSERT_TRUE(isfinite(motor.Iq));
+
+        if (i >= switch_step && motor.omega_m > peak_after_switch) {
+            peak_after_switch = motor.omega_m;
+        }
+
+        if (csv != NULL && (i % 10) == 0) {
+            fprintf(csv, "%.5f,%.3f,%.3f,%.3f,%.3f\n",
+                    i * dt, speed_ref, motor.omega_m, motor.Iq, motor.Id);
+        }
+    }
+
+    if (csv != NULL) {
+        fclose(csv);
+    }
+
+    float final_error = fabsf(motor.omega_m - switched_ref);
+    float overshoot_after_switch = peak_after_switch - switched_ref;
+    printf("final=%.2f rad/s error=%.2f rad/s overshoot_after_switch=%.2f rad/s ",
+           motor.omega_m, final_error, overshoot_after_switch);
+
+    ASSERT_NEAR(motor.omega_m, switched_ref, 5.0f);
+
+    return 1;
+}
+
+// Test 4: Load disturbance rejection
 int test_load_disturbance_rejection(void) {
     MotorModel_t motor;
     Motor_Init(&motor);
@@ -258,7 +318,7 @@ int test_load_disturbance_rejection(void) {
     return 1;
 }
 
-// Test 4: Clarke-Park-InversePark-InverseClarke round trip
+// Test 5: Clarke-Park-InversePark-InverseClarke round trip
 int test_transform_roundtrip(void) {
     float Ia = 1.0f, Ib = -0.5f, Ic = -0.5f;
     float theta = 0.5f;  // arbitrary angle
@@ -287,7 +347,7 @@ int test_transform_roundtrip(void) {
     return 1;
 }
 
-// Test 5: SVPWM duty cycle validity
+// Test 6: SVPWM duty cycle validity
 int test_svpwm_duty_validity(void) {
     for (float angle = 0; angle < 2 * M_PI; angle += 0.1f) {
         float Valpha = cosf(angle);
@@ -305,7 +365,7 @@ int test_svpwm_duty_validity(void) {
     return 1;
 }
 
-// Test 6: Numerical stability - long run
+// Test 7: Numerical stability - long run
 int test_numerical_stability(void) {
     MotorModel_t motor;
     Motor_Init(&motor);
@@ -334,7 +394,7 @@ int test_numerical_stability(void) {
     return 1;
 }
 
-// Test 7: Zero crossing behavior
+// Test 8: Zero crossing behavior
 int test_zero_crossing(void) {
     MotorModel_t motor;
     Motor_Init(&motor);
@@ -372,7 +432,7 @@ int test_zero_crossing(void) {
     return 1;
 }
 
-// Test 8: Edge cases - zero voltage
+// Test 9: Edge cases - zero voltage
 int test_edge_zero_voltage(void) {
     MotorModel_t motor;
     Motor_Init(&motor);
@@ -393,7 +453,7 @@ int test_edge_zero_voltage(void) {
     return 1;
 }
 
-// Test 9: Edge cases - maximum current
+// Test 10: Edge cases - maximum current
 int test_edge_max_current(void) {
     MotorModel_t motor;
     Motor_Init(&motor);
@@ -419,7 +479,7 @@ int test_edge_max_current(void) {
     return 1;
 }
 
-// Test 10: Frequency response - bandwidth check
+// Test 11: Frequency response - bandwidth check
 int test_current_loop_bandwidth(void) {
     MotorModel_t motor;
     Motor_Init(&motor);
@@ -473,6 +533,7 @@ int main(void) {
     
     printf("\n=== Speed Loop Tests ===\n");
     TEST(speed_loop_step_response);
+    TEST(speed_setpoint_switch_tracks_new_reference);
     TEST(load_disturbance_rejection);
     
     printf("\n=== Stability Tests ===\n");

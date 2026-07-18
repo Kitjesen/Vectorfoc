@@ -325,6 +325,9 @@ void Protocol_ProcessQueuedFrames(void) {
   while (Protocol_DequeueRxFrame(&frame)) {
     Protocol_ProcessRxFrame(&frame);
   }
+  if (s_current_protocol == PROTOCOL_VECTOR) {
+    ProtocolVector_Service();
+  }
 }
 /**
  * @brief CAN

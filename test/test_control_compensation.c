@@ -4,15 +4,27 @@
 #include "feedforward.h"
 #include "field_weakening.h"
 #include "motor.h"
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
+
+static int test_isfinite_float(float value) {
+  union {
+    float f;
+    uint32_t u;
+  } bits;
+  bits.f = value;
+  return (bits.u & 0x7F800000u) != 0x7F800000u;
+}
 
 #define CHECK_NEAR(actual, expected, tolerance)                                \
   do {                                                                         \
     float a_ = (actual);                                                       \
     float e_ = (expected);                                                     \
-    if (fabsf(a_ - e_) > (tolerance)) {                                        \
+    if (!test_isfinite_float(a_) || !test_isfinite_float(e_) ||                \
+        fabsf(a_ - e_) > (tolerance)) {                                        \
       printf("FAIL %s:%d: %.6f != %.6f\n", __FILE__, __LINE__, (double)a_,     \
              (double)e_);                                                      \
       return 1;                                                                \
@@ -65,6 +77,55 @@ static int test_field_weakening_uses_explicit_dt_without_mutating_base(void) {
   return 0;
 }
 
+static int test_field_weakening_rejects_non_finite_config(void) {
+  MOTOR_DATA motor;
+  memset(&motor, 0, sizeof(motor));
+  motor.algo_output.voltage_saturated = true;
+  FieldWeakening_Config_t config = {
+      .max_weakening_current = NAN,
+      .start_velocity = 10.0f,
+  };
+
+  FieldWeakening_Reset();
+  CHECK_NEAR(FieldWeakening_Calculate(&motor, &config, 0.01f), 0.0f, 0.0f);
+
+  config.max_weakening_current = 5.0f;
+  config.start_velocity = INFINITY;
+  CHECK_NEAR(FieldWeakening_Calculate(&motor, &config, 0.01f), 0.0f, 0.0f);
+  return 0;
+}
+
+static int test_field_weakening_rejects_non_finite_velocity(void) {
+  MOTOR_DATA motor;
+  memset(&motor, 0, sizeof(motor));
+  motor.feedback.velocity = NAN;
+  motor.algo_output.voltage_saturated = true;
+  FieldWeakening_Config_t config = {
+      .max_weakening_current = 10.0f,
+      .start_velocity = 100.0f,
+  };
+
+  FieldWeakening_Reset();
+  CHECK_NEAR(FieldWeakening_Calculate(&motor, &config, 0.01f), 0.0f, 0.0f);
+  return 0;
+}
+
+static int test_field_weakening_rejects_non_finite_dt_without_integrating(void) {
+  MOTOR_DATA motor;
+  memset(&motor, 0, sizeof(motor));
+  motor.algo_output.voltage_saturated = true;
+  FieldWeakening_Config_t config = {
+      .max_weakening_current = 10.0f,
+      .start_velocity = 100000.0f,
+  };
+
+  FieldWeakening_Reset();
+  CHECK_NEAR(FieldWeakening_Calculate(&motor, &config, NAN), 0.0f, 0.0f);
+  CHECK_NEAR(FieldWeakening_Calculate(&motor, &config, 0.00005f), -0.005f,
+             1e-6f);
+  return 0;
+}
+
 static int test_feedforward_converts_turn_acceleration_to_radians(void) {
   MOTOR_DATA motor;
   memset(&motor, 0, sizeof(motor));
@@ -89,6 +150,9 @@ int main(void) {
   int failures = 0;
   failures += test_feedforward_does_not_accumulate_command();
   failures += test_field_weakening_uses_explicit_dt_without_mutating_base();
+  failures += test_field_weakening_rejects_non_finite_config();
+  failures += test_field_weakening_rejects_non_finite_velocity();
+  failures += test_field_weakening_rejects_non_finite_dt_without_integrating();
   failures += test_feedforward_converts_turn_acceleration_to_radians();
   if (failures == 0) {
     printf("All control compensation tests passed\n");

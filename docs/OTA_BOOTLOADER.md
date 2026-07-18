@@ -77,6 +77,7 @@ STM32G431CB (128KB Flash)
 | 6 | BOOT_ERR_TIMEOUT - 超时 |
 | 7 | BOOT_ERR_INVALID_CMD - 无效命令 |
 | 8 | BOOT_ERR_APP_INVALID - App 无效 |
+| 9 | BOOT_ERR_RX_OVERFLOW - USB 接收队列溢出；当前升级事务已中止，主机应重新从命令阶段开始 |
 
 ## 使用方法
 

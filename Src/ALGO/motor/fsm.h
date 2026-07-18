@@ -79,6 +79,7 @@ typedef struct {
   bool auto_advance;           //  ( RequestState set)
   bool operation_power_enabled; // first valid duty is loaded before PWM enable
   bool calibration_power_enabled; // calibration sub-stage owns PWM explicitly
+  bool maintenance_active;      // blocks run/calibration while Flash maintenance owns lease
   /* fault (per-instance) */
   uint32_t fault_history[FAULT_HISTORY_SIZE]; // fault
   uint8_t fault_history_index;                // fault
@@ -132,6 +133,8 @@ void StateMachine_EnterFault(StateMachine *sm, uint32_t fault_code);
 bool StateMachine_ClearFault(StateMachine *sm);
 bool StateMachine_SetOperationPower(StateMachine *sm, bool enabled);
 bool StateMachine_SetCalibrationPower(StateMachine *sm, bool enabled);
+bool StateMachine_BeginMaintenance(StateMachine *sm);
+void StateMachine_EndMaintenance(StateMachine *sm);
 /**
  * @brief setstatecheck
  * @param sm state

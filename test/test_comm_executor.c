@@ -137,6 +137,58 @@ static int test_set_zero_resets_only_the_mechanical_position_origin(void) {
   return 0;
 }
 
+static int test_explicit_open_control_mode_is_not_treated_as_absent(void) {
+  reset_fixture();
+  motor_data.state.Control_Mode = CONTROL_MODE_POSITION;
+
+  MotorCommand cmd = {0};
+  cmd.has_control_mode = true;
+  cmd.control_mode = CONTROL_MODE_OPEN;
+  Executor_ProcessCommand(&cmd);
+
+  CHECK(motor_data.state.Control_Mode == CONTROL_MODE_OPEN);
+  return 0;
+}
+
+static int
+test_explicit_mode_change_keeps_omitted_motion_setpoints_unchanged(void) {
+  reset_fixture();
+  motor_data.Controller.input_position = 1.25f;
+  motor_data.Controller.input_velocity = -2.5f;
+  motor_data.Controller.input_torque = 3.75f;
+
+  const CONTROL_MODE modes[] = {CONTROL_MODE_POSITION,
+                                CONTROL_MODE_VELOCITY,
+                                CONTROL_MODE_TORQUE};
+  for (size_t i = 0U; i < sizeof(modes) / sizeof(modes[0]); ++i) {
+    MotorCommand cmd = {0};
+    cmd.has_control_mode = true;
+    cmd.control_mode = (uint8_t)modes[i];
+    Executor_ProcessCommand(&cmd);
+
+    CHECK(motor_data.state.Control_Mode == modes[i]);
+    CHECK_NEAR(motor_data.Controller.input_position, 1.25f, 1e-6f);
+    CHECK_NEAR(motor_data.Controller.input_velocity, -2.5f, 1e-6f);
+    CHECK_NEAR(motor_data.Controller.input_torque, 3.75f, 1e-6f);
+  }
+  return 0;
+}
+
+static int test_current_references_publish_through_executor(void) {
+  reset_fixture();
+
+  MotorCommand cmd = {0};
+  cmd.has_iq_ref = true;
+  cmd.iq_ref = 1.25f;
+  cmd.has_id_ref = true;
+  cmd.id_ref = -0.5f;
+  Executor_ProcessCommand(&cmd);
+
+  CHECK_NEAR(motor_data.algo_input.Iq_ref, 1.25f, 1e-6f);
+  CHECK_NEAR(motor_data.algo_input.Id_ref, -0.5f, 1e-6f);
+  return 0;
+}
+
 static int test_can_timeout_parameter_updates_runtime_detection(void) {
   reset_fixture();
   MotorCommand cmd = {0};
@@ -245,6 +297,10 @@ int main(void) {
   failures += test_non_motion_command_does_not_change_motor_state();
   failures += test_explicit_stop_requests_disabled_state();
   failures += test_set_zero_resets_only_the_mechanical_position_origin();
+  failures += test_explicit_open_control_mode_is_not_treated_as_absent();
+  failures +=
+      test_explicit_mode_change_keeps_omitted_motion_setpoints_unchanged();
+  failures += test_current_references_publish_through_executor();
   failures += test_can_timeout_parameter_updates_runtime_detection();
   failures += test_can_timeout_parameter_read_uses_uint32_accessor();
   failures += test_failed_protocol_switch_has_no_runtime_or_save_side_effect();

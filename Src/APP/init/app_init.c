@@ -122,6 +122,7 @@ void App_Init(void) {
   StateMachine_SetPreCheckCallback(&g_ds402_state_machine, App_StatePreCheck);
   Detection_Init(NULL);
   Safety_Init(NULL);
+  __enable_irq();
 
   Param_SystemInitOnce();
   if (!adc_bsp_init()) {
@@ -169,5 +170,4 @@ void App_Init(void) {
   Init_Motor_No_Calib(&motor_data);
   MHAL_PWM_Disable();
   HAL_WatchdogFeed();
-  __enable_irq();
 }

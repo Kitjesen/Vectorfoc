@@ -15,12 +15,25 @@
 #include "field_weakening.h"
 #include "common.h"
 #include "config.h"
+#include <float.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 static float s_id_fw_integral = 0.0f;
 
+static bool FieldWeakening_IsFinite(float value) {
+  union {
+    float f;
+    uint32_t u;
+  } bits;
+  bits.f = value;
+  return (bits.u & 0x7F800000u) != 0x7F800000u;
+}
+
 static float FieldWeakening_CalcLinear(const FieldWeakening_Config_t *config,
                                        float velocity) {
-  if (config->start_velocity <= 0.0f)
+  if (!FieldWeakening_IsFinite(config->start_velocity) ||
+      !FieldWeakening_IsFinite(velocity) || config->start_velocity <= 0.0f)
     return 0.0f;
 
   float abs_velocity = fabsf(velocity);
@@ -35,8 +48,8 @@ static float FieldWeakening_CalcLinear(const FieldWeakening_Config_t *config,
 
 static float FieldWeakening_CalcVoltageSaturation(
     const MOTOR_DATA *motor, const FieldWeakening_Config_t *config, float dt) {
-  if (dt <= 0.0f || dt > 0.1f)
-    return s_id_fw_integral;
+  if (!FieldWeakening_IsFinite(dt) || dt <= 0.0f || dt > 0.1f)
+    return 0.0f;
 
   const float weakening_ramp_rate = 100.0f; /* A/s */
   if (motor->algo_output.voltage_saturated) {
@@ -54,8 +67,14 @@ float FieldWeakening_Calculate(const MOTOR_DATA *motor,
                                const FieldWeakening_Config_t *config,
                                float dt) {
   if (motor == NULL || config == NULL ||
+      !FieldWeakening_IsFinite(config->max_weakening_current) ||
+      !FieldWeakening_IsFinite(config->start_velocity) ||
+      !FieldWeakening_IsFinite(motor->feedback.velocity) ||
       config->max_weakening_current <= 0.0f) {
     s_id_fw_integral = 0.0f;
+    return 0.0f;
+  }
+  if (!FieldWeakening_IsFinite(dt) || dt <= 0.0f || dt > 0.1f) {
     return 0.0f;
   }
 

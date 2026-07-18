@@ -17,13 +17,24 @@
 #include "foc/park.h"
 #include "foc/svpwm.h"
 #include <assert.h>
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 
+static int Test_IsFiniteFloat(float value) {
+  union {
+    float f;
+    uint32_t u;
+  } bits;
+  bits.f = value;
+  return (bits.u & 0x7F800000u) != 0x7F800000u;
+}
 
 // Simple Test Framework
 #define ASSERT_NEAR(a, b, epsilon)                                             \
-  if (fabs((a) - (b)) > (epsilon)) {                                           \
+  if (!Test_IsFiniteFloat((float)(a)) || !Test_IsFiniteFloat((float)(b)) ||    \
+      fabs((a) - (b)) > (epsilon)) {                                           \
     printf("FAIL: %s l:%d | %.5f != %.5f\n", __func__, __LINE__, (float)(a),   \
            (float)(b));                                                        \
     return 0;                                                                  \
@@ -166,7 +177,107 @@ int Test_FOC_UsesConfiguredVoltageLimit() {
   return TEST_PASS;
 }
 
+static FOC_AlgorithmConfig_t Test_DefaultFocConfig(void) {
+  FOC_AlgorithmConfig_t config = {0};
+  config.Rs = 0.1f;
+  config.Ls = 0.0001f;
+  config.flux = 0.01f;
+  config.pole_pairs = 7;
+  config.Kp_current_d = 1.0f;
+  config.Ki_current_d = 10.0f;
+  config.Kp_current_q = 1.0f;
+  config.Ki_current_q = 10.0f;
+  config.Ts_current = 0.00005f;
+  config.voltage_limit = 12.0f;
+  config.current_limit = 20.0f;
+  config.decoupling_gain = 0.5f;
+  config.Kb_current = 1.0f;
+  config.current_filter_fc = 1000.0f;
+  config.deadtime_i_thresh = 0.1f;
+  config.deadtime_Vdiode = 0.7f;
+  return config;
+}
+
+int Test_FOC_ValidateConfigRejectsNonFiniteValues() {
+  FOC_AlgorithmConfig_t config = Test_DefaultFocConfig();
+  if (!FOC_Algorithm_ValidateConfig(&config))
+    return TEST_FAIL;
+
+  config.Kp_current_d = NAN;
+  if (FOC_Algorithm_ValidateConfig(&config))
+    return TEST_FAIL;
+
+  config = Test_DefaultFocConfig();
+  config.current_filter_fc = INFINITY;
+  if (FOC_Algorithm_ValidateConfig(&config))
+    return TEST_FAIL;
+
+  config = Test_DefaultFocConfig();
+  config.deadtime_Vdiode = NAN;
+  if (FOC_Algorithm_ValidateConfig(&config))
+    return TEST_FAIL;
+
+  printf("FOC Config Non-Finite Rejection Test: PASS\n");
+  return TEST_PASS;
+}
+
+int Test_FOC_CalculateCurrentGainsRejectsNonFiniteInputs() {
+  float Kp = 1.0f;
+  float Ki = 1.0f;
+
+  FOC_Algorithm_CalculateCurrentGains(NAN, 0.0001f, 1000.0f, &Kp, &Ki);
+  ASSERT_NEAR(Kp, 0.0f, 0.0f);
+  ASSERT_NEAR(Ki, 0.0f, 0.0f);
+
+  Kp = 1.0f;
+  Ki = 1.0f;
+  FOC_Algorithm_CalculateCurrentGains(0.1f, INFINITY, 1000.0f, &Kp, &Ki);
+  ASSERT_NEAR(Kp, 0.0f, 0.0f);
+  ASSERT_NEAR(Ki, 0.0f, 0.0f);
+
+  Kp = 1.0f;
+  Ki = 1.0f;
+  FOC_Algorithm_CalculateCurrentGains(0.1f, 0.0001f, NAN, &Kp, &Ki);
+  ASSERT_NEAR(Kp, 0.0f, 0.0f);
+  ASSERT_NEAR(Ki, 0.0f, 0.0f);
+
+  printf("FOC Gain Non-Finite Rejection Test: PASS\n");
+  return TEST_PASS;
+}
+
+int Test_FOC_CurrentLoopNonFiniteConfigProducesSafeOutput() {
+  FOC_AlgorithmInput_t input = {0};
+  FOC_AlgorithmConfig_t config = Test_DefaultFocConfig();
+  FOC_AlgorithmState_t state = {0};
+  FOC_AlgorithmOutput_t output = {0};
+
+  input.enabled = true;
+  input.Vbus = 24.0f;
+  input.Iq_ref = 5.0f;
+  config.Kp_current_q = NAN;
+  state.integral_d = NAN;
+  state.integral_q = INFINITY;
+  state.Id_filt = NAN;
+  state.Iq_filt = -INFINITY;
+
+  FOC_Algorithm_CurrentLoop(&input, &config, &state, &output);
+
+  ASSERT_NEAR(output.Ta, 0.5f, 0.0f);
+  ASSERT_NEAR(output.Tb, 0.5f, 0.0f);
+  ASSERT_NEAR(output.Tc, 0.5f, 0.0f);
+  ASSERT_NEAR(output.Vd, 0.0f, 0.0f);
+  ASSERT_NEAR(output.Vq, 0.0f, 0.0f);
+  ASSERT_NEAR(state.integral_d, 0.0f, 0.0f);
+  ASSERT_NEAR(state.integral_q, 0.0f, 0.0f);
+  ASSERT_NEAR(state.Id_filt, 0.0f, 0.0f);
+  ASSERT_NEAR(state.Iq_filt, 0.0f, 0.0f);
+
+  printf("FOC Current Loop Non-Finite Config Safety Test: PASS\n");
+  return TEST_PASS;
+}
+
 int main() {
+  setvbuf(stdout, NULL, _IONBF, 0);
   int passed = 0;
   int total = 0;
 
@@ -184,6 +295,12 @@ int main() {
   passed += Test_SVPWM_LinearBoundaryIsNotScaled();
   total++;
   passed += Test_FOC_UsesConfiguredVoltageLimit();
+  total++;
+  passed += Test_FOC_ValidateConfigRejectsNonFiniteValues();
+  total++;
+  passed += Test_FOC_CalculateCurrentGainsRejectsNonFiniteInputs();
+  total++;
+  passed += Test_FOC_CurrentLoopNonFiniteConfigProducesSafeOutput();
 
   printf("=====================\n");
   printf("Total: %d, Passed: %d\n", total, passed);

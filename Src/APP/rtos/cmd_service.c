@@ -27,6 +27,7 @@
 #include "param_access.h"
 #include "platform.h"
 #include "stm32g4xx_hal.h"
+#include "vofa.h"
 static bool s_report_enabled = false;
 static inline void CmdService_SnapshotStatus(MotorStatus *status) {
   if (status == NULL)
@@ -55,21 +56,6 @@ static inline void CmdService_SnapshotStatus(MotorStatus *status) {
   CRITICAL_SECTION_END();
 }
 
-static bool CmdService_ParamSaveSafe(void) {
-  bool safe;
-  CRITICAL_SECTION_BEGIN();
-  const StateMachine *sm = &g_ds402_state_machine;
-  safe = sm->current_state != STATE_OPERATION_ENABLED &&
-         sm->current_state != STATE_CALIBRATING &&
-         sm->target_state != STATE_OPERATION_ENABLED &&
-         sm->target_state != STATE_CALIBRATING &&
-         !sm->transition_in_progress &&
-         !sm->operation_power_enabled &&
-         !sm->calibration_power_enabled;
-  CRITICAL_SECTION_END();
-  return safe;
-}
-
 void CmdService_Init(void) { LOGINFO("[CMD] Command service initialized"); }
 void CmdService_SetReportEnable(bool enable) { s_report_enabled = enable; }
 void CmdService_Process(void) {
@@ -84,8 +70,10 @@ void CmdService_Process(void) {
   uint32_t now = HAL_GetTick();
   // param
   if ((int32_t)(now - next_param_save_attempt) >= 0 &&
-      CmdService_ParamSaveSafe()) {
-    (void)Param_ProcessScheduledSave();
+      StateMachine_BeginMaintenance(&g_ds402_state_machine)) {
+    bool save_succeeded = Param_ProcessScheduledSave();
+    Vofa_ReportScheduledSaveResult(save_succeeded);
+    StateMachine_EndMaintenance(&g_ds402_state_machine);
     next_param_save_attempt = now + 250U;
   }
   // motorstate

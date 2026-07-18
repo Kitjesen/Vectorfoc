@@ -45,6 +45,7 @@
 #include "config.h"
 #include "control/cogging.h"
 #include "control/control.h"
+#include "executor.h"
 #include "control/ladrc.h"
 #include "fault_def.h"
 #include "hal_encoder.h"
@@ -92,6 +93,8 @@ static volatile uint8_t s_tx_tail;
 static volatile uint8_t s_tx_count;
 static volatile bool s_tx_busy;
 static volatile bool s_boot_upgrade_pending;
+static volatile bool s_save_flash_result_pending;
+static volatile bool s_save_flash_failure_reported;
 static volatile bool s_param_sync_active;
 static volatile uint32_t s_param_sync_index;
 
@@ -99,6 +102,8 @@ static VofaRxSlot s_rx_queue[VOFA_RX_QUEUE_DEPTH];
 static volatile uint8_t s_rx_head;
 static volatile uint8_t s_rx_tail;
 static volatile uint8_t s_rx_count;
+static volatile uint32_t s_rx_overflow_count;
+static uint32_t s_rx_overflow_reported_count;
 
 static void Studio_ProcessParamSync(void);
 /* ============================================================================
@@ -186,9 +191,44 @@ bool Vofa_QueueReceive(const uint8_t *buf, uint16_t len) {
     s_rx_head = (uint8_t)((s_rx_head + 1U) % VOFA_RX_QUEUE_DEPTH);
     s_rx_count++;
     queued = true;
+  } else {
+    s_rx_overflow_count++;
   }
   CRITICAL_SECTION_END();
   return queued;
+}
+
+uint32_t Vofa_GetReceiveOverflowCount(void) {
+  uint32_t count;
+  CRITICAL_SECTION_BEGIN();
+  count = s_rx_overflow_count;
+  CRITICAL_SECTION_END();
+  return count;
+}
+
+void Vofa_ReportScheduledSaveResult(bool succeeded) {
+  bool report = false;
+
+  CRITICAL_SECTION_BEGIN();
+  if (s_save_flash_result_pending) {
+    if (succeeded) {
+      s_save_flash_result_pending = false;
+      s_save_flash_failure_reported = false;
+      report = true;
+    } else if (!s_save_flash_failure_reported) {
+      /* Param_ProcessScheduledSave keeps a failed request pending for retry.
+       * Report the first failure honestly, then leave the request armed so a
+       * later successful retry can still be acknowledged. */
+      s_save_flash_failure_reported = true;
+      report = true;
+    }
+  }
+  CRITICAL_SECTION_END();
+
+  if (report) {
+    Studio_SendText(succeeded ? "ack=save_flash,succeeded"
+                              : "ack=save_flash,retrying");
+  }
 }
 
 static void Vofa_ProcessNextReceive(void) {
@@ -213,6 +253,7 @@ static void Vofa_ProcessNextReceive(void) {
 
 void Vofa_Service(void) {
   bool request_boot_upgrade = false;
+  uint32_t rx_overflow_count = 0U;
 
   if (!s_boot_upgrade_pending) {
     Vofa_ProcessNextReceive();
@@ -232,6 +273,15 @@ void Vofa_Service(void) {
   }
   if (s_boot_upgrade_pending) {
     return;
+  }
+  CRITICAL_SECTION_BEGIN();
+  rx_overflow_count = s_rx_overflow_count;
+  CRITICAL_SECTION_END();
+  if (rx_overflow_count != s_rx_overflow_reported_count &&
+      Studio_SendText("rx_overflow=1")) {
+    /* Keep a newer counter value pending if another packet was dropped while
+     * the notification was being queued. */
+    s_rx_overflow_reported_count = rx_overflow_count;
   }
   Studio_ProcessParamSync();
 }
@@ -368,8 +418,12 @@ void Scope_Init(void) {
   s_tx_count = 0U;
   s_tx_busy = false;
   s_boot_upgrade_pending = false;
+  s_save_flash_result_pending = false;
+  s_save_flash_failure_reported = false;
   s_param_sync_active = false;
   s_param_sync_index = 0U;
+  s_rx_overflow_count = 0U;
+  s_rx_overflow_reported_count = 0U;
   CRITICAL_SECTION_END();
 }
 void Scope_Update(void) {
@@ -898,7 +952,11 @@ void vofa_Receive(uint8_t *buf, uint16_t len) {
   }
   if (vofa_cmd_matches(recvStr, "save_flash=1")) {
     Param_ScheduleSave();
-    Studio_SendText("ack=save_ok");
+    CRITICAL_SECTION_BEGIN();
+    s_save_flash_result_pending = true;
+    s_save_flash_failure_reported = false;
+    CRITICAL_SECTION_END();
+    Studio_SendText("ack=save_flash,queued");
     return;
   }
   /* ── motor ── */
@@ -907,13 +965,10 @@ void vofa_Receive(uint8_t *buf, uint16_t len) {
     if (!vofa_cmd_parse(recvStr, "motor_enable=", &motor_enable)) {
       return;
     }
-    if (motor_enable > 0.5f) {
-      StateMachine_RequestState(&g_ds402_state_machine,
-                                STATE_OPERATION_ENABLED);
-    } else {
-      StateMachine_RequestState(&g_ds402_state_machine,
-                                STATE_SWITCH_ON_DISABLED);
-    }
+    MotorCommand cmd = {0};
+    cmd.has_enable_command = true;
+    cmd.enable_motor = motor_enable > 0.5f;
+    Executor_ProcessCommand(&cmd);
     return;
   }
   if (vofa_cmd_matches(recvStr, "calib=")) {
@@ -961,7 +1016,10 @@ void vofa_Receive(uint8_t *buf, uint16_t len) {
     int ctrlModeInt = 0;
     if (vofa_cmd_parse_int_checked(recvStr, "set_ctrl_mode=", &ctrlModeInt) &&
         ctrlModeInt >= CONTROL_MODE_OPEN && ctrlModeInt <= CONTROL_MODE_MIT) {
-      motor_data.state.Control_Mode = (CONTROL_MODE)ctrlModeInt;
+      MotorCommand cmd = {0};
+      cmd.has_control_mode = true;
+      cmd.control_mode = (uint8_t)ctrlModeInt;
+      Executor_ProcessCommand(&cmd);
     } else {
       Studio_SendText("param_err=ctrl_mode,INVALID_VALUE");
     }
@@ -971,36 +1029,54 @@ void vofa_Receive(uint8_t *buf, uint16_t len) {
   if (vofa_cmd_matches(recvStr, "set_Iq=")) {
     float value = 0.0f;
     if (vofa_cmd_parse(recvStr, "set_Iq=", &value)) {
-      motor_data.algo_input.Iq_ref = value;
+      MotorCommand cmd = {0};
+      cmd.has_iq_ref = true;
+      cmd.iq_ref = value;
+      Executor_ProcessCommand(&cmd);
     }
     return;
   }
   if (vofa_cmd_matches(recvStr, "set_Id=")) {
     float value = 0.0f;
     if (vofa_cmd_parse(recvStr, "set_Id=", &value)) {
-      motor_data.algo_input.Id_ref = value;
+      MotorCommand cmd = {0};
+      cmd.has_id_ref = true;
+      cmd.id_ref = value;
+      Executor_ProcessCommand(&cmd);
     }
     return;
   }
   if (vofa_cmd_matches(recvStr, "set_torque=")) {
     float value = 0.0f;
     if (vofa_cmd_parse(recvStr, "set_torque=", &value)) {
-      motor_data.Controller.input_torque = value;
+      MotorCommand cmd = {0};
+      cmd.has_torque_ref = true;
+      cmd.iq_ref = value;
+      Executor_ProcessCommand(&cmd);
     }
     return;
   }
   if (vofa_cmd_matches(recvStr, "set_vel=")) {
     float value = 0.0f;
     if (vofa_cmd_parse(recvStr, "set_vel=", &value)) {
-      motor_data.Controller.input_velocity = value;
+      MotorCommand cmd = {0};
+      /* VOFA historically exposes the controller's native turn/s unit.
+       * Convert at the USB boundary because Executor_ProcessCommand accepts
+       * protocol-facing SI radians per second. */
+      cmd.has_velocity_ref = true;
+      cmd.speed_ref = Protocol_TurnsToRadians(value);
+      Executor_ProcessCommand(&cmd);
     }
     return;
   }
   if (vofa_cmd_matches(recvStr, "set_pos=")) {
     float value = 0.0f;
     if (vofa_cmd_parse(recvStr, "set_pos=", &value)) {
-      motor_data.Controller.input_position = value;
-      motor_data.Controller.input_updated = true;
+      MotorCommand cmd = {0};
+      /* Preserve the legacy VOFA turn unit while using the SI executor API. */
+      cmd.has_position_ref = true;
+      cmd.position_ref = Protocol_TurnsToRadians(value);
+      Executor_ProcessCommand(&cmd);
     }
     return;
   }
@@ -1123,6 +1199,10 @@ void vofa_Receive(uint8_t *buf, uint16_t len) {
   }
   /* ── OTA 升级命令 ── */
   if (vofa_cmd_matches(recvStr, "boot_enter")) {
+#if defined(BOARD_XSTAR)
+    Studio_SendText("boot_ack,2,unsupported");
+    return;
+#else
     /* 先禁用电机 */
     StateMachine_RequestState(&g_ds402_state_machine, STATE_SWITCH_ON_DISABLED);
     /* ACK 完成后由 Vofa_Service 在任务上下文请求重启。 */
@@ -1132,5 +1212,6 @@ void vofa_Receive(uint8_t *buf, uint16_t len) {
       CRITICAL_SECTION_END();
     }
     return;
+#endif
   }
 }

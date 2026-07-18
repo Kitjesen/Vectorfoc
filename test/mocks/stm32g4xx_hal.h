@@ -30,7 +30,12 @@ typedef struct { void *Instance; } UART_HandleTypeDef;
 #define HAL_SPI_TransmitReceive(h,t,r,s,to) HAL_OK
 #define HAL_RCC_DeInit()                    ((void)0)
 #define HAL_DeInit()                        ((void)0)
+#if defined(MOCK_HAL_RESET_OBSERVABLE)
+void Test_HAL_NVIC_SystemReset(void);
+#define HAL_NVIC_SystemReset()              Test_HAL_NVIC_SystemReset()
+#else
 #define HAL_NVIC_SystemReset()              ((void)0)
+#endif
 #ifndef TEST_USE_REAL_SYSTEM_TICK
 #define HAL_GetSystemTick()                 (0u)
 #endif

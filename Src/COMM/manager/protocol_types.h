@@ -70,11 +70,18 @@ typedef struct {
 
   /* Other control mode parameters */
   float iq_ref;       /**< [A] Current setpoint */
+  float id_ref;       /**< [A] D-axis current setpoint */
   float speed_ref;    /**< [rad/s] Speed setpoint */
   float position_ref; /**< [rad] Position setpoint */
 
   /* Control flags */
   uint8_t control_mode; /**< Control mode */
+  bool has_control_mode; /**< True when control_mode is explicitly set. */
+  bool has_iq_ref;       /**< True when iq_ref is explicitly set. */
+  bool has_id_ref;       /**< True when id_ref is explicitly set. */
+  bool has_torque_ref;   /**< True when iq_ref carries torque/current request. */
+  bool has_velocity_ref; /**< True when speed_ref is explicitly set. */
+  bool has_position_ref; /**< True when position_ref is explicitly set. */
   bool has_enable_command; /**< True only when enable_motor is explicitly set. */
   bool enable_motor;    /**< Motor enable flag */
   bool set_zero;        /**< Set zero position flag */

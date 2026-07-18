@@ -54,9 +54,12 @@ static bool s_tx_busy;
 static bool s_reboot_pending;
 
 static BootRxSlot_t s_rx_queue[BOOT_RX_QUEUE_LEN];
-static uint8_t s_rx_head;
-static uint8_t s_rx_tail;
-static uint8_t s_rx_count;
+static volatile uint8_t s_rx_head;
+static volatile uint8_t s_rx_tail;
+static volatile uint8_t s_rx_count;
+static volatile uint32_t s_rx_overflow_count;
+static volatile bool s_rx_overflow_pending;
+static bool s_rx_line_overflow;
 
 static void flush_tx_queue(void);
 static bool dequeue_rx(uint8_t *data, uint16_t *len);
@@ -270,6 +273,9 @@ void BootProto_Init(void) {
   s_rx_head = 0u;
   s_rx_tail = 0u;
   s_rx_count = 0u;
+  s_rx_overflow_count = 0u;
+  s_rx_overflow_pending = false;
+  s_rx_line_overflow = false;
   s_ctx.state = PROTO_STATE_IDLE;
 }
 
@@ -279,6 +285,7 @@ void BootProto_Reset(void) {
   s_ctx.write_addr = 0;
   s_ctx.write_len = 0;
   s_ctx.received_len = 0;
+  s_rx_line_overflow = false;
 }
 
 /* ============================================================================
@@ -425,9 +432,20 @@ bool BootProto_QueueData(const uint8_t *data, uint16_t len) {
     s_rx_head = (uint8_t)((s_rx_head + 1u) % BOOT_RX_QUEUE_LEN);
     s_rx_count++;
     queued = true;
+  } else {
+    s_rx_overflow_count++;
+    s_rx_overflow_pending = true;
   }
   boot_critical_exit(primask);
   return queued;
+}
+
+uint32_t BootProto_GetReceiveOverflowCount(void) {
+  uint32_t count;
+  uint32_t primask = boot_critical_enter();
+  count = s_rx_overflow_count;
+  boot_critical_exit(primask);
+  return count;
 }
 
 static bool dequeue_rx(uint8_t *data, uint16_t *len) {
@@ -493,14 +511,22 @@ void BootProto_ProcessData(const uint8_t *data, uint16_t len) {
     uint8_t c = data[i];
 
     if (c == '\n' || c == '\r') {
+      if (s_rx_line_overflow) {
+        BootProto_SendAck(BOOT_ERR_INVALID_CMD);
+        BootProto_Reset();
+        continue;
+      }
       if (s_ctx.rx_pos > 0) {
         s_ctx.rx_buf[s_ctx.rx_pos] = '\0';
         handle_command((const char *)s_ctx.rx_buf);
         s_ctx.rx_pos = 0;
       }
     } else {
-      if (s_ctx.rx_pos < sizeof(s_ctx.rx_buf) - 1) {
+      if (s_ctx.rx_pos < sizeof(s_ctx.rx_buf) - 1 && !s_rx_line_overflow) {
         s_ctx.rx_buf[s_ctx.rx_pos++] = c;
+      } else {
+        /* Do not parse a truncated command as if it were valid. */
+        s_rx_line_overflow = true;
       }
     }
   }
@@ -509,6 +535,24 @@ void BootProto_ProcessData(const uint8_t *data, uint16_t len) {
 void BootProto_Service(void) {
   uint8_t data[BOOT_RX_PACKET_MAX];
   uint16_t len = 0u;
+
+  uint32_t primask = boot_critical_enter();
+  bool rx_overflowed = s_rx_overflow_pending;
+  if (rx_overflowed) {
+    /* The packet sequence is no longer trustworthy.  Drop retained packets
+     * and reset any partial write transaction before reporting the error. */
+    s_rx_overflow_pending = false;
+    s_rx_head = s_rx_tail;
+    s_rx_count = 0u;
+  }
+  boot_critical_exit(primask);
+
+  if (rx_overflowed) {
+    BootProto_Reset();
+    BootProto_SendAck(BOOT_ERR_RX_OVERFLOW);
+    return;
+  }
+
   while (dequeue_rx(data, &len)) {
     BootProto_ProcessData(data, len);
   }
@@ -519,7 +563,7 @@ void BootProto_Service(void) {
     return;
   }
 
-  uint32_t primask = boot_critical_enter();
+  primask = boot_critical_enter();
   const BootTxSlot_t *slot = &s_tx_queue[s_tx_tail];
   bool can_jump = !s_tx_busy && !slot->queued;
   if (can_jump) {

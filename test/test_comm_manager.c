@@ -179,6 +179,7 @@ uint8_t CalibContext_GetProgress(uint8_t a, uint8_t b,
 }
 
 void ProtocolVector_Init(void) {}
+void ProtocolVector_Service(void) {}
 ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   (void)frame;
   s_parse_call_count++;

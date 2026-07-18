@@ -153,6 +153,26 @@ static void ExecuteTransition(StateMachine *sm, MotorState new_state) {
 static bool IsBitEdgeRising(uint16_t prev, uint16_t curr, uint16_t bit_mask) {
   return ((curr & bit_mask) == bit_mask) && ((prev & bit_mask) == 0);
 }
+
+static bool StateMachine_IsMaintenanceBlockedState(MotorState state) {
+  return state == STATE_OPERATION_ENABLED || state == STATE_CALIBRATING;
+}
+
+static bool StateMachine_CanEnterState(const StateMachine *sm,
+                                       MotorState state) {
+  return sm != NULL &&
+         !(sm->maintenance_active &&
+           StateMachine_IsMaintenanceBlockedState(state));
+}
+
+static bool StateMachine_CanBeginMaintenanceLocked(const StateMachine *sm) {
+  return sm != NULL && !sm->maintenance_active &&
+         !StateMachine_IsMaintenanceBlockedState(sm->current_state) &&
+         !StateMachine_IsMaintenanceBlockedState(sm->target_state) &&
+         !sm->transition_in_progress && !sm->operation_power_enabled &&
+         !sm->calibration_power_enabled;
+}
+
 static void ProcessStateTransitions(StateMachine *sm) {
   uint16_t cw = sm->controlword.word;
   uint16_t prev_cw = sm->prev_controlword;
@@ -170,6 +190,9 @@ static void ProcessStateTransitions(StateMachine *sm) {
   for (size_t i = 0; i < TRANSITION_TABLE_SIZE; i++) {
     const StateTransition *t = &transition_table[i];
     if (sm->current_state != t->from_state) {
+      continue;
+    }
+    if (!StateMachine_CanEnterState(sm, t->to_state)) {
       continue;
     }
     if ((cw & t->control_mask) == t->control_value) {
@@ -274,6 +297,10 @@ void StateMachine_Init(StateMachine *sm) {
   UpdateStatusword(sm);
 }
 void StateMachine_Update(StateMachine *sm) {
+  if (sm == NULL) {
+    return;
+  }
+  uint32_t critical = HAL_EnterCritical();
   /* init */
   if (sm->current_state == STATE_NOT_READY_TO_SWITCH_ON) {
     ExecuteTransition(sm, STATE_SWITCH_ON_DISABLED);
@@ -282,20 +309,32 @@ void StateMachine_Update(StateMachine *sm) {
   AutoAdvanceToTarget(sm);
   ProcessStateTransitions(sm);
   UpdateStatusword(sm);
+  HAL_ExitCritical(critical);
 }
 bool StateMachine_RequestState(StateMachine *sm, MotorState target_state) {
-  if ((uint32_t)target_state >= STATE_COUNT) {
+  if (sm == NULL || (uint32_t)target_state >= STATE_COUNT) {
+    return false;
+  }
+  uint32_t critical = HAL_EnterCritical();
+  if (!StateMachine_CanEnterState(sm, target_state)) {
+    HAL_ExitCritical(critical);
     return false;
   }
   sm->target_state = target_state;
   sm->auto_advance = true;
   /* calc */
   AutoAdvanceToTarget(sm);
+  HAL_ExitCritical(critical);
   return true;
 }
 void StateMachine_SetControlword(StateMachine *sm, uint16_t controlword) {
+  if (sm == NULL) {
+    return;
+  }
+  uint32_t critical = HAL_EnterCritical();
   sm->controlword.word = controlword;
   sm->auto_advance = false; /* ，stop */
+  HAL_ExitCritical(critical);
 }
 uint16_t StateMachine_GetStatusword(const StateMachine *sm) {
   return sm->statusword.word;
@@ -304,6 +343,10 @@ MotorState StateMachine_GetState(const StateMachine *sm) {
   return sm->current_state;
 }
 void StateMachine_EnterFault(StateMachine *sm, uint32_t fault_code) {
+  if (sm == NULL) {
+    return;
+  }
+  uint32_t critical = HAL_EnterCritical();
   /* fault (per-instance) */
   sm->fault_history[sm->fault_history_index] = fault_code;
   sm->fault_history_index = (sm->fault_history_index + 1) % FAULT_HISTORY_SIZE;
@@ -316,20 +359,33 @@ void StateMachine_EnterFault(StateMachine *sm, uint32_t fault_code) {
       sm->current_state != STATE_FAULT_REACTION_ACTIVE) {
     ExecuteTransition(sm, STATE_FAULT_REACTION_ACTIVE);
   }
+  HAL_ExitCritical(critical);
 }
 bool StateMachine_ClearFault(StateMachine *sm) {
+  if (sm == NULL) {
+    return false;
+  }
+  uint32_t critical = HAL_EnterCritical();
   if (sm->current_state != STATE_FAULT) {
+    HAL_ExitCritical(critical);
     return false;
   }
   /* [FIX] safetystate，
    *  __disable_irq  Update ，safety */
   sm->active_fault_code = 0;
   ExecuteTransition(sm, STATE_SWITCH_ON_DISABLED);
+  HAL_ExitCritical(critical);
   return true;
 }
 
 bool StateMachine_SetOperationPower(StateMachine *sm, bool enabled) {
-  if (sm == NULL || sm->current_state != STATE_OPERATION_ENABLED) {
+  if (sm == NULL) {
+    return false;
+  }
+  uint32_t critical = HAL_EnterCritical();
+  if (sm->current_state != STATE_OPERATION_ENABLED ||
+      sm->maintenance_active) {
+    HAL_ExitCritical(critical);
     return false;
   }
   if (enabled) {
@@ -338,6 +394,7 @@ bool StateMachine_SetOperationPower(StateMachine *sm, bool enabled) {
       sm->calibration_power_enabled = false;
       UpdateStatusword(sm);
       StateMachine_EnterFault(sm, ERROR_HW_PWM_INIT);
+      HAL_ExitCritical(critical);
       return false;
     }
     sm->operation_power_enabled = true;
@@ -346,11 +403,17 @@ bool StateMachine_SetOperationPower(StateMachine *sm, bool enabled) {
     MHAL_PWM_Disable();
   }
   UpdateStatusword(sm);
+  HAL_ExitCritical(critical);
   return true;
 }
 
 bool StateMachine_SetCalibrationPower(StateMachine *sm, bool enabled) {
-  if (sm == NULL || sm->current_state != STATE_CALIBRATING) {
+  if (sm == NULL) {
+    return false;
+  }
+  uint32_t critical = HAL_EnterCritical();
+  if (sm->current_state != STATE_CALIBRATING || sm->maintenance_active) {
+    HAL_ExitCritical(critical);
     return false;
   }
   if (enabled) {
@@ -359,6 +422,7 @@ bool StateMachine_SetCalibrationPower(StateMachine *sm, bool enabled) {
       sm->operation_power_enabled = false;
       UpdateStatusword(sm);
       StateMachine_EnterFault(sm, ERROR_HW_PWM_INIT);
+      HAL_ExitCritical(critical);
       return false;
     }
     sm->calibration_power_enabled = true;
@@ -367,9 +431,35 @@ bool StateMachine_SetCalibrationPower(StateMachine *sm, bool enabled) {
     MHAL_PWM_Disable();
   }
   UpdateStatusword(sm);
+  HAL_ExitCritical(critical);
   return true;
 }
+
+bool StateMachine_BeginMaintenance(StateMachine *sm) {
+  uint32_t critical = HAL_EnterCritical();
+  bool acquired = StateMachine_CanBeginMaintenanceLocked(sm);
+  if (acquired) {
+    sm->maintenance_active = true;
+  }
+  HAL_ExitCritical(critical);
+  return acquired;
+}
+
+void StateMachine_EndMaintenance(StateMachine *sm) {
+  if (sm == NULL) {
+    return;
+  }
+  uint32_t critical = HAL_EnterCritical();
+  sm->maintenance_active = false;
+  HAL_ExitCritical(critical);
+}
+
 void StateMachine_SetPreCheckCallback(StateMachine *sm,
                                       bool (*callback)(MotorState to_state)) {
+  if (sm == NULL) {
+    return;
+  }
+  uint32_t critical = HAL_EnterCritical();
   sm->pre_check_callback = callback;
+  HAL_ExitCritical(critical);
 }

@@ -35,14 +35,56 @@ extern MOTOR_DATA motor_data;
 extern uint8_t g_can_id;
 
 static void Executor_ApplyControlCommand(const MotorCommand *cmd) {
-  if (cmd->control_mode == 0) {
-    return;
+  CONTROL_MODE requested_mode = (CONTROL_MODE)cmd->control_mode;
+  bool mode_requested = cmd->has_control_mode || cmd->control_mode != 0U;
+  /* Existing CAN protocol parsers encode the mode and its setpoint in one
+   * command, while USB can now change a mode independently.  Preserve the
+   * old combined-command behavior without treating an omitted USB setpoint
+   * as an explicit zero. */
+  bool legacy_mode_command = !cmd->has_control_mode &&
+                             cmd->control_mode != CONTROL_MODE_OPEN;
+  bool position_requested =
+      cmd->has_position_ref ||
+      (legacy_mode_command &&
+       (requested_mode == CONTROL_MODE_POSITION ||
+        requested_mode == CONTROL_MODE_POSITION_RAMP));
+  bool velocity_requested =
+      cmd->has_velocity_ref ||
+      (legacy_mode_command &&
+       (requested_mode == CONTROL_MODE_VELOCITY ||
+        requested_mode == CONTROL_MODE_VELOCITY_RAMP));
+  bool torque_requested =
+      cmd->has_torque_ref ||
+      (legacy_mode_command && requested_mode == CONTROL_MODE_TORQUE);
+
+  if (mode_requested) {
+    motor_data.state.Control_Mode = requested_mode;
   }
 
-  motor_data.state.Control_Mode = (CONTROL_MODE)cmd->control_mode;
+  if (cmd->has_iq_ref) {
+    motor_data.algo_input.Iq_ref = cmd->iq_ref;
+  }
+  if (cmd->has_id_ref) {
+    motor_data.algo_input.Id_ref = cmd->id_ref;
+  }
+  if (cmd->has_torque_ref) {
+    motor_data.Controller.input_torque = cmd->iq_ref;
+  }
+  if (position_requested) {
+    /* Protocol boundary uses SI radians; the control core stores turns. */
+    motor_data.Controller.input_position =
+        Protocol_RadiansToTurns(cmd->position_ref);
+    motor_data.Controller.input_updated = true;
+  }
+  if (velocity_requested) {
+    /* Protocol boundary uses rad/s; the control core stores turn/s. */
+    motor_data.Controller.input_velocity =
+        Protocol_RadiansToTurns(cmd->speed_ref);
+  }
 
-  switch ((CONTROL_MODE)cmd->control_mode) {
+  switch (requested_mode) {
   case CONTROL_MODE_MIT:
+    motor_data.state.Control_Mode = CONTROL_MODE_MIT;
     motor_data.Controller.mit_pos_des = cmd->pos_setpoint;
     motor_data.Controller.mit_vel_des = cmd->vel_setpoint;
     motor_data.Controller.input_torque = cmd->torque_ff;
@@ -51,19 +93,14 @@ static void Executor_ApplyControlCommand(const MotorCommand *cmd) {
     break;
   case CONTROL_MODE_POSITION:
   case CONTROL_MODE_POSITION_RAMP:
-    /* Protocol boundary uses SI radians; the control core stores turns. */
-    motor_data.Controller.input_position =
-        Protocol_RadiansToTurns(cmd->position_ref);
-    motor_data.Controller.input_updated = true;
     break;
   case CONTROL_MODE_VELOCITY:
   case CONTROL_MODE_VELOCITY_RAMP:
-    /* Protocol boundary uses rad/s; the control core stores turn/s. */
-    motor_data.Controller.input_velocity =
-        Protocol_RadiansToTurns(cmd->speed_ref);
     break;
   case CONTROL_MODE_TORQUE:
-    motor_data.Controller.input_torque = cmd->iq_ref;
+    if (torque_requested) {
+      motor_data.Controller.input_torque = cmd->iq_ref;
+    }
     break;
   default:
     break;

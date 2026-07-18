@@ -36,12 +36,64 @@
 #define GET_TARGET_ID(id) ((id) & 0xFF)
 #define GET_ID_DATA(id) (((id) >> 8) & 0xFFFF)
 #define VECTOR_BROADCAST_ID 0x7Fu
+#define VECTOR_ACK_STATUS_QUEUED 0u
+#define VECTOR_ACK_STATUS_BUSY 1u
+#define VECTOR_ACK_STATUS_UNSUPPORTED 2u
+#define VECTOR_POWER_ACTION_ACK_GRACE_MS 2u
 
 /* 量化工具函数由 protocol_utils.h 提供，本地名称别名保持向后兼容 */
 #define Uint16ToFloat  Proto_Uint16ToFloat
 #define FloatToUint16  Proto_FloatToUint16
 #define BufToUint16    Proto_BufToUint16
 #define Uint16ToBuf    Proto_Uint16ToBuf
+
+typedef enum {
+  VECTOR_POWER_ACTION_NONE = 0,
+  VECTOR_POWER_ACTION_RESET,
+  VECTOR_POWER_ACTION_BOOTLOADER,
+} VectorPowerAction;
+
+static VectorPowerAction s_pending_power_action;
+static uint32_t s_power_action_deadline;
+
+static bool ProtocolVector_SendCommandAck(VectorCmdType cmd,
+                                          uint8_t status) {
+  CAN_Frame rsp = {0};
+  rsp.id = ((uint32_t)cmd << 24) | ((uint32_t)g_can_id << 8) | 0xFDu;
+  rsp.is_extended = true;
+  rsp.dlc = 2;
+  rsp.data[0] = (uint8_t)cmd;
+  rsp.data[1] = status;
+  return Protocol_SendFrame(&rsp);
+}
+
+static bool ProtocolVector_BootUnsupportedOnThisBoard(void) {
+#if defined(BOARD_XSTAR)
+  return true;
+#else
+  return false;
+#endif
+}
+
+static ParseResult ProtocolVector_RequestPowerAction(VectorCmdType cmd,
+                                                      VectorPowerAction action) {
+  if (s_pending_power_action != VECTOR_POWER_ACTION_NONE) {
+    (void)ProtocolVector_SendCommandAck(cmd, VECTOR_ACK_STATUS_BUSY);
+    return PARSE_OK;
+  }
+
+  /* `Protocol_SendFrame` succeeds only after the frame is accepted by the
+   * selected transport.  Keep the action deferred for one comm-task interval
+   * so a reset cannot erase that queued acknowledgement immediately. */
+  if (!ProtocolVector_SendCommandAck(cmd, VECTOR_ACK_STATUS_QUEUED)) {
+    return PARSE_ERR_INVALID_FRAME;
+  }
+
+  Emergency_Shutdown();
+  s_pending_power_action = action;
+  s_power_action_deadline = HAL_GetTick() + VECTOR_POWER_ACTION_ACK_GRACE_MS;
+  return PARSE_OK;
+}
 /**
  * @brief mode ( 1)
  * @details ID Data:  (0~65535 -> -120~120Nm)
@@ -196,6 +248,7 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
     return ParseParamCommand(frame, cmd, true);
   case VECTOR_CMD_SAVE: // 22
     Param_ScheduleSave();
+    ProtocolVector_SendCommandAck(VECTOR_CMD_SAVE, VECTOR_ACK_STATUS_QUEUED);
     return PARSE_OK;
   case VECTOR_CMD_GET_VERSION: // 26
     //
@@ -206,9 +259,9 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
       tx_frame.id = (0x1A << 24) | (g_can_id << 8) | 0xFD;
       tx_frame.is_extended = true;
       tx_frame.dlc = 8;
-      tx_frame.data[0] = 1; // Major
-      tx_frame.data[1] = 0; // Minor
-      tx_frame.data[2] = 0; // Patch
+      tx_frame.data[0] = FW_VERSION_MAJOR;
+      tx_frame.data[1] = FW_VERSION_MINOR;
+      tx_frame.data[2] = FW_VERSION_PATCH;
       tx_frame.data[3] = 0;
       Protocol_SendFrame(&tx_frame);
     }
@@ -217,16 +270,19 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
     cmd->is_fault_query = true;
     return PARSE_OK;
   case VECTOR_CMD_RESET: // 11
-    Emergency_Shutdown();
-    HAL_NVIC_SystemReset();
-    return PARSE_OK;
+    return ProtocolVector_RequestPowerAction(VECTOR_CMD_RESET,
+                                             VECTOR_POWER_ACTION_RESET);
   case VECTOR_CMD_CLEAR_FAULT: // 12
     cmd->clear_fault = true;
     return PARSE_OK;
   case VECTOR_CMD_BOOTLOADER: // 13 - Bootloader
-    Emergency_Shutdown();
-    Boot_RequestUpgrade();
-    return PARSE_OK;
+    if (ProtocolVector_BootUnsupportedOnThisBoard()) {
+      (void)ProtocolVector_SendCommandAck(VECTOR_CMD_BOOTLOADER,
+                                          VECTOR_ACK_STATUS_UNSUPPORTED);
+      return PARSE_OK;
+    }
+    return ProtocolVector_RequestPowerAction(
+        VECTOR_CMD_BOOTLOADER, VECTOR_POWER_ACTION_BOOTLOADER);
     // ， OK
   case VECTOR_CMD_REPORT: // 24
     if (frame->dlc >= 1) {
@@ -346,7 +402,23 @@ bool ProtocolVector_BuildFault(uint32_t fault_code, uint32_t warning_code,
  * @brief init Inovxio
  */
 void ProtocolVector_Init(void) {
-  // init
+  s_pending_power_action = VECTOR_POWER_ACTION_NONE;
+  s_power_action_deadline = 0u;
+}
+
+void ProtocolVector_Service(void) {
+  VectorPowerAction action = s_pending_power_action;
+  if (action == VECTOR_POWER_ACTION_NONE ||
+      (int32_t)(HAL_GetTick() - s_power_action_deadline) < 0) {
+    return;
+  }
+
+  s_pending_power_action = VECTOR_POWER_ACTION_NONE;
+  if (action == VECTOR_POWER_ACTION_BOOTLOADER) {
+    Boot_RequestUpgrade();
+  } else {
+    HAL_NVIC_SystemReset();
+  }
 }
 /**
  * @brief param ( 18 )

@@ -300,6 +300,43 @@ static void queued_usb_data_is_processed_only_by_service(void) {
   assert(strcmp(tx_log, "boot_ack,0\n") == 0);
 }
 
+static void rx_queue_overflow_aborts_the_partial_transaction(void) {
+  static const uint8_t packet[] = "boot_info\n";
+
+  reset_fakes();
+  for (uint8_t i = 0u; i < 8u; ++i) {
+    assert(BootProto_QueueData(packet, (uint16_t)(sizeof(packet) - 1u)));
+  }
+  assert(!BootProto_QueueData(packet, (uint16_t)(sizeof(packet) - 1u)));
+  assert(BootProto_GetReceiveOverflowCount() == 1u);
+
+  BootProto_Service();
+  assert(strcmp(tx_log, "boot_ack,9\n") == 0);
+}
+
+static void oversized_rx_packet_is_rejected_without_counting_as_overflow(void) {
+  uint8_t packet[65] = {0};
+
+  reset_fakes();
+  assert(!BootProto_QueueData(packet, sizeof(packet)));
+  assert(BootProto_GetReceiveOverflowCount() == 0u);
+}
+
+static void overlong_command_is_rejected_and_parser_recovers(void) {
+  uint8_t overlong[BOOT_RX_BUFFER_SIZE + 1u];
+  static const uint8_t next_command[] = "boot_info\n";
+
+  reset_fakes();
+  memset(overlong, 'x', sizeof(overlong));
+  overlong[sizeof(overlong) - 1u] = '\n';
+  process_data(overlong, sizeof(overlong));
+  assert(strcmp(tx_log, "boot_ack,7\n") == 0);
+
+  clear_tx();
+  process_data(next_command, (uint16_t)(sizeof(next_command) - 1u));
+  assert(strstr(tx_log, "boot_info,app_start=08004000") != NULL);
+}
+
 static void timeout_emits_one_canonical_ack(void) {
   static const uint8_t command[] = "boot_write,08004000,8\n";
 
@@ -314,6 +351,9 @@ static void timeout_emits_one_canonical_ack(void) {
 
 int main(void) {
   queued_usb_data_is_processed_only_by_service();
+  rx_queue_overflow_aborts_the_partial_transaction();
+  oversized_rx_packet_is_rejected_without_counting_as_overflow();
+  overlong_command_is_rejected_and_parser_recovers();
   timeout_emits_one_canonical_ack();
   fragmented_write_waits_for_full_block();
   write_accepts_leading_zero_data();

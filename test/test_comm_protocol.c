@@ -66,6 +66,8 @@ static ParamResult s_param_write_result = PARAM_OK;
 static unsigned s_save_count;
 static unsigned s_emergency_shutdown_count;
 static unsigned s_boot_request_upgrade_count;
+static unsigned s_system_reset_count;
+static uint32_t s_tick;
 
 /* ── 构造 CAN 帧辅助 ─────────────────────────────────────────── */
 static CAN_Frame make_frame(uint32_t id, bool extended,
@@ -439,6 +441,9 @@ static int test_version_response_is_fully_initialized(void)
     CHECK(s_last_sent_frame.dlc == 8);
     CHECK(s_last_sent_frame.is_extended == true);
     CHECK(s_last_sent_frame.is_rtr == false);
+    CHECK(s_last_sent_frame.data[0] == FW_VERSION_MAJOR);
+    CHECK(s_last_sent_frame.data[1] == FW_VERSION_MINOR);
+    CHECK(s_last_sent_frame.data[2] == FW_VERSION_PATCH);
     CHECK(s_last_sent_frame.data[4] == 0 && s_last_sent_frame.data[5] == 0 &&
           s_last_sent_frame.data[6] == 0 && s_last_sent_frame.data[7] == 0);
     return 0;
@@ -475,18 +480,70 @@ static int test_baudrate_write_validates_before_ack_and_save(void)
     s_param_write_result = PARAM_OK;
     return 0;
 }
-static int test_bootloader_command_uses_boot_upgrade_request(void)
+#if defined(BOARD_XSTAR)
+static int test_xstar_bootloader_command_reports_unsupported(void)
 {
     MotorCommand cmd;
     CAN_Frame f = make_frame((13u << 24) | 0x01u, true, 0, NULL);
 
     s_emergency_shutdown_count = 0u;
     s_boot_request_upgrade_count = 0u;
+    s_sent_frame_count = 0u;
+    CHECK(ProtocolVector_Parse(&f, &cmd) == PARSE_OK);
+    CHECK(s_emergency_shutdown_count == 0u);
+    CHECK(s_boot_request_upgrade_count == 0u);
+    CHECK(s_sent_frame_count == 1u);
+    CHECK(((s_last_sent_frame.id >> 24) & 0x1Fu) == VECTOR_CMD_BOOTLOADER);
+    CHECK(s_last_sent_frame.data[0] == VECTOR_CMD_BOOTLOADER);
+    CHECK(s_last_sent_frame.data[1] == 2u);
+    return 0;
+}
+
+static int test_xstar_reset_command_still_resets(void)
+{
+    MotorCommand cmd;
+    CAN_Frame f = make_frame((11u << 24) | 0x01u, true, 0, NULL);
+
+    s_emergency_shutdown_count = 0u;
+    s_sent_frame_count = 0u;
+    s_system_reset_count = 0u;
+    s_tick = 0u;
     CHECK(ProtocolVector_Parse(&f, &cmd) == PARSE_OK);
     CHECK(s_emergency_shutdown_count == 1u);
+    CHECK(s_sent_frame_count == 1u);
+    CHECK(s_last_sent_frame.data[0] == VECTOR_CMD_RESET);
+    CHECK(s_last_sent_frame.data[1] == 0u);
+    ProtocolVector_Service();
+    CHECK(s_system_reset_count == 0u);
+    s_tick = 2u;
+    ProtocolVector_Service();
+    CHECK(s_system_reset_count == 1u);
+    return 0;
+}
+#else
+static int test_vector_bootloader_command_requests_upgrade(void)
+{
+    MotorCommand cmd;
+    CAN_Frame f = make_frame((13u << 24) | 0x01u, true, 0, NULL);
+
+    s_emergency_shutdown_count = 0u;
+    s_boot_request_upgrade_count = 0u;
+    s_sent_frame_count = 0u;
+    s_tick = 0u;
+    CHECK(ProtocolVector_Parse(&f, &cmd) == PARSE_OK);
+    CHECK(s_emergency_shutdown_count == 1u);
+    CHECK(s_boot_request_upgrade_count == 0u);
+    CHECK(s_sent_frame_count == 1u);
+    CHECK(s_last_sent_frame.data[0] == VECTOR_CMD_BOOTLOADER);
+    CHECK(s_last_sent_frame.data[1] == 0u);
+    ProtocolVector_Service();
+    CHECK(s_boot_request_upgrade_count == 0u);
+    s_tick = 2u;
+    ProtocolVector_Service();
     CHECK(s_boot_request_upgrade_count == 1u);
     return 0;
 }
+#endif
 
 /* ════════════════════════════════════════════════════════════════
    main
@@ -513,7 +570,12 @@ int main(void)
     f += test_parse_filters_target_and_limits_broadcast_commands();
     f += test_version_response_is_fully_initialized();
     f += test_baudrate_write_validates_before_ack_and_save();
-    f += test_bootloader_command_uses_boot_upgrade_request();
+#if defined(BOARD_XSTAR)
+    f += test_xstar_bootloader_command_reports_unsupported();
+    f += test_xstar_reset_command_still_resets();
+#else
+    f += test_vector_bootloader_command_requests_upgrade();
+#endif
 
     if (f == 0) {
         printf("\nAll comm protocol tests PASSED\n");
@@ -565,7 +627,6 @@ uint8_t CalibContext_GetProgress(uint8_t a, uint8_t b,
 uint32_t Safety_GetLastFaultTime(void) { return 0; }
 void Emergency_Shutdown(void) { s_emergency_shutdown_count++; }
 void Boot_RequestUpgrade(void) { s_boot_request_upgrade_count++; }
-/* HAL_NVIC_SystemReset is a macro in test stub — undefine before redefining as function */
-#undef HAL_NVIC_SystemReset
-void HAL_NVIC_SystemReset(void) {}
+uint32_t HAL_GetTick(void) { return s_tick; }
+void Test_HAL_NVIC_SystemReset(void) { s_system_reset_count++; }
 

@@ -33,6 +33,8 @@ int MHAL_PWM_Brake(void) {
 }
 #undef HAL_GetSystemTick
 uint32_t HAL_GetSystemTick(void) { return 0u; }
+uint32_t HAL_EnterCritical(void) { return 0u; }
+void HAL_ExitCritical(uint32_t previous_state) { (void)previous_state; }
 
 void PID_clear(PidTypeDef *pid) { memset(pid, 0, sizeof(*pid)); }
 void FOC_Algorithm_ResetState(FOC_AlgorithmState_t *state) {

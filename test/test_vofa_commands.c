@@ -9,6 +9,7 @@
 #include "motor.h"
 #include "param_access.h"
 #include "param_table.h"
+#include "protocol_types.h"
 
 #define USBD_OK 0U
 #define USBD_BUSY 1U
@@ -63,6 +64,9 @@ static unsigned s_set_tx_count;
 static unsigned s_transmit_packet_count;
 static unsigned s_delay_call_count;
 static unsigned s_boot_request_count;
+static unsigned s_executor_count;
+static MotorCommand s_last_executor_cmd;
+static unsigned s_save_schedule_count;
 static char s_wire_log[2048];
 
 void USBD_CDC_SetTxBuffer(USBD_HandleTypeDef *pdev, uint8_t *pbuff,
@@ -149,7 +153,7 @@ ParamResult Param_ReadAsFloat(uint16_t index, float *value) {
   return s_param_read_result;
 }
 
-void Param_ScheduleSave(void) {}
+void Param_ScheduleSave(void) { s_save_schedule_count++; }
 
 void CurrentLoop_UpdateGain(MOTOR_DATA *motor) { (void)motor; }
 void LADRC_Init(LADRC_State_t *state, const LADRC_Config_t *config) {
@@ -185,6 +189,12 @@ void HAL_Delay(uint32_t ms) {
   s_delay_call_count++;
 }
 void Boot_RequestUpgrade(void) { s_boot_request_count++; }
+void Executor_ProcessCommand(const MotorCommand *cmd) {
+  s_executor_count++;
+  if (cmd != NULL) {
+    s_last_executor_cmd = *cmd;
+  }
+}
 
 #ifndef __USART_H__
 #define __USART_H__
@@ -223,6 +233,9 @@ static void ResetHarness(void) {
   s_transmit_packet_count = 0U;
   s_delay_call_count = 0U;
   s_boot_request_count = 0U;
+  s_executor_count = 0U;
+  memset(&s_last_executor_cmd, 0, sizeof(s_last_executor_cmd));
+  s_save_schedule_count = 0U;
   s_hcdc.TxState = 0U;
   s_param_index = 0U;
   s_param_value = 0.0f;
@@ -355,6 +368,154 @@ static int TestMalformedCommandsDoNotMutateControlState(void) {
   }
   return Expect(!motor_data.Controller.input_updated,
                 "malformed position command published an update");
+}
+
+static int TestVofaMotorCommandsUseExecutor(void) {
+  uint8_t enable[] = "motor_enable=1";
+  uint8_t mode[] = "set_ctrl_mode=0";
+  uint8_t iq[] = "set_Iq=1.25";
+  uint8_t id[] = "set_Id=-0.5";
+  uint8_t torque[] = "set_torque=2.5";
+  uint8_t velocity[] = "set_vel=3.5";
+  uint8_t position[] = "set_pos=4.5";
+
+  ResetHarness();
+  vofa_Receive(enable, (uint16_t)strlen((const char *)enable));
+  if (Expect(s_executor_count == 1U &&
+                 s_last_executor_cmd.has_enable_command &&
+                 s_last_executor_cmd.enable_motor,
+             "motor_enable did not publish through executor")) {
+    return 1;
+  }
+
+  ResetHarness();
+  vofa_Receive(mode, (uint16_t)strlen((const char *)mode));
+  if (Expect(s_executor_count == 1U && s_last_executor_cmd.has_control_mode &&
+                 s_last_executor_cmd.control_mode == CONTROL_MODE_OPEN,
+             "set_ctrl_mode did not publish explicit mode through executor")) {
+    return 1;
+  }
+
+  ResetHarness();
+  vofa_Receive(iq, (uint16_t)strlen((const char *)iq));
+  if (Expect(s_executor_count == 1U && s_last_executor_cmd.has_iq_ref &&
+                 s_last_executor_cmd.iq_ref == 1.25f,
+             "set_Iq did not publish through executor")) {
+    return 1;
+  }
+
+  ResetHarness();
+  vofa_Receive(id, (uint16_t)strlen((const char *)id));
+  if (Expect(s_executor_count == 1U && s_last_executor_cmd.has_id_ref &&
+                 s_last_executor_cmd.id_ref == -0.5f,
+             "set_Id did not publish through executor")) {
+    return 1;
+  }
+
+  ResetHarness();
+  vofa_Receive(torque, (uint16_t)strlen((const char *)torque));
+  if (Expect(s_executor_count == 1U && s_last_executor_cmd.has_torque_ref &&
+                 s_last_executor_cmd.iq_ref == 2.5f,
+             "set_torque did not publish through executor")) {
+    return 1;
+  }
+
+  ResetHarness();
+  vofa_Receive(velocity, (uint16_t)strlen((const char *)velocity));
+  if (Expect(s_executor_count == 1U && s_last_executor_cmd.has_velocity_ref &&
+                 s_last_executor_cmd.speed_ref == Protocol_TurnsToRadians(3.5f),
+             "set_vel did not publish through executor")) {
+    return 1;
+  }
+
+  ResetHarness();
+  vofa_Receive(position, (uint16_t)strlen((const char *)position));
+  return Expect(s_executor_count == 1U &&
+                    s_last_executor_cmd.has_position_ref &&
+                    s_last_executor_cmd.position_ref ==
+                        Protocol_TurnsToRadians(4.5f),
+                "set_pos did not publish through executor");
+}
+
+static int TestSaveFlashReportsQueuedThenSucceeded(void) {
+  uint8_t command[] = "save_flash=1";
+  ResetHarness();
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+  if (Expect(s_save_schedule_count == 1U,
+             "save_flash did not schedule a flash save")) {
+    return 1;
+  }
+  if (Expect(strstr(s_wire_log, "ack=save_flash,queued\n") != NULL,
+             "save_flash did not emit queued acknowledgement")) {
+    return 1;
+  }
+  CompleteTx();
+  Vofa_ReportScheduledSaveResult(true);
+  return Expect(strstr(s_wire_log, "ack=save_flash,succeeded\n") != NULL,
+                "save_flash did not emit succeeded acknowledgement");
+}
+
+static int TestSaveFlashReportsFailed(void) {
+  uint8_t command[] = "save_flash=1";
+  ResetHarness();
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+  CompleteTx();
+  Vofa_ReportScheduledSaveResult(false);
+  if (Expect(strstr(s_wire_log, "ack=save_flash,retrying\n") != NULL,
+             "save_flash did not emit retrying acknowledgement")) {
+    return 1;
+  }
+  CompleteTx();
+  Vofa_ReportScheduledSaveResult(true);
+  return Expect(strstr(s_wire_log, "ack=save_flash,succeeded\n") != NULL,
+                "save_flash did not acknowledge a later successful retry");
+}
+
+#if defined(BOARD_XSTAR)
+static int TestXstarBootEnterReportsUnsupported(void) {
+  uint8_t command[] = "boot_enter";
+  ResetHarness();
+
+  vofa_Receive(command, (uint16_t)strlen((const char *)command));
+  Vofa_Service();
+  if (Expect(strstr(s_wire_log, "boot_ack,2,unsupported\n") != NULL,
+             "boot_enter did not report unsupported")) {
+    return 1;
+  }
+  if (Expect(!s_boot_upgrade_pending,
+             "unsupported boot_enter armed a bootloader transition")) {
+    return 1;
+  }
+  return Expect(s_boot_request_count == 0U,
+                "unsupported boot_enter requested boot upgrade");
+}
+#endif
+
+static int TestRxQueueOverflowIsObservable(void) {
+  uint8_t command[] = "noop";
+  ResetHarness();
+
+  for (unsigned i = 0U; i < VOFA_RX_QUEUE_DEPTH; i++) {
+    if (Expect(Vofa_QueueReceive(command,
+                                 (uint16_t)strlen((const char *)command)),
+               "failed to fill receive queue")) {
+      return 1;
+    }
+  }
+  if (Expect(!Vofa_QueueReceive(command,
+                                (uint16_t)strlen((const char *)command)),
+             "receive queue accepted an overflowing packet")) {
+    return 1;
+  }
+  if (Expect(Vofa_GetReceiveOverflowCount() == 1U,
+             "receive overflow counter did not increment")) {
+    return 1;
+  }
+  Vofa_Service();
+  return Expect(strstr(s_wire_log, "rx_overflow=1\n") != NULL,
+                "receive overflow was not reported to the USB host");
 }
 
 static int TestShortcutUsesParamApi(const char *command, uint16_t expected) {
@@ -584,6 +745,18 @@ int main(void) {
     return 1;
   if (TestMalformedCommandsDoNotMutateControlState())
     return 1;
+  if (TestVofaMotorCommandsUseExecutor())
+    return 1;
+  if (TestSaveFlashReportsQueuedThenSucceeded())
+    return 1;
+  if (TestSaveFlashReportsFailed())
+    return 1;
+#if defined(BOARD_XSTAR)
+  if (TestXstarBootEnterReportsUnsupported())
+    return 1;
+#endif
+  if (TestRxQueueOverflowIsObservable())
+    return 1;
   if (TestShortcutUsesParamApi("set_vel_kp", PARAM_SPD_KP))
     return 1;
   if (TestShortcutUsesParamApi("set_vel_ki", PARAM_SPD_KI))
@@ -610,10 +783,12 @@ int main(void) {
     return 1;
   if (TestTxCompletionCanInterleaveWithoutDroppingOrder())
     return 1;
+#if !defined(BOARD_XSTAR)
   if (TestBootEnterWaitsForAckCompletion())
     return 1;
   if (TestBootEnterDoesNotRebootWhenAckQueueIsFull())
     return 1;
+#endif
   if (TestCommandNamesRequireTokenBoundary())
     return 1;
   if (TestReadAllParamsResumesAfterQueueBackpressure())
