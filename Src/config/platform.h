@@ -24,6 +24,12 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* Critical-section intrinsics are a platform concern, not a transitive
+ * dependency of whichever module happens to include this header. */
+#if !defined(TEST_ENV)
+#include "stm32g4xx.h"
+#endif
+
 /* ==========================================================================
    Critical Section (interrupt-safe access)
    

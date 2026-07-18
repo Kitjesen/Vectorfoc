@@ -15,7 +15,7 @@ VectorFOC 是基于 STM32G431 的无刷电机 FOC 固件。它面向电机控制
 | 电机状态与标定 | `Src/ALGO/motor/` | DS402 风格状态机、Rs/Ls/flux/编码器标定上下文；PWM HAL 操作在短 critical section 外执行，过渡期故障直接关闭桥臂输出 |
 | 传感器与板级抽象 | `Src/HAL/`, `Src/config/` | VectorFOC 与 X-STAR-S 两套板级配置，MT6816/TMR3109/Hall/ABZ 路由 |
 | 通信 | `Src/COMM/`, `Src/UI/vofa/` | Vector/Inovxio、MIT、CANopen 风格帧，USB CDC 文本命令；Vector GET_ID 仅接受扩展帧、CANopen STOP 只接受 NMT；控制指令经统一 executor 原子发布；重启/进入 Bootloader 仅在 CAN ACK 的 FDCAN Tx event 确认后执行 |
-| 参数存储 | `Src/UI/parameter/`, `Src/APP/settings/`, `Src/HAL/bsp/bsp_flash.*` | Flash 参数页、CRC32、提交标记与回退测试；参数 module 只校验、保存和通知，APP RuntimeSettings adapter 在依赖就绪后应用 PID、协议、CAN timeout 与编码器偏移；持久化修改通过维护租约串行化，scheduled save 终态失败会恢复最后有效镜像或默认参数 |
+| 参数存储 | `Src/UI/parameter/`, `Src/APP/settings/`, `Src/HAL/bsp/bsp_flash.*` | Flash 参数页、CRC32、提交标记与回退测试；参数 module 只校验、保存、通知及 portable calibration snapshot 映射，APP adapters 分别在正确时序应用运行时设置和具体 encoder calibration；持久化修改通过维护租约串行化，scheduled save 终态失败会恢复最后有效镜像或默认参数 |
 | 安全保护 | `Src/SAFE/`, `Src/APP/isr/` | 故障检测、ADC 样本保护、编码器失败计数、CAN timeout watchdog、看门狗监督；启动 ISR readiness gate、X-STAR ADC paired-sample gate、shared ADC IRQ 分发与状态感知的故障清除 |
 | Bootloader/OTA | `Src/BOOT/`, `scripts/ota_upload.py`, `scripts/patch_app_header.py` | USB CDC OTA、App Header 生成/验证、Flash 擦写协议；设备布局预检在擦除前完成 |
 
@@ -81,6 +81,7 @@ ctest --test-dir build-test --output-on-failure
 
 - FOC 基础算法、PID、LADRC、轨迹、速率限制、三角函数；
 - 参数运行时通知 seam 与 APP `RuntimeSettings` 适配器的单参数映射、批量重放和编码器 offset 错误传播；
+- 参数 encoder-calibration seam：快照保存/恢复、无效元数据拒绝、默认回退清空校准状态；
 - `test_runner_integration` 简化 PMSM 闭环仿真：电流/速度/负载扰动、速度设定切换、位置设定和参数扫掠；
 - 真实 `MotorStateTask` + mock HAL/motor plant 闭环回归，以及确定性 ADC 噪声稳定性回归；
 - ADC ISR readiness gate：未完成初始化时 injected callback 不得读取传感器、状态机或 PWM 路径；X-STAR-S 还要求 ADC1/ADC2 注入完成标记配对且无错误；

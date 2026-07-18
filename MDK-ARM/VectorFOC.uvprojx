@@ -1866,6 +1866,16 @@
               <FilePath>..\Src\APP\init\app_init.c</FilePath>
             </File>
             <File>
+              <FileName>runtime_settings.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\APP\settings\runtime_settings.c</FilePath>
+            </File>
+            <File>
+              <FileName>encoder_calibration_settings.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\APP\settings\encoder_calibration_settings.c</FilePath>
+            </File>
+            <File>
               <FileName>isr_foc.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\APP\isr\isr_foc.c</FilePath>
@@ -2204,6 +2214,11 @@
               <FileName>param_access.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\UI\parameter\param_access.c</FilePath>
+            </File>
+            <File>
+              <FileName>param_encoder_calibration.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\UI\parameter\param_encoder_calibration.c</FilePath>
             </File>
             <File>
               <FileName>param_storage.c</FileName>

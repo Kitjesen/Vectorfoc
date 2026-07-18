@@ -40,6 +40,7 @@
 #include "motor.h"
 #include "param_access.h"
 #include "safety_control.h"
+#include "settings/encoder_calibration_settings.h"
 #include "settings/runtime_settings.h"
 #include <math.h>
 
@@ -129,6 +130,7 @@ void App_Init(void) {
   Safety_Init(NULL);
   __enable_irq();
 
+  EncoderCalibrationSettings_InstallAdapter();
   Param_SystemInitOnce();
   if (!adc_bsp_init()) {
     ERROR_REPORT(ERROR_HW_ADC_INIT, "ADC startup failed");

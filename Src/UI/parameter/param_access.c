@@ -17,24 +17,12 @@
  * @brief param
  */
 #include "param_access.h"
+#include "param_encoder_calibration_internal.h"
 #include "error_manager.h"
 #include "error_types.h"
 #include "param_storage.h"
 #if !defined(TEST_ENV)
-#include "config.h"
 #include "platform.h"
-#if defined(BOARD_XSTAR)
-#include "abz_encoder.h"
-#include "hall_encoder.h"
-#else
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-#include "tmr3109_encoder.h"
-extern TMR3109_Handle_t tmr3109_encoder_data;
-#else
-#include "mt6816_encoder.h"
-extern MT6816_Handle_t encoder_data;
-#endif
-#endif
 #endif
 #include <stdbool.h>
 #include <math.h>
@@ -65,87 +53,6 @@ void Param_ApplyRuntimeState(void) {
   Param_NotifyRuntimeChange(PARAM_RUNTIME_APPLY_ALL);
 }
 
-static void Param_CollectEncoderCalibration(FlashParamData *flash_data) {
-  if (flash_data == NULL) {
-    return;
-  }
-#if !defined(TEST_ENV)
-#if defined(BOARD_XSTAR)
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-  flash_data->encoder_calib_valid = hall_data.calib_valid ? 1u : 0u;
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
-  flash_data->encoder_calib_valid = abz_data.calib_valid ? 1u : 0u;
-#endif
-#else
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  flash_data->encoder_calib_valid = tmr3109_encoder_data.calib_valid ? 1u : 0u;
-  memcpy(flash_data->encoder_offset_lut, tmr3109_encoder_data.offset_lut,
-         sizeof(flash_data->encoder_offset_lut));
-#else
-  flash_data->encoder_calib_valid = encoder_data.calib_valid ? 1u : 0u;
-  memcpy(flash_data->encoder_offset_lut, encoder_data.offset_lut,
-         sizeof(flash_data->encoder_offset_lut));
-#endif
-#endif
-#endif
-}
-
-static void Param_RestoreEncoderCalibration(const FlashParamData *flash_data) {
-  if (flash_data == NULL) {
-    return;
-  }
-#if !defined(TEST_ENV)
-  bool valid = flash_data->encoder_calib_valid == 1u;
-#if defined(BOARD_XSTAR)
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-  hall_data.calib_valid = valid;
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
-  abz_data.calib_valid = valid;
-#endif
-#else
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  tmr3109_encoder_data.calib_valid = valid;
-  if (valid) {
-    memcpy(tmr3109_encoder_data.offset_lut, flash_data->encoder_offset_lut,
-           sizeof(tmr3109_encoder_data.offset_lut));
-  }
-#else
-  encoder_data.calib_valid = valid;
-  if (valid) {
-    memcpy(encoder_data.offset_lut, flash_data->encoder_offset_lut,
-           sizeof(encoder_data.offset_lut));
-  }
-#endif
-#endif
-#endif
-}
-
-static void Param_ClearEncoderCalibration(void) {
-#if !defined(TEST_ENV)
-#if defined(BOARD_XSTAR)
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-  hall_data.calib_valid = false;
-  hall_data.offset_rad = 0.0f;
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
-  abz_data.calib_valid = false;
-  abz_data.offset_counts = 0;
-  abz_data.offset_rad = 0.0f;
-#endif
-#else
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  tmr3109_encoder_data.calib_valid = false;
-  tmr3109_encoder_data.offset_counts = 0;
-  memset(tmr3109_encoder_data.offset_lut, 0,
-         sizeof(tmr3109_encoder_data.offset_lut));
-#else
-  encoder_data.calib_valid = false;
-  encoder_data.is_calibrated = false;
-  encoder_data.offset_counts = 0;
-  memset(encoder_data.offset_lut, 0, sizeof(encoder_data.offset_lut));
-#endif
-#endif
-#endif
-}
 static inline bool ParamTable_IsReadable(const ParamEntry *entry) {
   return (entry != NULL) && (entry->access & PARAM_ACCESS_R);
 }
@@ -693,7 +600,7 @@ static void CollectParamsToFlashData(FlashParamData *flash_data) {
     flash_data->fw_start_velocity = tmp_float;
   if (Param_ReadFloat(PARAM_COGGING_EN, &tmp_float) == PARAM_OK)
     flash_data->cogging_comp_enabled = tmp_float;
-  Param_CollectEncoderCalibration(flash_data);
+  ParamEncoderCalibration_Collect(flash_data);
   if (Param_ReadFloat(PARAM_LADRC_ENABLE, &tmp_float) == PARAM_OK)
     flash_data->ladrc_enable = tmp_float;
   if (Param_ReadFloat(PARAM_LADRC_OMEGA_O, &tmp_float) == PARAM_OK)
@@ -767,7 +674,7 @@ static void ApplyParamsFromFlashData(const FlashParamData *flash_data) {
   Param_WriteFloat(PARAM_LADRC_OMEGA_C, flash_data->ladrc_omega_c);
   Param_WriteFloat(PARAM_LADRC_B0, flash_data->ladrc_b0);
   Param_WriteFloat(PARAM_LADRC_MAX_OUT, flash_data->ladrc_max_output);
-  Param_RestoreEncoderCalibration(flash_data);
+  ParamEncoderCalibration_Restore(flash_data);
 
   s_runtime_side_effects_deferred = false;
 #if !defined(TEST_ENV)
@@ -844,10 +751,7 @@ static ParamResult ValidateParamsFromFlashData(
   PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_LADRC_OMEGA_C, flash_data->ladrc_omega_c));
   PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_LADRC_B0, flash_data->ladrc_b0));
   PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_LADRC_MAX_OUT, flash_data->ladrc_max_output));
-  if (flash_data->encoder_calib_valid > 1U ||
-      flash_data->encoder_calib_reserved[0] != 0U ||
-      flash_data->encoder_calib_reserved[1] != 0U ||
-      flash_data->encoder_calib_reserved[2] != 0U) {
+  if (!ParamEncoderCalibration_IsFlashDataValid(flash_data)) {
     ERROR_REPORT(ERROR_PARAM_INVALID_VALUE,
                  "Flash restore encoder metadata invalid");
     return PARAM_ERR_OUT_OF_RANGE;
@@ -1070,7 +974,7 @@ ParamResult Param_RollbackScheduledSave(void) {
 
   result = Param_RestoreDefaults();
   if (result == PARAM_OK) {
-    Param_ClearEncoderCalibration();
+    ParamEncoderCalibration_Clear();
   }
   return result;
 }

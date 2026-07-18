@@ -226,6 +226,7 @@ register_test_target(test_runner_control_impl_safety)
 add_executable(test_runner_param_typed_access
     test_param_typed_access.c
     ${PROJ_ROOT}/Src/UI/parameter/param_access.c
+    ${PROJ_ROOT}/Src/UI/parameter/param_encoder_calibration.c
 )
 register_test_target(test_runner_param_typed_access)
 

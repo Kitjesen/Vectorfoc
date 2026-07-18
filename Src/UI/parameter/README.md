@@ -15,6 +15,10 @@ Parameter 模块集中管理 VectorFOC 固件的运行参数。它负责：
 模块只在成功写入 RAM 后发布参数索引；它不直接控制 PID、协议、CAN timeout
 或编码器 offset HAL。
 
+Encoder calibration 的 Flash 快照由 `param_encoder_calibration` module 管理。
+它只认识 portable 的 `valid + offset_lut` snapshot；具体的 Hall、ABZ、MT6816
+和 TMR3109 状态由 APP 的 adapter 管理，避免参数层依赖板级 encoder headers。
+
 应用层优先使用 `param_access.h` 中的接口。`param_table.h` 和 `param_storage.h` 主要供参数模块内部、测试代码或低层维护逻辑使用。
 
 ## 模块分层
@@ -24,20 +28,27 @@ Parameter 模块集中管理 VectorFOC 固件的运行参数。它负责：
 | Access | `param_access.h/.c` | 公开读写 interface、范围校验、保存/恢复、运行时变更通知 |
 | Table | `param_table.h/.c` | 参数索引、类型、默认值、上下限、实际变量指针 |
 | Storage | `param_storage.h/.c` | 双页 Flash 镜像、CRC、generation、commit 标记、旧格式迁移 |
+| Calibration snapshot | `param_encoder_calibration.h/.c` | portable snapshot、Flash 字段映射、镜像校验与 adapter seam |
 | Runtime adapter | `Src/APP/settings/runtime_settings.h/.c` | 在 motor、encoder、protocol 就绪后，把变更应用到运行时对象 |
+| Calibration adapter | `Src/APP/settings/encoder_calibration_settings.h/.c` | 在参数加载前捕获、恢复或清空具体 encoder 的校准状态 |
 
 ## 初始化流程
 
 应用启动时调用一次：
 
 ```c
+EncoderCalibrationSettings_InstallAdapter();
 ParamResult result = Param_SystemInitOnce();
 if (result != PARAM_OK) {
     /* Flash 中没有有效参数或恢复失败时，系统继续使用表中默认值。 */
 }
 ```
 
-`Param_SystemInitOnce()` 会先执行 `ParamTable_Init()`，再尝试 `Param_LoadFromFlash()`。该函数具备一次性保护，重复调用会直接返回 `PARAM_OK`。启动阶段它只恢复参数值；APP 会在 encoder、protocol 和 motor runtime 都就绪后安装 `RuntimeSettings` adapter，并调用 `Param_ApplyRuntimeState()` 统一重放。
+`EncoderCalibrationSettings_InstallAdapter()` 必须先于 `Param_SystemInitOnce()` 调用，
+以保留现有的早期 encoder calibration 恢复时序。`Param_SystemInitOnce()` 会先执行
+`ParamTable_Init()`，再尝试 `Param_LoadFromFlash()`，且具备一次性保护。随后 APP 会在
+encoder、protocol 和 motor runtime 都就绪后安装 `RuntimeSettings` adapter，并调用
+`Param_ApplyRuntimeState()` 统一重放。
 
 如果需要恢复出厂值：
 
@@ -88,6 +99,13 @@ ParamResult Param_WriteInt32(uint16_t index, int32_t value);
 写入通知对应参数索引；从 Flash 批量恢复、恢复默认值或 APP 显式重放时，只
 通知一次 `PARAM_RUNTIME_APPLY_ALL`。callback 在参数 critical section 之外
 执行，且不得递归写参数。
+
+### Encoder calibration seam
+
+`ParamEncoderCalibration_SetAdapter()` 的 interface 只传递
+`ParamEncoderCalibrationSnapshot`。保存时 adapter 填充 snapshot，合法镜像加载时
+adapter 恢复 snapshot；scheduled-save 回退到默认值时 adapter 清空校准状态。无效的
+`encoder_calib_valid` 或 reserved bytes 会在调用 adapter 前被拒绝。
 
 这些接口会检查：
 

@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 
 #include "param_access.h"
+#include "param_encoder_calibration.h"
 #include "param_storage.h"
 #include <math.h>
 #include <stdbool.h>
@@ -29,6 +30,11 @@ static FlashParamData s_storage_image;
 static int s_runtime_apply_count;
 static uint16_t s_runtime_last_index;
 static void *s_runtime_last_context;
+static ParamEncoderCalibrationSnapshot s_encoder_calibration;
+static int s_encoder_calibration_capture_count;
+static int s_encoder_calibration_restore_count;
+static int s_encoder_calibration_clear_count;
+static void *s_encoder_calibration_last_context;
 
 static const ParamEntry s_entries[] = {
     {.index = PARAM_MOTOR_RS,
@@ -169,6 +175,7 @@ void ParamStorage_Init(void) {}
 bool ParamStorage_HasValidData(void) { return s_storage_has_valid_data; }
 
 static void ResetState(void) {
+  ParamEncoderCalibration_SetAdapter(NULL, NULL);
   s_float_value = 2.5f;
   s_float_value_2 = 1.25f;
   s_uint8_value = 7U;
@@ -182,6 +189,11 @@ static void ResetState(void) {
   s_runtime_apply_count = 0;
   s_runtime_last_index = 0U;
   s_runtime_last_context = NULL;
+  memset(&s_encoder_calibration, 0, sizeof(s_encoder_calibration));
+  s_encoder_calibration_capture_count = 0;
+  s_encoder_calibration_restore_count = 0;
+  s_encoder_calibration_clear_count = 0;
+  s_encoder_calibration_last_context = NULL;
   memset(&s_storage_image, 0, sizeof(s_storage_image));
   s_storage_image.motor_rs = 2.5f;
   s_storage_image.motor_ls = 1.0f;
@@ -228,6 +240,36 @@ static void RuntimeApplySpy(void *context, uint16_t index) {
   s_runtime_apply_count++;
   s_runtime_last_context = context;
   s_runtime_last_index = index;
+}
+
+static void EncoderCalibrationSpy(
+    void *context, ParamEncoderCalibrationAction action,
+    ParamEncoderCalibrationSnapshot *snapshot) {
+  s_encoder_calibration_last_context = context;
+  switch (action) {
+  case PARAM_ENCODER_CALIBRATION_CAPTURE:
+    s_encoder_calibration_capture_count++;
+    *snapshot = s_encoder_calibration;
+    break;
+  case PARAM_ENCODER_CALIBRATION_RESTORE:
+    s_encoder_calibration_restore_count++;
+    s_encoder_calibration = *snapshot;
+    break;
+  case PARAM_ENCODER_CALIBRATION_CLEAR:
+    s_encoder_calibration_clear_count++;
+    memset(&s_encoder_calibration, 0, sizeof(s_encoder_calibration));
+    break;
+  default:
+    break;
+  }
+}
+
+static bool EncoderCalibrationEquals(
+    const ParamEncoderCalibrationSnapshot *left,
+    const ParamEncoderCalibrationSnapshot *right) {
+  return left->valid == right->valid &&
+         memcmp(left->offset_lut, right->offset_lut,
+                sizeof(left->offset_lut)) == 0;
 }
 
 static int TestReadMismatchDoesNotOverwrite(void) {
@@ -311,6 +353,68 @@ static int TestRuntimeAdapterObservesAcceptedWritesAndBatchRestore(void) {
       s_runtime_apply_count != 0) {
     return 1;
   }
+  return 0;
+}
+
+static int TestEncoderCalibrationAdapterPreservesFlashLifecycle(void) {
+  static int context_token;
+  ParamEncoderCalibrationSnapshot expected;
+
+  ResetState();
+  s_encoder_calibration.valid = true;
+  for (uint32_t i = 0; i < PARAM_ENCODER_CALIBRATION_LUT_SIZE; ++i) {
+    s_encoder_calibration.offset_lut[i] = (int16_t)((int32_t)i - 64);
+  }
+  expected = s_encoder_calibration;
+  ParamEncoderCalibration_SetAdapter(EncoderCalibrationSpy, &context_token);
+
+  if (Param_SaveToFlash() != PARAM_OK ||
+      s_encoder_calibration_capture_count != 1 ||
+      s_encoder_calibration_last_context != &context_token ||
+      s_storage_image.encoder_calib_valid != 1U ||
+      memcmp(s_storage_image.encoder_offset_lut, expected.offset_lut,
+             sizeof(expected.offset_lut)) != 0) {
+    ParamEncoderCalibration_SetAdapter(NULL, NULL);
+    return 1;
+  }
+
+  memset(&s_encoder_calibration, 0, sizeof(s_encoder_calibration));
+  if (Param_LoadFromFlash() != PARAM_OK ||
+      s_encoder_calibration_restore_count != 1 ||
+      !EncoderCalibrationEquals(&s_encoder_calibration, &expected)) {
+    ParamEncoderCalibration_SetAdapter(NULL, NULL);
+    return 1;
+  }
+
+  s_storage_image.encoder_calib_reserved[0] = 1U;
+  if (Param_LoadFromFlash() != PARAM_ERR_OUT_OF_RANGE ||
+      s_encoder_calibration_restore_count != 1 ||
+      !EncoderCalibrationEquals(&s_encoder_calibration, &expected)) {
+    ParamEncoderCalibration_SetAdapter(NULL, NULL);
+    return 1;
+  }
+
+  s_storage_image.encoder_calib_reserved[0] = 0U;
+  s_storage_image.encoder_calib_valid = 2U;
+  if (Param_LoadFromFlash() != PARAM_ERR_OUT_OF_RANGE ||
+      s_encoder_calibration_restore_count != 1 ||
+      !EncoderCalibrationEquals(&s_encoder_calibration, &expected)) {
+    ParamEncoderCalibration_SetAdapter(NULL, NULL);
+    return 1;
+  }
+
+  s_storage_load_result = FLASH_STORAGE_ERR_MAGIC;
+  if (Param_RollbackScheduledSave() != PARAM_OK ||
+      s_encoder_calibration_clear_count != 1 ||
+      s_encoder_calibration.valid ||
+      memcmp(s_encoder_calibration.offset_lut,
+             (int16_t[PARAM_ENCODER_CALIBRATION_LUT_SIZE]){0},
+             sizeof(s_encoder_calibration.offset_lut)) != 0) {
+    ParamEncoderCalibration_SetAdapter(NULL, NULL);
+    return 1;
+  }
+
+  ParamEncoderCalibration_SetAdapter(NULL, NULL);
   return 0;
 }
 
@@ -501,6 +605,10 @@ int main(void) {
   }
   if (TestRuntimeAdapterObservesAcceptedWritesAndBatchRestore()) {
     printf("FAIL runtime adapter did not observe parameter changes\n");
+    return 1;
+  }
+  if (TestEncoderCalibrationAdapterPreservesFlashLifecycle()) {
+    printf("FAIL encoder calibration adapter did not preserve flash lifecycle\n");
     return 1;
   }
   if (TestWriteFromFloatRejectsNonFiniteValues()) {

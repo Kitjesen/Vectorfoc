@@ -29,6 +29,23 @@ Host tests provide the second adapter: a recording callback for the parameter
 module and a fake parameter registration point for `RuntimeSettings`. This
 makes the seam real rather than test-only.
 
+## Encoder calibration persistence
+
+`param_encoder_calibration` is a deep module for the encoder-calibration
+portion of `FlashParamData`. Its public interface is only the portable
+snapshot adapter registration; Flash field mapping and reserved-byte validation
+remain inside the parameter module.
+
+`EncoderCalibrationSettings_InstallAdapter()` runs before
+`Param_SystemInitOnce()`. That preserves the existing early restore point that
+Hall/ABZ initialization expects, while moving concrete encoder globals and
+compile-time sensor branches out of `param_access.c`.
+
+- Save captures `valid + offset_lut` from the registered adapter.
+- A validated image restores that snapshot through the adapter.
+- Invalid metadata is rejected before the adapter is called.
+- Rollback to defaults clears the adapter state.
+
 ## Dependency direction
 
 For this slice the allowed direction is:
@@ -36,7 +53,11 @@ For this slice the allowed direction is:
 ```text
 COMM / UI callers -> parameter module -> parameter runtime seam <- APP adapter
 APP adapter -> motor, control, protocol, detection, encoder HAL
+
+parameter module -> encoder-calibration module -> calibration seam <- APP adapter
+APP calibration adapter -> Hall / ABZ / MT6816 / TMR3109 state
 ```
 
 Do not add direct `motor.h`, `manager.h`, `control/control.h`,
-`fault_detection.h` or `hal_encoder.h` includes back to `param_access.c`.
+`fault_detection.h`, `hal_encoder.h`, `config.h`, or concrete encoder headers
+back to `param_access.c`.

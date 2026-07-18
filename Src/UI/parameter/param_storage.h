@@ -28,6 +28,7 @@
  */
 #ifndef PARAM_STORAGE_H
 #define PARAM_STORAGE_H
+#include "param_encoder_calibration.h"
 #include <stdint.h>
 #include <stdbool.h>
 /* Flash (STM32G4?param) */
@@ -108,7 +109,7 @@ typedef struct {
     float ladrc_max_output;            // LADRC output max [A]
     uint8_t encoder_calib_valid;       // encoder LUT/offset calibration valid
     uint8_t encoder_calib_reserved[3]; // alignment/reserved
-    int16_t encoder_offset_lut[128];   // encoder linearity compensation LUT
+    int16_t encoder_offset_lut[PARAM_ENCODER_CALIBRATION_LUT_SIZE];
 } PARAM_STORAGE_PACKED FlashParamData;
 #if defined(_MSC_VER)
 #pragma pack(pop)
