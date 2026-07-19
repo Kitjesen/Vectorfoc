@@ -56,6 +56,8 @@ static int test_init_sets_fields(void)
     /* 编码器：error_array 指向内置 storage */
     CHECK(ctx.encoder.error_array == ctx.encoder.error_array_storage);
     CHECK(ctx.encoder.error_array_size == SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS);
+    CHECK(ctx.encoder.offset_lut == ctx.encoder.offset_lut_storage);
+    CHECK(ctx.encoder.offset_lut_size == POSITION_SENSOR_CALIBRATION_LUT_SIZE);
     CHECK(ctx.encoder.sample_count == 0);
 
     printf("PASS test_init_sets_fields\n");
@@ -82,11 +84,15 @@ static int test_release_restores_pointer(void)
     /* 模拟指针被清空（如 RSLSCalib_Start 的 memset） */
     ctx.encoder.error_array = NULL;
     ctx.encoder.error_array_size = 0;
+    ctx.encoder.offset_lut = NULL;
+    ctx.encoder.offset_lut_size = 0;
 
     CalibContext_Release(&ctx);
 
     CHECK(ctx.encoder.error_array == ctx.encoder.error_array_storage);
     CHECK(ctx.encoder.error_array_size == SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS);
+    CHECK(ctx.encoder.offset_lut == ctx.encoder.offset_lut_storage);
+    CHECK(ctx.encoder.offset_lut_size == POSITION_SENSOR_CALIBRATION_LUT_SIZE);
 
     printf("PASS test_release_restores_pointer\n");
     return 0;
@@ -108,6 +114,7 @@ static int test_reset_is_init(void)
     CHECK(ctx.current.loop_count == 0);
     CHECK(ctx.resistance.kI == 2.0f);
     CHECK(ctx.encoder.error_array == ctx.encoder.error_array_storage);
+    CHECK(ctx.encoder.offset_lut == ctx.encoder.offset_lut_storage);
 
     printf("PASS test_reset_is_init\n");
     return 0;
@@ -206,6 +213,9 @@ static int test_error_array_within_storage(void)
     CHECK(ctx.encoder.error_array >= ctx.encoder.error_array_storage);
     CHECK(ctx.encoder.error_array <=
           ctx.encoder.error_array_storage + SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS);
+    CHECK(ctx.encoder.offset_lut >= ctx.encoder.offset_lut_storage);
+    CHECK(ctx.encoder.offset_lut <=
+          ctx.encoder.offset_lut_storage + POSITION_SENSOR_CALIBRATION_LUT_SIZE);
 
     printf("PASS test_error_array_within_storage\n");
     return 0;

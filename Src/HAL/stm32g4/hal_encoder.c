@@ -18,68 +18,47 @@
  */
 #include "hal_encoder.h"
 
-#include "board_config.h"
 #include "motor.h"
 #include "platform.h"
-#ifdef BOARD_XSTAR
-#include "abz_encoder.h"
-#include "hall_encoder.h"
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
-#include "mt6816_encoder.h"
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-#include "tmr3109_encoder.h"
-#endif
+#include "position_sensor.h"
 
 static int MHAL_Encoder_ReadData(Motor_HAL_EncoderData_t *data) {
-  if (data == NULL || motor_data.components.hal == NULL ||
-      motor_data.components.hal->encoder == NULL ||
-      motor_data.components.hal->encoder->get_data == NULL) {
+  PositionSensorSample_t sample;
+  if (data == NULL || PositionSensor_GetLastSample(&sample) !=
+                          POSITION_SENSOR_STATUS_OK) {
     return -1;
   }
-  motor_data.components.hal->encoder->get_data(data);
+  data->position_rad = sample.position_rad;
+  data->angle_rad = sample.mechanical_angle_rad;
+  data->velocity_rad = sample.velocity_rad_s;
+  data->elec_angle = sample.electrical_angle_rad;
+  data->raw_value = sample.native_raw;
   return 0;
 }
 
 int MHAL_Encoder_Register(const HAL_Encoder_Interface_t *interface) {
   (void)interface;
-  return 0;
+  /* Runtime driver injection was replaced by compile-time PositionSensor
+   * selection.  Reject this legacy path instead of pretending to register an
+   * interface that would never be called. */
+  return -1;
 }
 
 int MHAL_Encoder_Init(void) {
-#ifdef BOARD_XSTAR
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-  Hall_Init();
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
-  Abz_Init();
-#else
-  return -1;
-#endif
-#else
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
-  MT6816_Init(&encoder_data, &HW_ENC_SPI, HW_ENC_CS_PORT, HW_ENC_CS_PIN);
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  TMR3109_Init(&tmr3109_encoder_data, &HW_ENC_SPI, HW_ENC_CS_PORT,
-               HW_ENC_CS_PIN);
-#else
-  return -1;
-#endif
-#endif
-  return 0;
+  return PositionSensor_Init() == POSITION_SENSOR_STATUS_OK ? 0 : -1;
 }
 
 int MHAL_Encoder_Update(void) {
-  if (motor_data.components.hal == NULL ||
-      motor_data.components.hal->encoder == NULL ||
-      motor_data.components.hal->encoder->update == NULL) {
+  PositionSensorSample_t sample;
+  if (motor_data.parameters.pole_pairs <= 0 ||
+      motor_data.parameters.pole_pairs > UINT8_MAX) {
     return -1;
   }
-  if (motor_data.components.hal->encoder->set_pole_pairs != NULL &&
-      motor_data.parameters.pole_pairs > 0 &&
-      motor_data.parameters.pole_pairs <= UINT8_MAX) {
-    motor_data.components.hal->encoder->set_pole_pairs(
-        (uint8_t)motor_data.parameters.pole_pairs);
-  }
-  return motor_data.components.hal->encoder->update() ? 0 : -1;
+  return PositionSensor_UpdateAndRead(
+             (uint8_t)motor_data.parameters.pole_pairs, &sample) ==
+                 POSITION_SENSOR_STATUS_OK
+             ? 0
+             : -1;
 }
 
 float MHAL_Encoder_GetPosition(void) {
@@ -105,32 +84,24 @@ float MHAL_Encoder_GetElectricalVelocity(uint8_t pole_pairs) {
 }
 
 int MHAL_Encoder_ZeroPosition(void) {
-  if (motor_data.components.hal == NULL ||
-      motor_data.components.hal->encoder == NULL ||
-      motor_data.components.hal->encoder->zero_position == NULL) {
+  PositionSensorStatus_t status;
+  if (!PositionSensor_IsInitialized()) {
     return -1;
   }
   CRITICAL_SECTION_BEGIN();
-  motor_data.components.hal->encoder->zero_position();
+  status = PositionSensor_ZeroMechanicalPosition();
   CRITICAL_SECTION_END();
-  return 0;
+  return status == POSITION_SENSOR_STATUS_OK ? 0 : -1;
 }
 
 int MHAL_Encoder_SetOffset(float offset) {
-  if (motor_data.components.hal == NULL ||
-      motor_data.components.hal->encoder == NULL ||
-      motor_data.components.hal->encoder->set_offset == NULL) {
-    return -1;
-  }
-  motor_data.components.hal->encoder->set_offset(offset);
-  return 0;
+  return PositionSensor_SetElectricalOffset(offset) == POSITION_SENSOR_STATUS_OK
+             ? 0
+             : -1;
 }
 
 float MHAL_Encoder_GetOffset(void) {
-  if (motor_data.components.hal == NULL ||
-      motor_data.components.hal->encoder == NULL ||
-      motor_data.components.hal->encoder->get_offset == NULL) {
-    return 0.0f;
-  }
-  return motor_data.components.hal->encoder->get_offset();
+  float offset = 0.0f;
+  (void)PositionSensor_GetElectricalOffset(&offset);
+  return offset;
 }

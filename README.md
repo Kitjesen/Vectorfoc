@@ -13,7 +13,7 @@ VectorFOC 是面向 STM32G431 电机控制板的开源 FOC 固件。项目包含
 - 控制模式：力矩、速度、位置、轨迹、开环、MIT 阻抗接口。
 - 状态机：DS402 风格状态切换，空闲/故障态保持去使能，运行/标定态显式上电。逻辑状态更新保持短 critical section；常规 PWM HAL 调用在锁外执行，过渡期间发生故障会直接关闭 TIM1 桥臂输出并阻止重入。
 - 启动保护：ADC 注入转换虽可在外设启动后立即触发，但 FOC ISR 会在电机、传感器和安全对象全部初始化完成前保持惰性，避免启动窗口访问半初始化状态。X-STAR-S 还要求 ADC1 与 ADC2 注入序列均完成且无错误才接受一个 FOC 样本，并在接受后清除 ADC2 完成标记，避免复用陈旧样本。
-- 位置传感器：VectorFOC 板支持 MT6816、TMR3109；X-STAR-S 支持 Hall、ABZ。启动时 HAL 会按已编译的 Vector SPI 传感器型号初始化具体驱动，避免以未初始化的速度 PLL 发布 FOC ready。
+- 位置传感器：VectorFOC 板支持 MT6816、TMR3109；X-STAR-S 支持 Hall、ABZ。四种传感器统一经过 `Src/HAL/position_sensor/` 的 `PositionSensor` 模块发布位置、机械角、电角度、速度、健康状态和校准快照；ALGO/APP/SAFE 不再直接依赖具体传感器型号。
 - 通信：CAN 上的 Vector/Inovxio、MIT、CANopen 风格帧；USB CDC 调试与 VOFA+/VectorStudio 命令。Vector `GET_ID` 快路径只接受 29-bit 扩展帧；CANopen stopped 状态只处理 NMT，忽略 RPDO/SDO。CAN 的 `RESET`/`BOOTLOADER` ACK 必须由 FDCAN Tx event 确认完成后才执行动作；等待期间功率桥保持去使能，超时会取消待发请求、报告通信超时且不复位。
 - 参数与安全边界：Flash 参数页带 CRC/提交标记；显式保存和外部命令触发的持久化参数修改会先取得安全维护租约，运行/标定/其他维护占用时明确返回 `busy`。异步保存连续三次失败进入终态时，会丢弃对应保存代际并重新加载最后有效提交镜像；没有可加载镜像时恢复默认参数并清除编码器标定有效状态。
 - 故障处理：过压、欠压、过流、过温、堵转、CAN 超时、ADC/编码器异常等保护逻辑有主机回归；CAN timeout 默认 1000 ms，只有有效 CAN 通信已喂狗且处于 `STATE_MODE_RUNNING` 时才触发，设为 `0` 可禁用。故障反应态未完成时拒绝清故障，避免对外报告“已清除”而 FSM 仍处于故障态。
@@ -28,6 +28,26 @@ VectorFOC 是面向 STM32G431 电机控制板的开源 FOC 固件。项目包含
 | X-STAR-S | STM32G431RBT6 | `HALL`, `ABZ` | 独立 App `0x08000000` | `-DBOARD_XSTAR=ON`；当前不使用 VectorFOC USB Bootloader |
 
 CMake 会拒绝不兼容组合：VectorFOC 仅接受 `AUTO`、`MT6816`、`TMR3109`；X-STAR-S 仅接受 `AUTO`、`HALL`、`ABZ`。
+
+## 模块化边界
+
+本轮重构把“可替换磁传感器/位置传感器”作为已落地边界：
+
+- 上层只调用 `PositionSensor_*` 函数或旧 `Motor_HAL_EncoderInterface_t` 兼容适配器。
+- 具体驱动只在 `Src/HAL/position_sensor/position_sensor_*.c` 和 `position_sensor_selection.c` 中出现。
+- 校准持久化通过 `PositionSensorCalibrationSnapshot_t` 保存/恢复；启动时先初始化具体驱动，再从 Flash 恢复校准，避免驱动初始化覆盖已恢复数据，也无需额外保留一份 258 字节 LUT 副本。
+- 方向/极对数/线性 LUT 标定使用 typed raw-calibration API；Hall/ABZ 只暴露它们实际支持的能力。
+- `test_position_sensor_architecture` 会阻止 ALGO/APP/SAFE 重新包含 MT6816/TMR3109/Hall/ABZ 具体头文件或直接分支。
+
+添加第五种位置传感器的最小路径：
+
+1. 在 `Src/HAL/encoder/` 或新的底层驱动目录实现硬件读写。
+2. 新增 `Src/HAL/position_sensor/position_sensor_<name>.c`，实现私有 `PositionSensorAdapter_t`。
+3. 在 `position_sensor_internal.h` 声明 `PositionSensor<Name>_GetAdapter()`，并在 `position_sensor_selection.c` 增加唯一的编译期选择分支。
+4. 在 `Src/config/board_config.h`/CMake sensor 选项中加入新枚举和合法板型组合。
+5. 增加 selection/runtime/architecture 测试，确认 ALGO/APP/SAFE 不知道新型号名称。
+
+“快速替换主控”还没有完全完成。当前主控相关的 STM32G4 HAL、ADC ISR、FreeRTOS、CAN/USB、Flash 服务仍然分散在 APP/HAL/COMM/UI 边界；下一阶段应引入 MCU kit/platform service，把时钟、GPIO、ADC/PWM ISR、通信 transport、Flash、时间基准和复位/Bootloader 入口收束到板级适配层。不要把本轮传感器解耦误读成已经可以无痛迁移到另一颗 MCU。
 
 ## 快速开始
 
@@ -85,7 +105,7 @@ cmake --build build-test --parallel
 ctest --test-dir build-test --output-on-failure
 ```
 
-当前 CTest 注册 54 个自动测试。最近一次从零配置的 Clang/Ninja 主机构建已通过 54/54，覆盖算法、通信、参数存储、运行时设置、参数目标绑定与 encoder-calibration 适配器、Bootloader 协议、App Header 工具、安全保护、ADC/编码器保护，以及 VectorFOC/X-STAR-S 通信分支。新增实际路径回归覆盖 MT6816、TMR3109、Hall、ABZ 和非法模式的编码器初始化分发、通信启动的 CAN/transport/protocol/safety 调用顺序与故障回调失败传播、ADC shared IRQ 分发、独立注册的 X-STAR 双 ADC 新鲜度门控、FSM 过渡期桥臂关断、保存终态回滚、ADC ISR 启动门控、`MotorStateTask`、闭环 plant、确定性 ADC 噪声、故障清除状态契约、保存维护租约、FreeRTOS 栈水位采样和 CAN 受确认的重启/Bootloader ACK。若使用 Visual Studio 多配置生成器运行测试，需要加配置参数，例如：
+当前 CTest 注册 66 个自动测试；本次模块化改造已完成全量 66/66 主机回归。覆盖算法、通信、参数存储、运行时设置、参数目标绑定、PositionSensor selection/runtime/persistence/architecture、`Motor_HAL` 兼容层、encoder-calibration 适配器、Bootloader 协议、App Header 工具、安全保护、ADC/编码器保护，以及 VectorFOC/X-STAR-S 通信分支。实际路径回归覆盖 MT6816、TMR3109、Hall、ABZ 和非法模式的初始化分发、通信启动的 CAN/transport/protocol/safety 调用顺序与故障回调失败传播、ADC shared IRQ 分发、独立注册的 X-STAR 双 ADC 新鲜度门控、FSM 过渡期桥臂关断、保存终态回滚、ADC ISR 启动门控、`MotorStateTask`、闭环 plant、确定性 ADC 噪声、故障清除状态契约、保存维护租约、FreeRTOS 栈水位采样和 CAN 受确认的重启/Bootloader ACK。若使用 Visual Studio 多配置生成器运行测试，需要加配置参数，例如：
 
 ```powershell
 cmake --build build-test --config Debug --parallel
@@ -112,17 +132,16 @@ CSV 和 PNG 是构建目录中的可再生输出，未提交到版本库；提�
 
 ### 内存预算与上板门槛
 
-当前 ARM Release 矩阵均已构建并校验。`BOOTFLAG` 的 `16 / 16 B` 是链接脚本刻意保留的交接区，不应与一般 RAM 余量混为一谈。
+当前 ARM Release 矩阵的 `VectorFoc.elf` 已用 `arm-none-eabi-size` 读取。下表是 text/data/bss 静态段大小，不是任务栈、ISR 栈或运行时峰值证明；最终发布仍要以完整链接输出和硬件压力日志复核。`BOOTFLAG` 的 `16 / 16 B` 是链接脚本刻意保留的交接区，不应与一般 RAM 余量混为一谈。
 
-| 镜像 | RAM | CCMRAM | Flash |
+| 镜像 | text | data | bss |
 |---|---:|---:|---:|
-| VectorFOC / MT6816 | 20,984 / 22,512 B（93.21%） | 9,024 / 10,240 B（88.12%） | 103,452 / 110,592 B（93.54%） |
-| VectorFOC / TMR3109 | 20,992 / 22,512 B（93.25%） | 9,024 / 10,240 B（88.12%） | 103,568 / 110,592 B（93.65%） |
-| X-STAR-S / HALL | 14,248 / 22,512 B（63.29%） | 1,024 / 10,240 B（10.00%） | 81,312 / 126,976 B（64.04%） |
-| X-STAR-S / ABZ | 14,232 / 22,512 B（63.22%） | 1,024 / 10,240 B（10.00%） | 81,024 / 126,976 B（63.81%） |
-| Bootloader | 7,352 / 22,512 B（32.66%） | 0 / 10,240 B | 13,932 / 16,384 B（85.03%） |
+| VectorFOC / MT6816 | 104,052 B | 1,812 B | 28,524 B |
+| VectorFOC / TMR3109 | 104,148 B | 1,820 B | 28,524 B |
+| X-STAR-S / HALL | 84,000 B | 1,092 B | 14,252 B |
+| X-STAR-S / ABZ | 83,844 B | 1,116 B | 14,212 B |
 
-VectorFOC 两个组合的 RAM/CCMRAM/Flash 余量仍偏紧，不能据此推断运行时栈安全；发布前必须复核同一工具链下的实际链接输出。
+最新链接输出中，VectorFOC/MT6816 使用 Flash 95.76%、RAM 93.46%、CCMRAM 90.62%；TMR3109 使用 Flash 95.86%、RAM 93.50%、CCMRAM 90.62%。两个组合的余量仍偏紧，不能据此推断运行时栈安全；发布前必须复核同一工具链下的实际链接输出。
 
 `task_guard` 每秒会通过现有日志输出 `stack_free_w=default/guard/comm`，数值是自启动以来最小的剩余栈空间，单位为 FreeRTOS word。结合 `Protocol_GetStats()` 的 `rx_queue_peak`，应在真实硬件执行 USB 流、CAN burst、标定、故障/清故障、CAN reset/boot 和最大 PWM/ADC 负载后记录数据；在此之前不要根据猜测缩小任务栈或通信队列。详见 [docs/SIMULATION.md](docs/SIMULATION.md)。
 
@@ -166,7 +185,7 @@ VectorFOC/
 │   ├── APP/            # 初始化、RTOS 任务、ISR 保护
 │   ├── BOOT/           # USB Bootloader、Flash 操作、OTA 协议
 │   ├── COMM/           # CAN/USB 通信协议与命令执行
-│   ├── HAL/            # STM32G4 外设、编码器、板级抽象
+│   ├── HAL/            # STM32G4 外设、编码器底层驱动、PositionSensor 传感器边界、板级抽象
 │   ├── SAFE/           # 安全保护与看门狗监督
 │   ├── UI/             # 参数表、VOFA+/VectorStudio、LED、错误上报
 │   └── config/         # 板型与传感器配置
@@ -177,7 +196,7 @@ VectorFOC/
 └── cmake/              # ARM 工具链文件
 ```
 
-更多说明见 [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md)、[docs/SIMULATION.md](docs/SIMULATION.md)、[docs/OTA_BOOTLOADER.md](docs/OTA_BOOTLOADER.md) 和 [BUILD_GUIDE.md](BUILD_GUIDE.md)。
+更多说明见 [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md)、[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)、[docs/SIMULATION.md](docs/SIMULATION.md)、[docs/RUST_MODULARIZATION.md](docs/RUST_MODULARIZATION.md)、[docs/OTA_BOOTLOADER.md](docs/OTA_BOOTLOADER.md) 和 [BUILD_GUIDE.md](BUILD_GUIDE.md)。
 
 ## 许可证
 

@@ -182,6 +182,7 @@ include_directories(
     Src/HAL/bsp
     Src/HAL/bsp/xstar
     Src/HAL/encoder
+    Src/HAL/position_sensor
     Src/ALGO
     Src/ALGO/motor
     Src/ALGO/control

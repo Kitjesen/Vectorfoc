@@ -201,6 +201,7 @@ void Detection_FeedWatchdog(uint32_t timestamp) {
   s_watchdog_feed_count++;
   s_watchdog_timestamp = timestamp;
 }
+uint32_t HAL_GetSystemTick(void) { return 0U; }
 void ErrorManager_Report(uint32_t error_code, const char *message) {
   (void)message;
   s_error_report_count++;

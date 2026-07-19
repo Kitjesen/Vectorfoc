@@ -38,6 +38,10 @@
      shared_variable = new_value;
      CRITICAL_SECTION_END();
    ========================================================================== */
+#if defined(TEST_ENV)
+#define CRITICAL_SECTION_BEGIN() do { } while (0)
+#define CRITICAL_SECTION_END()   do { } while (0)
+#else
 #define CRITICAL_SECTION_BEGIN()                  \
     do {                                          \
         uint32_t __primask = __get_PRIMASK();     \
@@ -46,6 +50,7 @@
 #define CRITICAL_SECTION_END()                    \
         __set_PRIMASK(__primask);                 \
     } while (0)
+#endif
 
 /* ==========================================================================
    Array utilities

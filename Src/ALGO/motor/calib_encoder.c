@@ -12,45 +12,69 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/**
+ * @file calib_encoder.c
+ * @brief Sensor-independent direction, pole-pair, and linearity calibration
+ */
+
 #include "calib_encoder.h"
-#include "config.h"          /* provides HW_POSITION_SENSOR_MODE — must come first */
-#include "control/impl.h"    /* Control_InjectVoltage */
-#include "hal_pwm.h"         /* MHAL_PWM_Brake */
+
+#include "control/impl.h"
+#include "hal_pwm.h"
+#include "position_sensor.h"
+
 #if !defined(TEST_ENV)
 #include "hal_encoder.h"
 #include "param_access.h"
 #endif
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
-#include "mt6816_encoder.h"
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-#include "tmr3109_encoder.h"
-#else
-#include "hall_encoder.h"
-#include "abz_encoder.h"
-#endif
+
+#include <limits.h>
 #include <math.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
-/*
- * 统一编码器访问宏。
- * MT6816 与 TMR3109 句柄字段名完全对齐（shadow_count / count_in_cpr /
- * dir / offset_counts / offset_lut / calib_valid / pole_pairs），
- * 因此两者共用同一套标定逻辑，仅 CPR 常量不同。
- */
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-#define CALIB_ENC    ((TMR3109_Handle_t *)motor->components.encoder)
-#define CW           TMR3109_DIR_CW
-#define CCW          TMR3109_DIR_CCW
-#define ENCODER_CPR_F TMR3109_CPR_F
-#define ENCODER_CPR   TMR3109_CPR
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
-#define CALIB_ENC    ((MT6816_Handle_t *)motor->components.encoder)
-#define CW           MT6816_DIR_CW
-#define CCW          MT6816_DIR_CCW
-#define ENCODER_CPR_F MT6816_CPR_F
-#define ENCODER_CPR   MT6816_CPR
-#endif
-#define OFFSET_LUT_NUM 128
+#define OFFSET_LUT_NUM POSITION_SENSOR_CALIBRATION_LUT_SIZE
+#define MIN_MOVEMENT_COUNTS 500u
+
+static bool EncoderCalib_HasCapability(PositionSensorCapabilities_t capability) {
+  const PositionSensorDescriptor_t *descriptor =
+      PositionSensor_GetDescriptor();
+  return descriptor != NULL &&
+         (descriptor->capabilities & capability) == capability;
+}
+
+static int EncoderCalib_WrappedError(int32_t measured, int32_t reference,
+                                     uint32_t cpr) {
+  int32_t error;
+  if (cpr == 0u) {
+    return 0;
+  }
+  error = measured - reference;
+  error %= (int32_t)cpr;
+  if (error < 0) {
+    error += (int32_t)cpr;
+  }
+  return (int)error;
+}
+
+static int16_t EncoderCalib_ClampLutValue(int64_t value) {
+  if (value > INT16_MAX) {
+    return INT16_MAX;
+  }
+  if (value < INT16_MIN) {
+    return INT16_MIN;
+  }
+  return (int16_t)value;
+}
+
+static void EncoderCalib_ClearPidState(MOTOR_DATA *motor) {
+  PID_clear(&motor->IqPID);
+  PID_clear(&motor->IdPID);
+  PID_clear(&motor->VelPID);
+  PID_clear(&motor->PosPID);
+}
+
 static void EncoderCalib_PersistSuccess(MOTOR_DATA *motor) {
   if (motor == NULL) {
     return;
@@ -64,260 +88,300 @@ static void EncoderCalib_PersistSuccess(MOTOR_DATA *motor) {
 #endif
 }
 
-/**
- * @file calib_encoder.c
- * @brief Encoder, pole pair, and direction calibration implementation
- */
-//=============================================================================
-// Direction and Pole Pair Calibration
-//=============================================================================
 CalibResult DirectionPoleCalib_Update(MOTOR_DATA *motor,
                                       DirectionPoleCalibContext *ctx) {
-  if (motor == NULL || ctx == NULL)
+  PositionSensorRawCalibrationState_t raw;
+  PositionSensorStatus_t status;
+  float time;
+
+  if (motor == NULL || ctx == NULL) {
     return CALIB_FAILED_INVALID_PARAMS;
-#if (HW_POSITION_SENSOR_MODE != HW_POSITION_SENSOR_MT6816) && \
-    (HW_POSITION_SENSOR_MODE != HW_POSITION_SENSOR_TMR3109)
-  /* Hall/ABZ: no mechanical calibration needed, mark as valid immediately */
-  (void)ctx;
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-  hall_data.calib_valid = true;
-#else
-  abz_data.calib_valid = true;
-#endif
-  motor->state.Cs_State = CS_ENCODER_START;
-  return CALIB_SUCCESS;
-#else  /* MT6816 or TMR3109: full mechanical calibration */
-  float time = (float)ctx->loop_count * CURRENT_MEASURE_PERIOD;
+  }
+
+  if (!EncoderCalib_HasCapability(
+          POSITION_SENSOR_CAP_RAW_DIRECTION_POLE)) {
+    if (PositionSensor_SetCalibrationValid(true) != POSITION_SENSOR_STATUS_OK) {
+      return CALIB_FAILED_INVALID_PARAMS;
+    }
+    motor->state.Cs_State = CS_ENCODER_START;
+    return CALIB_SUCCESS;
+  }
+
+  time = (float)ctx->loop_count * CURRENT_MEASURE_PERIOD;
   switch (motor->state.Cs_State) {
   case CS_DIR_PP_START:
-    if (ctx->loop_count == 0) {
-      ctx->phase_set = 0;
+    if (ctx->loop_count == 0u) {
+      ctx->phase_set = 0.0f;
       ctx->voltage = CURRENT_MAX_CALIB * motor->parameters.Rs * 3.0f / 2.0f;
     }
-    // Slowly ramp up voltage to target
-    Control_InjectVoltage(motor, (ctx->voltage * time / 2.0f), 0.0f,
-                ctx->phase_set);
+    Control_InjectVoltage(motor, ctx->voltage * time / 2.0f, 0.0f,
+                          ctx->phase_set);
     if (time >= 2.0f) {
-      ctx->start_count = (float)CALIB_ENC->shadow_count;
+      status = PositionSensor_RawCalibrationRead(&raw);
+      if (status != POSITION_SENSOR_STATUS_OK || raw.cpr == 0u) {
+        return CALIB_FAILED_INVALID_PARAMS;
+      }
+      ctx->start_count = raw.shadow_count;
       motor->state.Cs_State = CS_DIR_PP_LOOP;
     }
     ctx->loop_count++;
     return CALIB_IN_PROGRESS;
+
   case CS_DIR_PP_LOOP:
     ctx->phase_set += CALIB_PHASE_VEL * CURRENT_MEASURE_PERIOD;
     Control_InjectVoltage(motor, ctx->voltage, 0.0f, ctx->phase_set);
-    // Rotate 4 electrical cycles
     if (ctx->phase_set >= 4.0f * M_2PI) {
       motor->state.Cs_State = CS_DIR_PP_END;
     }
     ctx->loop_count++;
     return CALIB_IN_PROGRESS;
+
   case CS_DIR_PP_END: {
-    int32_t diff = CALIB_ENC->shadow_count - (int32_t)ctx->start_count;
-    // Detect direction
-    if (diff > 0) {
-      CALIB_ENC->dir = CW;
-    } else {
-      CALIB_ENC->dir = CCW;
+    int64_t diff_wide;
+    int32_t diff;
+    uint32_t abs_diff;
+    float exact_pp;
+    float nearest_pp;
+    uint8_t estimated_pp;
+    PositionSensorDirection_t direction;
+
+    status = PositionSensor_RawCalibrationRead(&raw);
+    if (status != POSITION_SENSOR_STATUS_OK || raw.cpr == 0u) {
+      return CALIB_FAILED_INVALID_PARAMS;
     }
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-    TMR3109_RebaseTracking(CALIB_ENC);
-#else
-    MT6816_RebaseTracking(CALIB_ENC);
-#endif
-// --- Pole Pair Identification (Robust) ---
-// 1. Stall Detection / Minimal Movement Check
-// Threshold: 10% of one revolution for expected minimal PP (approx 1 PP)
-// 16384 * 0.1 = ~1600 counts. Let's be generous and say 500 counts.
-#define MIN_MOVEMENT_COUNTS 500
-    float abs_diff = (float)ABS(diff);
+    diff_wide = raw.shadow_count - ctx->start_count;
+    if (diff_wide > INT32_MAX || diff_wide < INT32_MIN) {
+      return CALIB_FAILED_INVALID_PARAMS;
+    }
+    diff = (int32_t)diff_wide;
+    abs_diff = diff < 0 ? (uint32_t)(-(int64_t)diff) : (uint32_t)diff;
     if (abs_diff < MIN_MOVEMENT_COUNTS) {
       return CALIB_FAILED_NO_MOVEMENT;
     }
-    // 2. Calculate Exact Pole Pairs
-    // Formula: PP = (N_el_cycles * CPR) / Total_Counts
-    // N_el_cycles = 4.0f
-    float exact_pp = (4.0f * ENCODER_CPR_F) / abs_diff;
-    // 3. Range Sanity Check
-    // Valid range: 1 to MAX_POLE_PAIRS (usually 50 or 100)
+
+    direction = diff > 0 ? POSITION_SENSOR_DIRECTION_CLOCKWISE
+                         : POSITION_SENSOR_DIRECTION_COUNTERCLOCKWISE;
+    status =
+        PositionSensor_RawCalibrationSetDirectionAndRebase(direction);
+    if (status != POSITION_SENSOR_STATUS_OK) {
+      return CALIB_FAILED_INVALID_PARAMS;
+    }
+
+    exact_pp = (4.0f * (float)raw.cpr) / (float)abs_diff;
     if (exact_pp < 0.5f || exact_pp > (float)MAX_POLE_PAIRS) {
       return CALIB_FAILED_INVALID_PARAMS;
     }
-    // 4. Integer Confidence Check
-    // The calculated PP should be very close to an integer.
-    // Allow max deviation, e.g., 15% (0.15)
-    float nearest_pp = roundf(exact_pp);
-    float deviation = fabsf(exact_pp - nearest_pp);
-    if (deviation > 0.15f) {
-      // Deviation too high, indicates slippage, noise, or wrong CPR
-      // We could return a specific error, for now INVALID_PARAMS
+    nearest_pp = roundf(exact_pp);
+    if (fabsf(exact_pp - nearest_pp) > 0.15f) {
       return CALIB_FAILED_INVALID_PARAMS;
     }
-    // 5. Final Assignment
-    uint32_t estimated_pp = (uint32_t)nearest_pp;
-    if (estimated_pp == 0)
-      estimated_pp = 1; // Should be caught by range check, but safety first
-    CALIB_ENC->pole_pairs = estimated_pp;
-    // Next step: Encoder Calibration
+    estimated_pp = (uint8_t)nearest_pp;
+    if (estimated_pp == 0u) {
+      return CALIB_FAILED_INVALID_PARAMS;
+    }
+    status = PositionSensor_RawCalibrationCommitPolePairs(estimated_pp);
+    if (status != POSITION_SENSOR_STATUS_OK) {
+      return CALIB_FAILED_INVALID_PARAMS;
+    }
+
+    /* MOTOR_PARAMETERS is the ISR's source of truth; update it atomically with
+     * the sensor adapter so the next control cycle cannot restore the old PP. */
+    motor->parameters.pole_pairs = (int)estimated_pp;
+    motor->params_updated = true;
     motor->state.Cs_State = CS_ENCODER_START;
     return CALIB_SUCCESS;
   }
+
   default:
     return CALIB_FAILED_INVALID_PARAMS;
   }
-#endif
 }
-//=============================================================================
-// Encoder offset and lookup table calibration
-//=============================================================================
+
 CalibResult EncoderCalib_Update(MOTOR_DATA *motor, EncoderCalibContext *ctx) {
-  if (motor == NULL || ctx == NULL)
+  PositionSensorRawCalibrationState_t raw;
+  PositionSensorStatus_t status;
+  float time;
+  float voltage;
+
+  if (motor == NULL || ctx == NULL) {
     return CALIB_FAILED_INVALID_PARAMS;
-#if (HW_POSITION_SENSOR_MODE != HW_POSITION_SENSOR_MT6816) && \
-    (HW_POSITION_SENSOR_MODE != HW_POSITION_SENSOR_TMR3109)
-  /* Hall/ABZ: no LUT calibration needed, mark valid and clear PID state */
-  (void)ctx;
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-  hall_data.calib_valid = true;
-#else
-  abz_data.calib_valid = true;
-#endif
-  EncoderCalib_PersistSuccess(motor);
-  PID_clear(&motor->IqPID);
-  PID_clear(&motor->IdPID);
-  PID_clear(&motor->VelPID);
-  PID_clear(&motor->PosPID);
-  return CALIB_SUCCESS;
-#else  /* MT6816 or TMR3109: LUT calibration */
-  float time = (float)ctx->loop_count * CURRENT_MEASURE_PERIOD;
-  float voltage = CURRENT_MAX_CALIB * motor->parameters.Rs * 3.0f / 2.0f;
+  }
+
+  if (!EncoderCalib_HasCapability(
+          POSITION_SENSOR_CAP_LINEARITY_CALIBRATION)) {
+    if (PositionSensor_SetCalibrationValid(true) != POSITION_SENSOR_STATUS_OK) {
+      return CALIB_FAILED_INVALID_PARAMS;
+    }
+    EncoderCalib_PersistSuccess(motor);
+    EncoderCalib_ClearPidState(motor);
+    return CALIB_SUCCESS;
+  }
+
+  time = (float)ctx->loop_count * CURRENT_MEASURE_PERIOD;
+  voltage = CURRENT_MAX_CALIB * motor->parameters.Rs * 3.0f / 2.0f;
   switch (motor->state.Cs_State) {
   case CS_ENCODER_START:
-    ctx->phase_set = 0;
-    ctx->loop_count = 0;
+    ctx->phase_set = 0.0f;
+    ctx->loop_count = 0u;
     ctx->sample_count = 0;
-    ctx->next_sample_time = 0;
-    if (ctx->error_array == NULL || ctx->error_array_size == 0) {
+    ctx->next_sample_time = 0.0f;
+    if (ctx->error_array == NULL || ctx->error_array_size == 0u ||
+        ctx->offset_lut == NULL || ctx->offset_lut_size < OFFSET_LUT_NUM) {
       return CALIB_FAILED_MEMORY;
     }
+    status = PositionSensor_RawCalibrationRead(&raw);
+    if (status != POSITION_SENSOR_STATUS_OK || raw.cpr == 0u ||
+        raw.pole_pairs == 0u ||
+        (size_t)raw.pole_pairs * SAMPLES_PER_POLE_PAIR >
+            ctx->error_array_size) {
+      return CALIB_FAILED_INVALID_PARAMS;
+    }
+    if (PositionSensor_SetCalibrationValid(false) !=
+        POSITION_SENSOR_STATUS_OK) {
+      return CALIB_FAILED_INVALID_PARAMS;
+    }
     memset(ctx->error_array, 0, ctx->error_array_size * sizeof(int));
+    memset(ctx->offset_lut, 0, ctx->offset_lut_size * sizeof(int16_t));
     motor->state.Cs_State = CS_ENCODER_CW_LOOP;
     return CALIB_IN_PROGRESS;
+
   case CS_ENCODER_CW_LOOP: {
-    int total_samples = CALIB_ENC->pole_pairs * SAMPLES_PER_POLE_PAIR;
+    int total_samples;
+    status = PositionSensor_RawCalibrationRead(&raw);
+    if (status != POSITION_SENSOR_STATUS_OK || raw.cpr == 0u ||
+        raw.pole_pairs == 0u) {
+      return CALIB_FAILED_INVALID_PARAMS;
+    }
+    total_samples = (int)raw.pole_pairs * SAMPLES_PER_POLE_PAIR;
+    if ((size_t)total_samples > ctx->error_array_size) {
+      return CALIB_FAILED_MEMORY;
+    }
     if (ctx->sample_count < total_samples) {
       if (time > ctx->next_sample_time) {
+        int32_t count_ref;
         ctx->next_sample_time +=
             M_2PI / ((float)SAMPLES_PER_POLE_PAIR * CALIB_PHASE_VEL);
-        int count_ref = (int)((ctx->phase_set * ENCODER_CPR_F) /
-                              (M_2PI * (float)CALIB_ENC->pole_pairs));
-        int error = CALIB_ENC->count_in_cpr - count_ref;
-        error += ENCODER_CPR * (error < 0);
-        if (ctx->sample_count < ctx->error_array_size) {
-          ctx->error_array[ctx->sample_count] = error;
-        }
+        count_ref = (int32_t)((ctx->phase_set * (float)raw.cpr) /
+                              (M_2PI * (float)raw.pole_pairs));
+        ctx->error_array[ctx->sample_count] = EncoderCalib_WrappedError(
+            raw.count_in_cpr, count_ref, raw.cpr);
         ctx->sample_count++;
       }
       ctx->phase_set += CALIB_PHASE_VEL * CURRENT_MEASURE_PERIOD;
     } else {
       ctx->phase_set -= CALIB_PHASE_VEL * CURRENT_MEASURE_PERIOD;
-      ctx->loop_count = 0;
+      ctx->loop_count = 0u;
       ctx->sample_count--;
-      ctx->next_sample_time = 0;
+      ctx->next_sample_time = 0.0f;
       motor->state.Cs_State = CS_ENCODER_CCW_LOOP;
     }
-    Control_InjectVoltage(motor, voltage, 0, ctx->phase_set);
+    Control_InjectVoltage(motor, voltage, 0.0f, ctx->phase_set);
     ctx->loop_count++;
     return CALIB_IN_PROGRESS;
   }
-  case CS_ENCODER_CCW_LOOP: {
+
+  case CS_ENCODER_CCW_LOOP:
+    status = PositionSensor_RawCalibrationRead(&raw);
+    if (status != POSITION_SENSOR_STATUS_OK || raw.cpr == 0u ||
+        raw.pole_pairs == 0u) {
+      return CALIB_FAILED_INVALID_PARAMS;
+    }
     if (ctx->sample_count >= 0) {
       if (time > ctx->next_sample_time) {
+        int32_t count_ref;
+        int error;
+        if ((size_t)ctx->sample_count >= ctx->error_array_size) {
+          return CALIB_FAILED_MEMORY;
+        }
         ctx->next_sample_time +=
             M_2PI / ((float)SAMPLES_PER_POLE_PAIR * CALIB_PHASE_VEL);
-        int count_ref = (int)((ctx->phase_set * ENCODER_CPR_F) /
-                              (M_2PI * (float)CALIB_ENC->pole_pairs));
-        int error = CALIB_ENC->count_in_cpr - count_ref;
-        error += ENCODER_CPR * (error < 0);
-        if (ctx->sample_count < ctx->error_array_size) {
-          ctx->error_array[ctx->sample_count] =
-              (ctx->error_array[ctx->sample_count] + error) / 2;
-        }
+        count_ref = (int32_t)((ctx->phase_set * (float)raw.cpr) /
+                              (M_2PI * (float)raw.pole_pairs));
+        error = EncoderCalib_WrappedError(raw.count_in_cpr, count_ref, raw.cpr);
+        ctx->error_array[ctx->sample_count] =
+            (ctx->error_array[ctx->sample_count] + error) / 2;
         ctx->sample_count--;
       }
       ctx->phase_set -= CALIB_PHASE_VEL * CURRENT_MEASURE_PERIOD;
     } else {
-      MHAL_PWM_Brake();
+      (void)MHAL_PWM_Brake();
       motor->state.Cs_State = CS_ENCODER_END;
     }
-    Control_InjectVoltage(motor, voltage, 0, ctx->phase_set);
+    Control_InjectVoltage(motor, voltage, 0.0f, ctx->phase_set);
     ctx->loop_count++;
     return CALIB_IN_PROGRESS;
-  }
+
   case CS_ENCODER_END: {
-    // Calculate average offset
     int64_t moving_avg = 0;
-    int total_samples = CALIB_ENC->pole_pairs * SAMPLES_PER_POLE_PAIR;
-    for (int i = 0; i < total_samples; i++) {
-      if (i < ctx->error_array_size)
-        moving_avg += ctx->error_array[i];
-    }
-    CALIB_ENC->offset_counts = (int)(moving_avg / total_samples);
-    // Generate lookup table (FIR filter)
+    int32_t offset_counts;
+    int total_samples;
     int window = SAMPLES_PER_POLE_PAIR;
-    int lut_offset = 0;
-    if (ctx->error_array_size > 0)
-      lut_offset = ctx->error_array[0] * OFFSET_LUT_NUM / ENCODER_CPR;
-    for (int i = 0; i < OFFSET_LUT_NUM; i++) {
+    int lut_offset;
+
+    status = PositionSensor_RawCalibrationRead(&raw);
+    if (status != POSITION_SENSOR_STATUS_OK || raw.cpr == 0u ||
+        raw.pole_pairs == 0u) {
+      return CALIB_FAILED_INVALID_PARAMS;
+    }
+    total_samples = (int)raw.pole_pairs * SAMPLES_PER_POLE_PAIR;
+    if (total_samples <= 0 || (size_t)total_samples > ctx->error_array_size ||
+        ctx->offset_lut == NULL || ctx->offset_lut_size < OFFSET_LUT_NUM) {
+      return CALIB_FAILED_MEMORY;
+    }
+    for (int i = 0; i < total_samples; ++i) {
+      moving_avg += ctx->error_array[i];
+    }
+    offset_counts = (int32_t)(moving_avg / total_samples);
+    lut_offset =
+        (ctx->error_array[0] * (int)OFFSET_LUT_NUM) / (int32_t)raw.cpr;
+
+    for (int i = 0; i < (int)OFFSET_LUT_NUM; ++i) {
+      int lut_index;
       moving_avg = 0;
-      for (int j = (-window) / 2; j < (window) / 2; j++) {
-        int index =
-            i * CALIB_ENC->pole_pairs * SAMPLES_PER_POLE_PAIR / OFFSET_LUT_NUM + j;
-        // Boundary handling
+      for (int j = -window / 2; j < window / 2; ++j) {
+        int index = i * total_samples / (int)OFFSET_LUT_NUM + j;
         if (index < 0) {
-          index += (SAMPLES_PER_POLE_PAIR * CALIB_ENC->pole_pairs);
-        } else if (index >
-                   (SAMPLES_PER_POLE_PAIR * CALIB_ENC->pole_pairs - 1)) {
-          index -= (SAMPLES_PER_POLE_PAIR * CALIB_ENC->pole_pairs);
+          index += total_samples;
+        } else if (index >= total_samples) {
+          index -= total_samples;
         }
-        if (index < ctx->error_array_size)
-          moving_avg += ctx->error_array[index];
+        moving_avg += ctx->error_array[index];
       }
-      moving_avg = moving_avg / window;
-      int lut_index = lut_offset + i;
-      if (lut_index > (OFFSET_LUT_NUM - 1)) {
-        lut_index -= OFFSET_LUT_NUM;
-      }
-      CALIB_ENC->offset_lut[lut_index] =
-          (int16_t)(moving_avg - CALIB_ENC->offset_counts);
+      moving_avg /= window;
+      lut_index = (lut_offset + i) % (int)OFFSET_LUT_NUM;
+      ctx->offset_lut[lut_index] =
+          EncoderCalib_ClampLutValue(moving_avg - offset_counts);
+    }
+
+    status = PositionSensor_RawCalibrationCommitOffsetAndLut(
+        offset_counts, ctx->offset_lut);
+    if (status != POSITION_SENSOR_STATUS_OK) {
+      return CALIB_FAILED_INVALID_PARAMS;
     }
     motor->state.Cs_State = CS_REPORT_OFFSET_LUT;
-    ctx->loop_count = 0;
+    ctx->loop_count = 0u;
     ctx->sample_count = 0;
-    ctx->next_sample_time = 0;
+    ctx->next_sample_time = 0.0f;
     return CALIB_IN_PROGRESS;
   }
+
   case CS_REPORT_OFFSET_LUT:
-    if (ctx->sample_count < OFFSET_LUT_NUM) {
+    if (ctx->sample_count < (int)OFFSET_LUT_NUM) {
       if (time > ctx->next_sample_time) {
         ctx->next_sample_time += 0.001f;
         ctx->sample_count++;
       }
       ctx->loop_count++;
       return CALIB_IN_PROGRESS;
-    } else {
-      // Calibration fully completed
-      CALIB_ENC->calib_valid = true;
-      EncoderCalib_PersistSuccess(motor);
-      // Clear PID state
-      PID_clear(&motor->IqPID);
-      PID_clear(&motor->IdPID);
-      PID_clear(&motor->VelPID);
-      PID_clear(&motor->PosPID);
-      return CALIB_SUCCESS;
     }
+    if (PositionSensor_SetCalibrationValid(true) != POSITION_SENSOR_STATUS_OK) {
+      return CALIB_FAILED_INVALID_PARAMS;
+    }
+    EncoderCalib_PersistSuccess(motor);
+    EncoderCalib_ClearPidState(motor);
+    return CALIB_SUCCESS;
+
   default:
     return CALIB_FAILED_INVALID_PARAMS;
   }
-#endif
 }

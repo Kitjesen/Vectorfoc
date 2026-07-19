@@ -14,13 +14,14 @@
 
 /**
  * @file encoder_calibration_settings.h
- * @brief APP adapter for board-specific encoder calibration persistence.
+ * @brief APP adapter for selected-sensor calibration persistence.
  */
 #ifndef ENCODER_CALIBRATION_SETTINGS_H
 #define ENCODER_CALIBRATION_SETTINGS_H
 
 /**
- * Install the board adapter before Param_SystemInitOnce() restores Flash data.
+ * Install before Param_SystemInitOnce(). The selected PositionSensor must be
+ * initialized before Param_SystemInitOnce() invokes the restore adapter.
  */
 void EncoderCalibrationSettings_InstallAdapter(void);
 

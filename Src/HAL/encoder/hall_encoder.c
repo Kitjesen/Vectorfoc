@@ -250,8 +250,7 @@ void Hall_UpdateFromISR(void) {
     hall_data.elec_angle_rad = Hall_NormalizeAngle(raw_angle);
 
     /* 机械角度：电角度 / 极对数，累积（简化：仅跟踪电角度换算） */
-    hall_data.mec_angle_rad =
-        Hall_NormalizeAngle(hall_data.position_rad - s_position_zero_rad);
+    hall_data.mec_angle_rad = Hall_NormalizeAngle(hall_data.position_rad);
 
     /* 速度计算：机械角速度 = 电角步长 / 时间 / 极对数 */
     if (elapsed > 0 && elapsed < HALL_TIMEOUT_US) {
@@ -301,7 +300,7 @@ static void Hall_HAL_GetData(Motor_HAL_EncoderData_t *data) {
         velocity = 0.0f;
     }
     data->position_rad = position;
-    data->angle_rad = Hall_NormalizeAngle(position);
+    data->angle_rad = Hall_NormalizeAngle(snapshot.raw_position_rad);
     data->velocity_rad = velocity;
     if (snapshot.sector >= 1u && snapshot.sector <= 6u) {
         data->elec_angle =
@@ -316,7 +315,6 @@ static void Hall_HAL_GetData(Motor_HAL_EncoderData_t *data) {
 static void Hall_HAL_ZeroPosition(void) {
     Hall_Snapshot_t snapshot = Hall_ReadSnapshot();
     s_position_zero_rad = snapshot.raw_position_rad;
-    hall_data.mec_angle_rad = 0.0f;
 }
 
 static void Hall_HAL_SetOffset(float offset) {

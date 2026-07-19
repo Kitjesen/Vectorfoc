@@ -17,6 +17,7 @@
 #ifdef BOARD_XSTAR
 
 #include "board_config_xstar.h"
+#include "encoder_angle_math.h"
 #include "hal_abstraction.h"
 #include <math.h>
 #include <string.h>
@@ -112,15 +113,6 @@ static bool Abz_HAL_Update(void) {
   }
   int32_t current = (int32_t)__HAL_TIM_GET_COUNTER(&HW_ABZ_TIMER);
   int32_t delta = Abz_WrapDelta(current - abz_data.last_count, (int32_t)abz_data.cpr);
-  int32_t mechanical_counts = current - abz_data.offset_counts;
-
-  if (mechanical_counts < 0) {
-    mechanical_counts %= (int32_t)abz_data.cpr;
-    mechanical_counts += (int32_t)abz_data.cpr;
-  } else {
-    mechanical_counts %= (int32_t)abz_data.cpr;
-  }
-
   abz_data.raw_count = current;
   abz_data.count_in_cpr = current;
   abz_data.shadow_count += delta;
@@ -137,10 +129,11 @@ static bool Abz_HAL_Update(void) {
     abz_data.vel_estimate_ = 0.0f;
   }
 
-  abz_data.mec_angle_rad =
-      Abz_NormalizeAngle(((float)mechanical_counts * ABZ_2PI) / (float)abz_data.cpr);
-  abz_data.elec_angle_rad =
-      Abz_NormalizeAngle(abz_data.mec_angle_rad * (float)abz_data.pole_pairs);
+  EncoderAngleResult_t angles;
+  EncoderAngleMath_Compute(current, 0.0f, abz_data.offset_counts,
+                           abz_data.cpr, abz_data.pole_pairs, &angles);
+  abz_data.mec_angle_rad = angles.mechanical_angle_rad;
+  abz_data.elec_angle_rad = angles.electrical_angle_rad;
 
   {
     bool z_state = Abz_ReadIndexPin();

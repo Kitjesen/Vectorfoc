@@ -18,9 +18,9 @@
 #include "config.h"
 #include "control/control.h"
 #include "foc/foc_algorithm.h"
+#include "foc/math_common.h"
 #include "foc/park.h"
 #include "foc/svpwm.h"
-#include "mt6816_encoder.h"
 #include "trajectory/trap_traj.h"
 #include "torque_utils.h"
 #include "error_manager.h"
@@ -252,7 +252,7 @@ void OpenControlMode(MOTOR_DATA *motor, float target_velocity) {
   float Ts = CURRENT_MEASURE_PERIOD; // period [s]
   // angleintegral: θ(k+1) = θ(k) + ω×Ts
   //
-  motor->algo_input.theta_elec = normalize_angle(
+  motor->algo_input.theta_elec = Math_NormalizeAngle(
       motor->algo_input.theta_elec + target_velocity * Ts);
   // voltage (Vd=0, Vq=)
   //  FOC_voltage  Control_InjectVoltage

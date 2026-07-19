@@ -37,6 +37,7 @@ include_directories(
     ${PROJ_ROOT}/Src/config
     ${PROJ_ROOT}/Src/HAL/interface
     ${PROJ_ROOT}/Src/HAL/bsp
+    ${PROJ_ROOT}/Src/HAL/position_sensor
     ${PROJ_ROOT}/Lib/Core/Inc
 )
 
@@ -158,6 +159,15 @@ add_executable(test_runner_calibration
 # Provide stubs for RSLSCalib_GetProgress (referenced by CalibContext_GetProgress)
 target_compile_definitions(test_runner_calibration PRIVATE CALIB_STUB_RSLS)
 register_test_target(test_runner_calibration)
+
+# Sensor-independent direction/pole calibration boundary. In particular this
+# protects 64-bit native counts and the MOTOR_PARAMETERS pole-pair source of
+# truth consumed by the next control ISR.
+add_executable(test_runner_encoder_calibration_boundary
+    test_encoder_calibration_boundary.c
+    ${PROJ_ROOT}/Src/ALGO/motor/calib_encoder.c
+)
+register_test_target(test_runner_encoder_calibration_boundary)
 
 # LED logic tests (pure logic, no HAL)
 add_executable(test_runner_led
@@ -355,70 +365,59 @@ target_include_directories(test_runner_encoder_position PRIVATE
 )
 register_test_target(test_runner_encoder_position)
 
-# VectorFOC's SPI encoder HAL must initialize the compiled-in driver before
-# App_Init captures its first feedback sample. Build both supported sensor modes
-# against explicit test doubles so a no-op MHAL_Encoder_Init cannot regress.
-add_executable(test_runner_hal_encoder_init_mt6816
+add_executable(test_runner_encoder_angle_math
+    test_encoder_angle_math.c
+)
+target_include_directories(test_runner_encoder_angle_math PRIVATE
+    ${PROJ_ROOT}/Src/HAL/encoder
+)
+register_test_target(test_runner_encoder_angle_math)
+
+# The encoder HAL initializes the sensor through the PositionSensor selection
+# seam. Compile that real path against explicit driver test doubles so a no-op
+# adapter or a broken build-time selection cannot regress unnoticed.
+set(POSITION_SENSOR_INIT_TEST_SOURCES
     test_hal_encoder_init.c
     ${PROJ_ROOT}/Src/HAL/stm32g4/hal_encoder.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor_selection.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor_mt6816.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor_tmr3109.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor_hall.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor_abz.c
 )
-target_include_directories(test_runner_hal_encoder_init_mt6816 BEFORE PRIVATE
-    ${CMAKE_SOURCE_DIR}/encoder_init_mocks
-)
-target_compile_definitions(test_runner_hal_encoder_init_mt6816 PRIVATE
+
+function(add_hal_encoder_init_test suffix)
+    set(target "test_runner_hal_encoder_init_${suffix}")
+    add_executable(${target} ${POSITION_SENSOR_INIT_TEST_SOURCES})
+    target_include_directories(${target} BEFORE PRIVATE
+        ${CMAKE_SOURCE_DIR}/encoder_init_mocks
+        ${PROJ_ROOT}/Src/HAL/position_sensor
+    )
+    target_compile_definitions(${target} PRIVATE
+        POSITION_SENSOR_TEST_USE_DRIVERS
+        ${ARGN}
+    )
+    register_test_target(${target})
+endfunction()
+
+add_hal_encoder_init_test(mt6816
     HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_MT6816
 )
-register_test_target(test_runner_hal_encoder_init_mt6816)
-
-add_executable(test_runner_hal_encoder_init_tmr3109
-    test_hal_encoder_init.c
-    ${PROJ_ROOT}/Src/HAL/stm32g4/hal_encoder.c
-)
-target_include_directories(test_runner_hal_encoder_init_tmr3109 BEFORE PRIVATE
-    ${CMAKE_SOURCE_DIR}/encoder_init_mocks
-)
-target_compile_definitions(test_runner_hal_encoder_init_tmr3109 PRIVATE
+add_hal_encoder_init_test(tmr3109
     HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_TMR3109
 )
-register_test_target(test_runner_hal_encoder_init_tmr3109)
-
-add_executable(test_runner_hal_encoder_init_xstar_hall
-    test_hal_encoder_init.c
-    ${PROJ_ROOT}/Src/HAL/stm32g4/hal_encoder.c
-)
-target_include_directories(test_runner_hal_encoder_init_xstar_hall BEFORE PRIVATE
-    ${CMAKE_SOURCE_DIR}/encoder_init_mocks
-)
-target_compile_definitions(test_runner_hal_encoder_init_xstar_hall PRIVATE
+add_hal_encoder_init_test(xstar_hall
     BOARD_XSTAR
     HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_HALL
 )
-register_test_target(test_runner_hal_encoder_init_xstar_hall)
-
-add_executable(test_runner_hal_encoder_init_xstar_abz
-    test_hal_encoder_init.c
-    ${PROJ_ROOT}/Src/HAL/stm32g4/hal_encoder.c
-)
-target_include_directories(test_runner_hal_encoder_init_xstar_abz BEFORE PRIVATE
-    ${CMAKE_SOURCE_DIR}/encoder_init_mocks
-)
-target_compile_definitions(test_runner_hal_encoder_init_xstar_abz PRIVATE
+add_hal_encoder_init_test(xstar_abz
     BOARD_XSTAR
     HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_ABZ
 )
-register_test_target(test_runner_hal_encoder_init_xstar_abz)
-
-add_executable(test_runner_hal_encoder_init_unsupported
-    test_hal_encoder_init.c
-    ${PROJ_ROOT}/Src/HAL/stm32g4/hal_encoder.c
-)
-target_include_directories(test_runner_hal_encoder_init_unsupported BEFORE PRIVATE
-    ${CMAKE_SOURCE_DIR}/encoder_init_mocks
-)
-target_compile_definitions(test_runner_hal_encoder_init_unsupported PRIVATE
+add_hal_encoder_init_test(unsupported
     HW_POSITION_SENSOR_MODE=99u
 )
-register_test_target(test_runner_hal_encoder_init_unsupported)
 
 
 add_executable(test_runner_encoder_failure_guard
@@ -518,6 +517,15 @@ add_test(
     COMMAND ${VECTORFOC_PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test_clock_configuration.py
 )
 set_tests_properties(test_clock_configuration PROPERTIES
+    WORKING_DIRECTORY ${PROJ_ROOT}
+)
+
+add_test(
+    NAME test_position_sensor_architecture
+    COMMAND ${VECTORFOC_PYTHON_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/test_position_sensor_architecture.py
+)
+set_tests_properties(test_position_sensor_architecture PROPERTIES
     WORKING_DIRECTORY ${PROJ_ROOT}
 )
 
@@ -630,6 +638,87 @@ add_executable(test_runner_fault_injection
     ${PROJ_ROOT}/Src/ALGO/trajectory/rate_limiter.c
 )
 register_test_target(test_runner_fault_injection)
+
+# Position-sensor selection is a public, hardware-independent seam.  Compile
+# the same behavioral contract for every supported sensor and one invalid mode.
+set(POSITION_SENSOR_SELECTION_SOURCES
+    test_position_sensor_selection.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor_selection.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor_mt6816.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor_tmr3109.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor_hall.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor_abz.c
+)
+
+function(add_position_sensor_selection_test suffix mode)
+    set(target "test_runner_position_sensor_selection_${suffix}")
+    add_executable(${target} ${POSITION_SENSOR_SELECTION_SOURCES})
+    target_include_directories(${target} PRIVATE
+        ${PROJ_ROOT}/Src/HAL/position_sensor
+    )
+    target_compile_definitions(${target} PRIVATE
+        HW_POSITION_SENSOR_HALL=1u
+        HW_POSITION_SENSOR_ABZ=2u
+        HW_POSITION_SENSOR_MT6816=3u
+        HW_POSITION_SENSOR_TMR3109=4u
+        HW_POSITION_SENSOR_MODE=${mode}
+    )
+    register_test_target(${target})
+endfunction()
+
+add_position_sensor_selection_test(mt6816 HW_POSITION_SENSOR_MT6816)
+add_position_sensor_selection_test(tmr3109 HW_POSITION_SENSOR_TMR3109)
+add_position_sensor_selection_test(hall HW_POSITION_SENSOR_HALL)
+add_position_sensor_selection_test(abz HW_POSITION_SENSOR_ABZ)
+add_position_sensor_selection_test(unsupported 99u)
+
+# PositionSensor owns the real-time frame, health counters, and typed
+# maintenance boundary. A private fake adapter makes the contract executable
+# without exposing a concrete driver handle or touching host hardware.
+add_executable(test_runner_position_sensor_runtime
+    test_position_sensor_runtime.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor.c
+)
+target_include_directories(test_runner_position_sensor_runtime PRIVATE
+    ${PROJ_ROOT}/Src/HAL/position_sensor
+)
+register_test_target(test_runner_position_sensor_runtime)
+
+add_executable(test_runner_position_sensor_persistent_only
+    test_position_sensor_runtime.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor.c
+)
+target_include_directories(test_runner_position_sensor_persistent_only PRIVATE
+    ${PROJ_ROOT}/Src/HAL/position_sensor
+)
+target_compile_definitions(test_runner_position_sensor_persistent_only PRIVATE
+    POSITION_SENSOR_TEST_PERSISTENT_ONLY
+)
+register_test_target(test_runner_position_sensor_persistent_only)
+
+add_executable(test_runner_position_sensor_motor_hal
+    test_position_sensor_motor_hal.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor_motor_hal.c
+)
+target_include_directories(test_runner_position_sensor_motor_hal PRIVATE
+    ${PROJ_ROOT}/Src/HAL/position_sensor
+)
+register_test_target(test_runner_position_sensor_motor_hal)
+
+# APP persistence mapping restores Flash calibration only after the selected
+# driver has initialized and reset its runtime state.
+add_executable(test_runner_encoder_calibration_settings
+    test_encoder_calibration_settings.c
+    ${PROJ_ROOT}/Src/APP/settings/encoder_calibration_settings.c
+    ${PROJ_ROOT}/Src/UI/parameter/param_encoder_calibration.c
+    ${PROJ_ROOT}/Src/HAL/position_sensor/position_sensor.c
+)
+target_include_directories(test_runner_encoder_calibration_settings PRIVATE
+    ${PROJ_ROOT}/Src/APP/settings
+    ${PROJ_ROOT}/Src/HAL/position_sensor
+)
+register_test_target(test_runner_encoder_calibration_settings)
 
 # ===========================================================================
 # Summary

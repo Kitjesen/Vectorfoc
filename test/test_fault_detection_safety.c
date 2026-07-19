@@ -5,7 +5,9 @@
 #include "config.h"
 #include "error_types.h"
 #include "motor.h"
+#include "position_sensor.h"
 #include "fsm.h"
+#include "mock_hal_types.h"
 
 #include <assert.h>
 #include <math.h>
@@ -21,11 +23,34 @@ static uint32_t s_error_clear_domain_count;
 static uint32_t s_fault_callback_count;
 static uint32_t s_last_callback_fault_bits;
 static bool s_fault_callback_succeeds;
+static bool s_position_sensor_present = true;
+static bool s_position_sensor_initialized = true;
+static PositionSensorStatus_t s_position_sensor_health_status =
+    POSITION_SENSOR_STATUS_OK;
+static PositionSensorHealth_t s_position_sensor_health = {.valid = true};
+static const PositionSensorDescriptor_t s_position_sensor_descriptor = {
+    .name = "test-position-sensor",
+    .capabilities = POSITION_SENSOR_CAP_HEALTH,
+};
 
 #undef HAL_GetSystemTick
 uint32_t HAL_GetSystemTick(void) { return s_tick_ms; }
 uint32_t HAL_GetTick(void) { return s_tick_ms; }
 float MHAL_Encoder_GetVelocity(void) { return s_velocity; }
+const PositionSensorDescriptor_t *PositionSensor_GetDescriptor(void) {
+  return s_position_sensor_present ? &s_position_sensor_descriptor : NULL;
+}
+bool PositionSensor_IsInitialized(void) {
+  return s_position_sensor_initialized;
+}
+PositionSensorStatus_t
+PositionSensor_GetHealth(PositionSensorHealth_t *health) {
+  if (health != NULL &&
+      s_position_sensor_health_status == POSITION_SENSOR_STATUS_OK) {
+    *health = s_position_sensor_health;
+  }
+  return s_position_sensor_health_status;
+}
 uint32_t HAL_EnterCritical(void) { return 0u; }
 void HAL_ExitCritical(uint32_t previous_state) { (void)previous_state; }
 int MHAL_PWM_Enable(void) { return 0; }
@@ -59,11 +84,107 @@ static bool test_fault_callback(uint32_t fault_bits, void *motor) {
 static MOTOR_DATA make_motor(CONTROL_MODE mode) {
   MOTOR_DATA motor;
   memset(&motor, 0, sizeof(motor));
+  s_position_sensor_present = true;
+  s_position_sensor_initialized = true;
+  s_position_sensor_health_status = POSITION_SENSOR_STATUS_OK;
+  memset(&s_position_sensor_health, 0, sizeof(s_position_sensor_health));
+  s_position_sensor_health.valid = true;
   motor.state.State_Mode = STATE_MODE_IDLE;
   motor.state.Control_Mode = mode;
   motor.algo_input.Vbus = 24.0f;
   motor.feedback.temperature = 25.0f;
   return motor;
+}
+
+static void disable_unrelated_slow_checks(void) {
+  DetectionConfig *config = Detection_GetConfig();
+  config->enable_voltage_protection = false;
+  config->enable_temp_protection = false;
+  config->enable_stall_protection = false;
+  config->enable_can_timeout = false;
+}
+
+static void test_encoder_health_counters_are_consumed_without_recounting(void) {
+  MOTOR_DATA motor = make_motor(CONTROL_MODE_TORQUE);
+  Detection_Init(NULL);
+  disable_unrelated_slow_checks();
+
+  s_position_sensor_health.valid = false;
+  s_position_sensor_health.consecutive_failures =
+      FAULT_ENCODER_ERR_CONSECUTIVE_MAX - 1u;
+  s_position_sensor_health.total_failures = 41u;
+  s_position_sensor_health.transport_error_score = 37u;
+
+  assert((Detection_Check_Slow(&motor) & FAULT_ENCODER_LOSS) == 0u);
+  assert(Detection_GetState()->encoder_err_consecutive ==
+         FAULT_ENCODER_ERR_CONSECUTIVE_MAX - 1u);
+  assert(Detection_GetState()->encoder_err_count == 41u);
+
+  /* Polling the same health frame must not add another safety-layer error. */
+  assert((Detection_Check_Slow(&motor) & FAULT_ENCODER_LOSS) == 0u);
+  assert(Detection_GetState()->encoder_err_consecutive ==
+         FAULT_ENCODER_ERR_CONSECUTIVE_MAX - 1u);
+  assert(Detection_GetState()->encoder_err_count == 41u);
+
+  s_position_sensor_health.consecutive_failures =
+      FAULT_ENCODER_ERR_CONSECUTIVE_MAX;
+  s_position_sensor_health.transport_error_score = 43u;
+  assert((Detection_Check_Slow(&motor) & FAULT_ENCODER_LOSS) != 0u);
+  assert(Detection_GetState()->encoder_err_count == 43u);
+
+  s_position_sensor_health.valid = true;
+  s_position_sensor_health.consecutive_failures = 0u;
+  s_position_sensor_health.total_failures = 44u;
+  assert((Detection_Check_Slow(&motor) & FAULT_ENCODER_LOSS) == 0u);
+  assert(Detection_GetState()->encoder_err_consecutive == 0u);
+  assert(Detection_GetState()->encoder_err_count == 44u);
+}
+
+static void test_unavailable_encoder_health_uses_existing_fault_threshold(void) {
+  MOTOR_DATA motor = make_motor(CONTROL_MODE_TORQUE);
+  Detection_Init(NULL);
+  disable_unrelated_slow_checks();
+
+  s_position_sensor_present = false;
+  assert((Detection_Check_Slow(&motor) & FAULT_ENCODER_LOSS) == 0u);
+  assert(Detection_GetState()->encoder_err_consecutive == 1u);
+
+  s_position_sensor_present = true;
+  s_position_sensor_initialized = false;
+  for (uint32_t i = 2u; i < FAULT_ENCODER_ERR_CONSECUTIVE_MAX; ++i) {
+    assert((Detection_Check_Slow(&motor) & FAULT_ENCODER_LOSS) == 0u);
+    assert(Detection_GetState()->encoder_err_consecutive == i);
+  }
+
+  s_position_sensor_initialized = true;
+  s_position_sensor_health_status = POSITION_SENSOR_STATUS_IO_ERROR;
+  assert((Detection_Check_Slow(&motor) & FAULT_ENCODER_LOSS) != 0u);
+
+  s_position_sensor_health_status = POSITION_SENSOR_STATUS_OK;
+  assert((Detection_Check_Slow(&motor) & FAULT_ENCODER_LOSS) == 0u);
+  assert(Detection_GetState()->encoder_err_consecutive == 0u);
+}
+
+static void test_invalid_driver_health_without_transport_count_still_faults(void) {
+  MOTOR_DATA motor = make_motor(CONTROL_MODE_TORQUE);
+  Detection_Init(NULL);
+  disable_unrelated_slow_checks();
+
+  /* Hall/commutation validity can fail without a transport/update error. */
+  s_position_sensor_health.valid = false;
+  s_position_sensor_health.consecutive_failures = 0u;
+  s_position_sensor_health.total_failures = 0u;
+  s_position_sensor_health.transport_error_score = 0u;
+
+  for (uint32_t i = 1u; i < FAULT_ENCODER_ERR_CONSECUTIVE_MAX; ++i) {
+    assert((Detection_Check_Slow(&motor) & FAULT_ENCODER_LOSS) == 0u);
+    assert(Detection_GetState()->encoder_err_consecutive == i);
+  }
+  assert((Detection_Check_Slow(&motor) & FAULT_ENCODER_LOSS) != 0u);
+
+  s_position_sensor_health.valid = true;
+  assert((Detection_Check_Slow(&motor) & FAULT_ENCODER_LOSS) == 0u);
+  assert(Detection_GetState()->encoder_err_consecutive == 0u);
 }
 
 static void test_open_loop_keeps_electrical_and_thermal_protection(void) {
@@ -344,6 +465,9 @@ static void test_clear_faults_waits_for_final_fsm_fault_state(void) {
 }
 
 int main(void) {
+  test_encoder_health_counters_are_consumed_without_recounting();
+  test_unavailable_encoder_health_uses_existing_fault_threshold();
+  test_invalid_driver_health_without_transport_count_still_faults();
   test_open_loop_keeps_electrical_and_thermal_protection();
   test_non_finite_sensor_values_fail_safe();
   test_stall_timeout_uses_elapsed_milliseconds();

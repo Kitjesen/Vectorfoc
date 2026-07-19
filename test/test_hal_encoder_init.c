@@ -60,6 +60,12 @@ void Hall_Init(void) { s_hall_init_calls++; }
 void Abz_Init(void) { s_abz_init_calls++; }
 
 int main(void) {
+  HAL_Encoder_Interface_t unsupported_runtime_interface = {0};
+
+  /* Encoder choice is now compile-time PositionSensor configuration.  The
+   * legacy runtime-registration API must not report a registration it ignores. */
+  CHECK(MHAL_Encoder_Register(&unsupported_runtime_interface) == -1);
+
 #ifdef BOARD_XSTAR
 #if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
   CHECK(MHAL_Encoder_Init() == 0);

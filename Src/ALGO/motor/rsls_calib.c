@@ -16,13 +16,7 @@
 #include "calib_encoder.h"
 #include "calib_inductance.h"
 #include "calib_resistance.h"
-#include "config.h"   // 间接包含 board_config.h → HW_POSITION_SENSOR_MODE
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
-#include "mt6816_encoder.h"
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-#include "tmr3109_encoder.h"
-#endif
-#include <malloc.h>
+#include "position_sensor.h"
 #include <string.h>
 
 /**
@@ -36,15 +30,31 @@
  * @brief Initialize Rs/Ls calibration
  */
 CalibResult RSLSCalib_Start(MOTOR_DATA *motor, CalibrationContext *ctx) {
+  int *error_array;
+  size_t error_array_size;
+  int16_t *offset_lut;
+  size_t offset_lut_size;
+  const PositionSensorDescriptor_t *sensor;
+
   if (motor == NULL || ctx == NULL) {
     return CALIB_FAILED_INVALID_PARAMS;
   }
+
+  /* Preserve the preallocated workspaces while resetting transient state. */
+  error_array = ctx->encoder.error_array;
+  error_array_size = ctx->encoder.error_array_size;
+  offset_lut = ctx->encoder.offset_lut;
+  offset_lut_size = ctx->encoder.offset_lut_size;
 
   // Reset all sub-contexts
   memset(&ctx->resistance, 0, sizeof(ResistanceCalibContext));
   memset(&ctx->inductance, 0, sizeof(InductanceCalibContext));
   memset(&ctx->dir_pole, 0, sizeof(DirectionPoleCalibContext));
   memset(&ctx->encoder, 0, sizeof(EncoderCalibContext));
+  ctx->encoder.error_array = error_array;
+  ctx->encoder.error_array_size = error_array_size;
+  ctx->encoder.offset_lut = offset_lut;
+  ctx->encoder.offset_lut_size = offset_lut_size;
 
   // Initialize constants (Resistance)
   ctx->resistance.kI = 2.0f;
@@ -53,16 +63,15 @@ CalibResult RSLSCalib_Start(MOTOR_DATA *motor, CalibrationContext *ctx) {
   ctx->inductance.voltages[0] = -VOLTAGE_MAX_CALIB;
   ctx->inductance.voltages[1] = +VOLTAGE_MAX_CALIB;
 
-  // MT6816 需要设置初始旋转方向；Hall/ABZ 不需要
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
-  MT6816_Handle_t *enc = (MT6816_Handle_t *)motor->components.encoder;
-  enc->dir = MT6816_DIR_CW;
-  MT6816_RebaseTracking(enc);
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  TMR3109_Handle_t *enc = (TMR3109_Handle_t *)motor->components.encoder;
-  enc->dir = TMR3109_DIR_CW;
-  TMR3109_RebaseTracking(enc);
-#endif
+  sensor = PositionSensor_GetDescriptor();
+  if (sensor == NULL) {
+    return CALIB_FAILED_INVALID_PARAMS;
+  }
+  if ((sensor->capabilities & POSITION_SENSOR_CAP_RAW_DIRECTION_POLE) != 0u &&
+      PositionSensor_RawCalibrationPrepareClockwise() !=
+          POSITION_SENSOR_STATUS_OK) {
+    return CALIB_FAILED_INVALID_PARAMS;
+  }
 
   // State machine starting point
   motor->state.Cs_State = CS_MOTOR_R_START;

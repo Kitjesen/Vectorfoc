@@ -14,6 +14,7 @@
 
 #ifndef BOARD_XSTAR
 #include "mt6816_encoder.h"
+#include "encoder_angle_math.h"
 #include "board_config.h"
 #include "common.h"
 #include "config.h"
@@ -280,24 +281,13 @@ void GetMotor_Angle(MT6816_Handle_t *encoder, float dt) {
   // Single turn position
   encoder->pos_cpr_ = encoder->pos_cpr_counts_ / MT6816_CPR_F;
   /* === 7. Electrical & Mechanical Angles === */
-  // Compute corrected integer count
-  int32_t corrected_enc = encoder->count_in_cpr - encoder->offset_counts;
-  // Wrap
-  while (corrected_enc < 0)
-    corrected_enc += MT6816_CPR;
-  while (corrected_enc >= MT6816_CPR)
-    corrected_enc -= MT6816_CPR;
-  // Add interpolation for smoothness
-  float interpolated_enc =
-      (float)corrected_enc +
-      encoder->interpolation_; // - 0.5f if we want center alignment?
-  float elec_rad_per_enc = encoder->pole_pairs * M_2PI * (1.0f / MT6816_CPR_F);
-  // Electrical Angle
-  encoder->phase_ = wrap_pm_pi(elec_rad_per_enc * interpolated_enc);
-  encoder->elec_angle_rad = encoder->phase_;
-  // Mechanical Angle [0, 2PI)
-  encoder->mec_angle_rad =
-      normalize_angle(interpolated_enc * (M_2PI / MT6816_CPR_F));
+  EncoderAngleResult_t angles;
+  EncoderAngleMath_Compute(encoder->count_in_cpr, encoder->interpolation_,
+                           encoder->offset_counts, MT6816_CPR,
+                           encoder->pole_pairs, &angles);
+  encoder->phase_ = angles.electrical_angle_rad;
+  encoder->elec_angle_rad = angles.electrical_angle_rad;
+  encoder->mec_angle_rad = angles.mechanical_angle_rad;
 }
 /* ============================================================================
  * Private Function Implementation

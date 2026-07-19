@@ -51,6 +51,7 @@
 #ifndef BOARD_XSTAR   /* 仅 VectorFOC 板编译，X-STAR 不使用本驱动 */
 
 #include "tmr3109_encoder.h"
+#include "encoder_angle_math.h"
 #include "board_config.h"
 #include "common.h"
 #include "config.h"
@@ -112,7 +113,6 @@ static inline void tmr3109_cs_low(TMR3109_Handle_t *enc);
 static inline void tmr3109_cs_high(TMR3109_Handle_t *enc);
 static bool        tmr3109_read_raw(TMR3109_Handle_t *enc);
 static bool        tmr3109_crc4_check(uint32_t angle23, uint8_t crc_rx);
-static float       tmr3109_normalize_angle(float angle);
 
 /* ============================================================================
    公共函数实现
@@ -301,17 +301,13 @@ void TMR3109_ProcessAngle(TMR3109_Handle_t *enc, float dt)
     enc->pos_cpr_      = enc->pos_cpr_counts_      / TMR3109_CPR_F;
 
     /* ── 步骤 7：电角度与机械角度 ──────────────────────────────────────── */
-    int32_t corrected = enc->count_in_cpr - enc->offset_counts;
-    while (corrected < 0)                    corrected += (int32_t)TMR3109_CPR;
-    while (corrected >= (int32_t)TMR3109_CPR) corrected -= (int32_t)TMR3109_CPR;
-
-    float interp_enc = (float)corrected + enc->interpolation_;
-
-    float elec_rad_per_enc = (float)enc->pole_pairs * M_2PI / TMR3109_CPR_F;
-
-    enc->phase_         = wrap_pm_pi(elec_rad_per_enc * interp_enc);
-    enc->elec_angle_rad = enc->phase_;
-    enc->mec_angle_rad  = tmr3109_normalize_angle(interp_enc * (M_2PI / TMR3109_CPR_F));
+    EncoderAngleResult_t angles;
+    EncoderAngleMath_Compute(enc->count_in_cpr, enc->interpolation_,
+                             enc->offset_counts, TMR3109_CPR,
+                             enc->pole_pairs, &angles);
+    enc->phase_         = angles.electrical_angle_rad;
+    enc->elec_angle_rad = angles.electrical_angle_rad;
+    enc->mec_angle_rad  = angles.mechanical_angle_rad;
 }
 
 /* ============================================================================
@@ -439,15 +435,6 @@ static bool tmr3109_read_raw(TMR3109_Handle_t *enc)
     enc->raw_angle   = angle23;
     enc->last_status = TMR3109_OK;
     return true;
-}
-
-/**
- * @brief 将角度归一化到 [0, 2π)
- */
-static float tmr3109_normalize_angle(float angle)
-{
-    float a = fmodf(angle, M_2PI);
-    return (a >= 0.0f) ? a : (a + M_2PI);
 }
 
 #endif /* HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109 */

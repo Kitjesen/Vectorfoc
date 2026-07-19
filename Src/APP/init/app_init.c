@@ -22,8 +22,6 @@
 #include "board_config.h"
 #include "bsp_adc.h"
 #ifdef BOARD_XSTAR
-#include "hall_encoder.h"
-#include "abz_encoder.h"
 #include "xstar_bsp.h"
 #endif
 #include "bsp_init.h"
@@ -123,6 +121,13 @@ void App_Init(void) {
     Error_Handler();
   }
   EncoderCalibrationSettings_InstallAdapter();
+  /* Initialize the selected sensor before Flash restoration. Concrete driver
+   * init resets its runtime calibration fields; restoring afterwards avoids a
+   * second 258-byte pending LUT copy in scarce main SRAM. */
+  if (MHAL_Encoder_Init() != 0) {
+    ERROR_REPORT(ERROR_MOTOR_ENCODER_SPI, "Encoder init failed");
+    Error_Handler();
+  }
   Param_SystemInitOnce();
   if (!adc_bsp_init()) {
     ERROR_REPORT(ERROR_HW_ADC_INIT, "ADC startup failed");
@@ -140,10 +145,6 @@ void App_Init(void) {
   s_current_offsets_ready = true;
   MHAL_PWM_Disable();
 
-  if (MHAL_Encoder_Init() != 0) {
-    ERROR_REPORT(ERROR_MOTOR_ENCODER_SPI, "Encoder init failed");
-    Error_Handler();
-  }
   if (RuntimeSettings_ApplyEncoderOffset() != 0) {
     ERROR_REPORT(ERROR_MOTOR_ENCODER_SPI, "Encoder offset restore failed");
   }
@@ -164,9 +165,9 @@ void App_Init(void) {
   Init_Motor_No_Calib(&motor_data);
   MHAL_PWM_Disable();
   /*
-   * Parameter storage is intentionally initialized before the encoder,
-   * protocol and motor runtime exist.  Install the APP adapter only now, then
-   * replay the persisted values once every target module is ready.
+   * Parameter storage and the position sensor are ready, while protocol and
+   * motor runtime were intentionally deferred. Install the remaining APP
+   * adapter now, then replay values whose consumers are finally available.
    */
   RuntimeSettings_InstallAdapter();
   Param_ApplyRuntimeState();

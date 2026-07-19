@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "motor.h"
+#include "mock_hal_types.h"
 #include "motor_hal_api.h"
 #include "fsm.h"
 #include <assert.h>

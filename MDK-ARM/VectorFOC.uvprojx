@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32G431xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Lib/Core/Inc;../Lib/Drivers/STM32G4xx_HAL_Driver/Inc;../Lib/Drivers/STM32G4xx_HAL_Driver/Inc/Legacy;../Lib/Drivers/CMSIS/Device/ST/STM32G4xx/Include;../Lib/Drivers/CMSIS/Include;../Lib/Middlewares/ST/ARM/DSP/Inc;../Lib/USB_Device/App;../Lib/USB_Device/Target;../Lib/Middlewares/ST/STM32_USB_Device_Library/Core/Inc;../Lib/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc;../Src/config;../Src/APP;../Src/APP/init;../Src/APP/rtos;../Src/APP/isr;../Src/HAL/interface;../Src/HAL/stm32g4;../Src/HAL/bsp;../Src/HAL/encoder;../Src/ALGO;../Src/ALGO/motor;../Src/ALGO/control;../Src/ALGO/foc;../Src/ALGO/pid;../Src/ALGO/observer;../Src/ALGO/trajectory;../Src/COMM;../Src/COMM/manager;../Src/COMM/executor;../Src/COMM/protocol;../Src/COMM/protocol/canopen;../Src/COMM/protocol/vector;../Src/COMM/protocol/mit;../Src/COMM/transport;../Src/UI;../Src/UI/parameter;../Src/UI/led;../Src/UI/vofa;../Src/UI/error;../Lib/Middlewares/Third_Party/FreeRTOS/Source/include;../Lib/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS;../Lib/Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F</IncludePath>
+              <IncludePath>../Lib/Core/Inc;../Lib/Drivers/STM32G4xx_HAL_Driver/Inc;../Lib/Drivers/STM32G4xx_HAL_Driver/Inc/Legacy;../Lib/Drivers/CMSIS/Device/ST/STM32G4xx/Include;../Lib/Drivers/CMSIS/Include;../Lib/Middlewares/ST/ARM/DSP/Inc;../Lib/USB_Device/App;../Lib/USB_Device/Target;../Lib/Middlewares/ST/STM32_USB_Device_Library/Core/Inc;../Lib/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc;../Src/config;../Src/APP;../Src/APP/init;../Src/APP/rtos;../Src/APP/isr;../Src/HAL/interface;../Src/HAL/stm32g4;../Src/HAL/bsp;../Src/HAL/encoder;../Src/HAL/position_sensor;../Src/ALGO;../Src/ALGO/motor;../Src/ALGO/control;../Src/ALGO/foc;../Src/ALGO/pid;../Src/ALGO/observer;../Src/ALGO/trajectory;../Src/COMM;../Src/COMM/manager;../Src/COMM/executor;../Src/COMM/protocol;../Src/COMM/protocol/canopen;../Src/COMM/protocol/vector;../Src/COMM/protocol/mit;../Src/COMM/transport;../Src/UI;../Src/UI/parameter;../Src/UI/led;../Src/UI/vofa;../Src/UI/error;../Lib/Middlewares/Third_Party/FreeRTOS/Source/include;../Lib/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS;../Lib/Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -1974,6 +1974,41 @@
               <FileName>tmr3109_encoder.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\HAL\encoder\tmr3109_encoder.c</FilePath>
+            </File>
+            <File>
+              <FileName>position_sensor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\HAL\position_sensor\position_sensor.c</FilePath>
+            </File>
+            <File>
+              <FileName>position_sensor_selection.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\HAL\position_sensor\position_sensor_selection.c</FilePath>
+            </File>
+            <File>
+              <FileName>position_sensor_mt6816.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\HAL\position_sensor\position_sensor_mt6816.c</FilePath>
+            </File>
+            <File>
+              <FileName>position_sensor_tmr3109.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\HAL\position_sensor\position_sensor_tmr3109.c</FilePath>
+            </File>
+            <File>
+              <FileName>position_sensor_hall.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\HAL\position_sensor\position_sensor_hall.c</FilePath>
+            </File>
+            <File>
+              <FileName>position_sensor_abz.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\HAL\position_sensor\position_sensor_abz.c</FilePath>
+            </File>
+            <File>
+              <FileName>position_sensor_motor_hal.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\HAL\position_sensor\position_sensor_motor_hal.c</FilePath>
             </File>
             <File>
               <FileName>hal_abstraction.c</FileName>

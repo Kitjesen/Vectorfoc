@@ -71,7 +71,9 @@ typedef struct {
   float (*get_offset)(void);
 } HAL_Encoder_Interface_t;
 /**
- * @brief encoder
+ * @brief Deprecated runtime registration entry; always returns -1.
+ *
+ * Select an encoder through the PositionSensor board/build configuration.
  */
 int MHAL_Encoder_Register(const HAL_Encoder_Interface_t *interface);
 int MHAL_Encoder_Init(void);

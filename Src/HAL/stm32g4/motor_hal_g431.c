@@ -18,15 +18,9 @@
 #include "config.h"
 #include "board_config.h"
 #include "motor_hal_api.h"
+#include "position_sensor_motor_hal.h"
 #include "hal_abstraction.h" // For HAL_GetTemperature()
 #include <math.h>
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-#include "tmr3109_encoder.h"
-extern TMR3109_Handle_t tmr3109_encoder_data;
-#else
-#include "mt6816_encoder.h"
-extern MT6816_Handle_t encoder_data;
-#endif
 extern CURRENT_DATA current_data;
 /* ============================================================================
  * PWM Interface Implementation
@@ -187,100 +181,12 @@ static bool G431_ADC_CalibrateOffsets(void) {
 static const Motor_HAL_AdcInterface_t g431_adc = {
     .update = G431_ADC_Update, .calibrate_offsets = G431_ADC_CalibrateOffsets};
 /* ============================================================================
- * Encoder Interface Implementation
- * ============================================================================
- */
-static bool G431_Encoder_Update(void) {
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  return TMR3109_Update(&tmr3109_encoder_data, CURRENT_MEASURE_PERIOD) ==
-         TMR3109_OK;
-#else
-  return MT6816_Update(&encoder_data, CURRENT_MEASURE_PERIOD) == MT6816_OK;
-#endif
-}
-static void G431_Encoder_GetData(Motor_HAL_EncoderData_t *data) {
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  data->position_rad = tmr3109_encoder_data.pos_estimate_ * M_2PI;
-  data->angle_rad    = tmr3109_encoder_data.mec_angle_rad;
-  data->velocity_rad = tmr3109_encoder_data.velocity_rad_s;
-  data->elec_angle   = tmr3109_encoder_data.elec_angle_rad;
-  data->raw_value    = (int32_t)tmr3109_encoder_data.raw_angle;
-#else
-  data->position_rad = encoder_data.pos_estimate_ * M_2PI;
-  data->angle_rad    = encoder_data.mec_angle_rad;
-  data->velocity_rad = encoder_data.velocity_rad_s;
-  data->elec_angle   = encoder_data.elec_angle_rad;
-  data->raw_value    = encoder_data.raw_angle;
-#endif
-}
-
-static void G431_Encoder_SetPolePairs(uint8_t pole_pairs) {
-  if (pole_pairs == 0u) {
-    return;
-  }
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  tmr3109_encoder_data.pole_pairs = pole_pairs;
-#else
-  encoder_data.pole_pairs = pole_pairs;
-#endif
-}
-
-static void G431_Encoder_ZeroPosition(void) {
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  TMR3109_ResetCount(&tmr3109_encoder_data);
-#else
-  MT6816_ResetCount(&encoder_data);
-#endif
-}
-
-static void G431_Encoder_SetOffset(float offset) {
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  uint8_t pole_pairs =
-      tmr3109_encoder_data.pole_pairs == 0u ? 1u
-                                           : tmr3109_encoder_data.pole_pairs;
-  float mechanical_turns = offset / (M_2PI * (float)pole_pairs);
-  tmr3109_encoder_data.offset_rev = mechanical_turns;
-  tmr3109_encoder_data.offset_counts =
-      (int32_t)lroundf(mechanical_turns * TMR3109_CPR_F);
-#else
-  uint8_t pole_pairs =
-      encoder_data.pole_pairs == 0u ? 1u : encoder_data.pole_pairs;
-  float mechanical_turns = offset / (M_2PI * (float)pole_pairs);
-  encoder_data.offset_rev = mechanical_turns;
-  encoder_data.offset_counts =
-      (int32_t)lroundf(mechanical_turns * MT6816_CPR_F);
-#endif
-}
-
-static float G431_Encoder_GetOffset(void) {
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  uint8_t pole_pairs =
-      tmr3109_encoder_data.pole_pairs == 0u ? 1u
-                                           : tmr3109_encoder_data.pole_pairs;
-  return ((float)tmr3109_encoder_data.offset_counts * M_2PI *
-          (float)pole_pairs) /
-         TMR3109_CPR_F;
-#else
-  uint8_t pole_pairs =
-      encoder_data.pole_pairs == 0u ? 1u : encoder_data.pole_pairs;
-  return ((float)encoder_data.offset_counts * M_2PI * (float)pole_pairs) /
-         MT6816_CPR_F;
-#endif
-}
-
-static const Motor_HAL_EncoderInterface_t g431_encoder = {
-    .update = G431_Encoder_Update,
-    .get_data = G431_Encoder_GetData,
-    .set_pole_pairs = G431_Encoder_SetPolePairs,
-    .zero_position = G431_Encoder_ZeroPosition,
-    .set_offset = G431_Encoder_SetOffset,
-    .get_offset = G431_Encoder_GetOffset,
-};
-/* ============================================================================
  * Main Handle Construction
  * ============================================================================
  */
 Motor_HAL_Handle_t g431_hal_handle = {
-    .pwm = &g431_pwm, .adc = &g431_adc, .encoder = &g431_encoder};
+    .pwm = &g431_pwm,
+    .adc = &g431_adc,
+    .encoder = &g_position_sensor_motor_hal_interface};
 
 #endif /* BOARD_XSTAR */

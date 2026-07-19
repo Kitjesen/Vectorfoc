@@ -11,6 +11,12 @@
 - `test_runner_fault_injection`：使用确定性伪随机 ADC 电流噪声，而不是空实现的“噪声开关”；检查噪声下电流、速度、PWM 和 d/q 轴状态的边界。
 - `test_runner_foc_state`：真实 `MotorStateTask` 的运行、故障去使能和电流标定路径。
 - `test_runner_foc_readiness_gate`：真实 ADC injected callback 在初始化完成前不得触碰 ADC 更新、编码器、安全、控制器、observer、PWM 或心跳路径；ready 后才进入该运行路径；X-STAR-S 分支还验证 ADC2 未完成、错误和陈旧完成标记都会拒绝样本。
+- `test_runner_position_sensor_runtime`：PositionSensor 的初始化前操作拒绝、初始化后校准恢复、last sample、failure counters、typed raw-calibration 和参数校验。
+- `test_runner_position_sensor_persistent_only`：没有 raw/LUT 能力的持久化 valid 状态路径，覆盖 Hall/ABZ 类 adapter 语义。
+- `test_runner_position_sensor_motor_hal`：旧 `Motor_HAL_EncoderInterface_t` 兼容层的数据映射和极对数缓存，包含 1 极对数首次下发回归。
+- `test_runner_position_sensor_selection_*`：MT6816、TMR3109、Hall、ABZ 和非法模式的 adapter selection。
+- `test_position_sensor_architecture`：静态扫描 ALGO/APP/SAFE，阻止具体传感器型号、具体 encoder 头文件或 `HW_POSITION_SENSOR_MODE` 分支重新泄漏到上层。
+- `test_runner_encoder_angle_math`：机械角和电角度的纯函数边界，覆盖“电气 offset 不能污染机械角”的回归。
 - `test_runner_app_freertos_runtime_stats`：调度器未启动、任务句柄不完整和三个核心任务就绪三种场景下，验证任务栈高水位诊断的安全返回与采样值。
 - `test_runner_adc_shared_irq`：ADC1/ADC2 共用 IRQ 时，只分发 pending 且已启用中断源的 ADC handle。
 - `test_runner_fsm_safety`：验证 PWM HAL 调用不在全局 critical section 内执行，并覆盖 PWM 过渡时故障的直接桥臂关断。
@@ -18,6 +24,8 @@
 - `test_clock_configuration`：检查 8 MHz HSE、PLL 注释和构建期 `HSE_VALUE` 宏保持一致。
 
 这些测试能证明主机模型和选定的真实 C 入口在其 mock 边界内工作，不能证明实际 MOSFET、电流采样、编码器、USB CDC、CAN 仲裁或实时调度已经在板上通过。
+
+当前注册 66 个 CTest 测试；本次 PositionSensor 模块化改造已执行完整套件并通过 66/66。后续修改仍应重新运行完整命令，不能只用 `ctest -N` 的注册清单代替执行结果。
 
 ## 运行方式
 
@@ -64,6 +72,7 @@ python ../test/analyze_results.py foc_setpoint_switch.csv
 
 - 三相缺相、栅极/PWM 卡死、实际过流和母线浪涌；
 - 编码器断线、冻结、跳变和磁干扰；
+- MT6816/TMR3109/Hall/ABZ 在真实线束、真实磁场和真实噪声下的首帧 ready、CRC/状态位、速度估计和校准 LUT 效果；
 - 真实 ADC 饱和、ADC1/ADC2 触发相位、采样时序漂移、DMA/中断延迟；
 - PWM 使能/去使能的最坏延迟与故障到桥臂实际关断的硬件时序；
 - CAN 总线拥塞、仲裁丢失、物理 TX abort 和 USB CDC 断连/重连；

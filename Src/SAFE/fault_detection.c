@@ -16,17 +16,7 @@
 #include "hal_abstraction.h"
 #include "hal_encoder.h"
 #include "motor.h"
-#include "platform.h"
-#include "config.h"   // 间接包含 board_config.h → HW_POSITION_SENSOR_MODE
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL || \
-    HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
-#include "hall_encoder.h"
-#include "abz_encoder.h"
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-#include "tmr3109_encoder.h"
-#else
-#include "mt6816_encoder.h"
-#endif
+#include "position_sensor.h"
 #include <math.h>
 static DetectionConfig s_config;
 static DetectionState s_state = {0};
@@ -223,7 +213,10 @@ static inline uint32_t Detection_CheckCANTimeout(MOTOR_DATA *m) {
  * @return fault（）
  */
 static inline uint32_t Detection_CheckEncoder(MOTOR_DATA *m) {
-  if (m == NULL || m->components.encoder == NULL) {
+  PositionSensorHealth_t health;
+  PositionSensorStatus_t status;
+
+  if (m == NULL) {
     return FAULT_NONE;
   }
   /* Open-loop mode does not use encoder — suppress encoder fault */
@@ -231,54 +224,54 @@ static inline uint32_t Detection_CheckEncoder(MOTOR_DATA *m) {
     s_state.encoder_err_consecutive = 0;
     return FAULT_NONE;
   }
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-  if (!Hall_IsSignalValid()) {
+
+  /* PositionSensor already counts failed real-time updates.  Consume its
+   * snapshot directly so the 200 Hz safety poll cannot count the same failed
+   * frame again.  total_failures and the driver-specific transport score can
+   * overlap, therefore use the larger value rather than summing them. */
+  status = (PositionSensor_GetDescriptor() != NULL &&
+            PositionSensor_IsInitialized())
+               ? PositionSensor_GetHealth(&health)
+               : POSITION_SENSOR_STATUS_NOT_INITIALIZED;
+  if (status == POSITION_SENSOR_STATUS_OK) {
+    uint32_t reported_total =
+        health.total_failures > health.transport_error_score
+            ? health.total_failures
+            : health.transport_error_score;
+    if (health.valid) {
+      s_state.encoder_err_consecutive = 0u;
+    } else if (health.consecutive_failures > 0u) {
+      s_state.encoder_err_consecutive = health.consecutive_failures;
+    } else {
+      /* A commutation/signal-validity failure (notably Hall) may have no
+       * transport counter. In that case each slow health sample is the only
+       * observable failure event, so retain the legacy debounce locally. */
+      if (s_state.encoder_err_consecutive < UINT32_MAX) {
+        s_state.encoder_err_consecutive++;
+      }
+      if (s_state.encoder_err_count < UINT32_MAX) {
+        s_state.encoder_err_count++;
+      }
+    }
+    if (reported_total > s_state.encoder_err_count) {
+      s_state.encoder_err_count = reported_total;
+    }
+  } else {
+    /* A missing/uninitialized adapter has no module-owned counter to consume.
+     * Count one unavailable health sample per slow safety cycle, preserving the
+     * existing consecutive threshold and recovery behavior. */
     if (s_state.encoder_err_consecutive < 0xFFFFFFFFu) {
       s_state.encoder_err_consecutive++;
     }
-  } else {
-    s_state.encoder_err_consecutive = 0;
+    if (s_state.encoder_err_count < 0xFFFFFFFFu) {
+      s_state.encoder_err_count++;
+    }
   }
-  s_state.encoder_err_count = s_state.encoder_err_consecutive;
+
   if (s_state.encoder_err_consecutive >= FAULT_ENCODER_ERR_CONSECUTIVE_MAX) {
     return FAULT_ENCODER_LOSS;
   }
   return FAULT_NONE;
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
-  (void)m;
-  s_state.encoder_err_consecutive = 0;
-  s_state.encoder_err_count = 0;
-  return FAULT_NONE;
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  TMR3109_Handle_t *enc = ENC(m);
-  if (enc->last_status != TMR3109_OK) {
-    if (s_state.encoder_err_consecutive < 0xFFFFFFFFu) {
-      s_state.encoder_err_consecutive++;
-    }
-  } else {
-    s_state.encoder_err_consecutive = 0;
-  }
-  s_state.encoder_err_count =
-      enc->spi_err_count + enc->crc_err_count + enc->chip_err_count;
-  if (s_state.encoder_err_consecutive >= FAULT_ENCODER_ERR_CONSECUTIVE_MAX) {
-    return FAULT_ENCODER_LOSS;
-  }
-  return FAULT_NONE;
-#else  /* HW_POSITION_SENSOR_MT6816 */
-  MT6816_Handle_t *enc = ENC(m);
-  if (enc->last_status != MT6816_OK) {
-    if (s_state.encoder_err_consecutive < 0xFFFFFFFFu) {
-      s_state.encoder_err_consecutive++;
-    }
-  } else {
-    s_state.encoder_err_consecutive = 0;
-  }
-  s_state.encoder_err_count = enc->rx_err_count + enc->check_err_count;
-  if (s_state.encoder_err_consecutive >= FAULT_ENCODER_ERR_CONSECUTIVE_MAX) {
-    return FAULT_ENCODER_LOSS;
-  }
-  return FAULT_NONE;
-#endif
 }
 /**
  * @brief fault
@@ -362,13 +355,13 @@ void Detection_FeedWatchdog(uint32_t timestamp) {
 }
 void Detection_SetCANTimeout(uint32_t timeout_ms) {
   uint32_t now_ms = HAL_GetSystemTick();
-  CRITICAL_SECTION_BEGIN();
+  uint32_t critical_state = HAL_EnterCritical();
   s_config.enable_can_timeout = false;
   s_config.can_timeout_ms = timeout_ms;
   s_can_timeout_armed = false;
   s_state.is_can_timeout = false;
   s_state.last_can_time = now_ms;
   s_config.enable_can_timeout = timeout_ms > 0U;
-  CRITICAL_SECTION_END();
+  HAL_ExitCritical(critical_state);
 }
 DetectionConfig *Detection_GetConfig(void) { return &s_config; }

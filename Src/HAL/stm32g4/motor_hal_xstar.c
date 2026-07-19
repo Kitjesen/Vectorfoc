@@ -28,8 +28,7 @@
 #include "bsp_dwt.h"
 #include "config.h"
 #include "motor_hal_api.h"
-#include "hall_encoder.h"
-#include "abz_encoder.h"
+#include "position_sensor_motor_hal.h"
 #include "motor_adc.h"       /* current_data */
 #include "hal_abstraction.h" /* HAL_GetSystemTick() */
 #include <math.h>
@@ -205,28 +204,12 @@ static const Motor_HAL_AdcInterface_t xstar_adc = {
 };
 
 /* ==========================================================================
-   编码器接口（转接到 hall_encoder.c）
-   ========================================================================== */
-
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-extern const Motor_HAL_EncoderInterface_t g_hall_encoder_interface;
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
-extern const Motor_HAL_EncoderInterface_t g_abz_encoder_interface;
-#else
-#error "Unsupported X-STAR position sensor mode"
-#endif
-
-/* ==========================================================================
    主 HAL Handle（注册给 motor_data）
    ========================================================================== */
 Motor_HAL_Handle_t xstar_hal_handle = {
     .pwm     = &xstar_pwm,
     .adc     = &xstar_adc,
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-    .encoder = &g_hall_encoder_interface,
-#else
-    .encoder = &g_abz_encoder_interface,
-#endif
+    .encoder = &g_position_sensor_motor_hal_interface,
 };
 
 #endif /* BOARD_XSTAR */

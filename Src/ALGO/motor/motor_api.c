@@ -63,7 +63,6 @@ void Init_Motor_No_Calib(MOTOR_DATA *motor) {
   motor->params_updated = true;
 }
 void Init_Motor_Calib(MOTOR_DATA *motor) {
-  // motor->components.encoder->calib_valid = false;
   motor->state.Sub_State =
       RSLS_CALIBRATING; //  Rs/Ls//pole pairs/encodercalibration
   motor->state.Cs_State = CS_MOTOR_R_START; //

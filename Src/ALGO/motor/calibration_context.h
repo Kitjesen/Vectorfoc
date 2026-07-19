@@ -17,6 +17,7 @@
 
 #include "common.h"
 #include "config.h"
+#include "position_sensor.h"
 
 /**
  * @file calibration_context.h
@@ -82,7 +83,7 @@ typedef struct {
 typedef struct {
   uint32_t loop_count; // Loop counter
   float phase_set;     // Current electrical angle setpoint
-  float start_count;   // Start encoder count
+  int64_t start_count; // Start encoder count (23-bit sensors exceed float precision)
   float voltage;       // Test voltage
 } DirectionPoleCalibContext;
 
@@ -100,9 +101,12 @@ typedef struct {
   float next_sample_time;  // Next sampling timestamp
 #ifdef TEST_ENV
   int error_array_storage[SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS];
+  int16_t offset_lut_storage[POSITION_SENSOR_CALIBRATION_LUT_SIZE];
 #endif
-  int *error_array;        // Shared hardware calibration workspace
-  size_t error_array_size; // Array size
+  int *error_array;         // Shared hardware calibration workspace
+  size_t error_array_size;  // Error workspace element count
+  int16_t *offset_lut;      // Shared linearity LUT staging workspace
+  size_t offset_lut_size;   // LUT workspace element count
 } EncoderCalibContext;
 
 //=============================================================================

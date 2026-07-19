@@ -13,7 +13,7 @@ VectorFOC 是基于 STM32G431 的无刷电机 FOC 固件。它面向电机控制
 | FOC 算法 | `Src/ALGO/foc/` | Clarke/Park、SVPWM、三角函数、FOC 电流环 |
 | 控制器 | `Src/ALGO/control/`, `Src/ALGO/pid/`, `Src/ALGO/trajectory/` | PID、LADRC、前馈、弱磁、限幅、梯形轨迹、速率限制 |
 | 电机状态与标定 | `Src/ALGO/motor/` | DS402 风格状态机、Rs/Ls/flux/编码器标定上下文；PWM HAL 操作在短 critical section 外执行，过渡期故障直接关闭桥臂输出 |
-| 传感器与板级抽象 | `Src/HAL/`, `Src/config/` | VectorFOC 与 X-STAR-S 两套板级配置，MT6816/TMR3109/Hall/ABZ 路由；Vector SPI 编码器在启动期按编译选择调用具体驱动初始化 |
+| 传感器与板级抽象 | `Src/HAL/`, `Src/config/` | VectorFOC 与 X-STAR-S 两套板级配置；MT6816/TMR3109/Hall/ABZ 经 `Src/HAL/position_sensor/` 统一为可替换 PositionSensor adapter，上层只使用 typed API 和能力标记 |
 | 通信 | `Src/COMM/`, `Src/UI/vofa/`, `Src/APP/init/app_comm_bootstrap.*` | Vector/Inovxio、MIT、CANopen 风格帧，USB CDC 文本命令；启动边界按 CAN、transport、protocol、safety callback 的固定顺序组合；Vector GET_ID 仅接受扩展帧、CANopen STOP 只接受 NMT；控制指令经统一 executor 原子发布；重启/进入 Bootloader 仅在 CAN ACK 的 FDCAN Tx event 确认后执行 |
 | 参数存储 | `Src/UI/parameter/`, `Src/APP/settings/`, `Src/HAL/bsp/bsp_flash.*` | Flash 参数页、CRC32、提交标记与回退测试；参数 module 只校验、保存、通知、不可变元数据及 portable calibration snapshot 映射，APP adapters 在正确时序绑定运行时 RAM target、应用运行时设置并处理具体 encoder calibration；持久化修改通过维护租约串行化，scheduled save 终态失败会恢复最后有效镜像或默认参数 |
 | 安全保护 | `Src/SAFE/`, `Src/APP/isr/` | 故障检测、ADC 样本保护、编码器失败计数、CAN timeout watchdog、看门狗监督；启动 ISR readiness gate、X-STAR ADC paired-sample gate、shared ADC IRQ 分发与状态感知的故障清除 |
@@ -27,6 +27,23 @@ VectorFOC 是基于 STM32G431 的无刷电机 FOC 固件。它面向电机控制
 | X-STAR-S | `-DBOARD_XSTAR=ON` | `HALL` | `HALL`, `ABZ` | `Lib/stm32g431xx_flash.ld`，独立镜像从 `0x08000000` 启动 |
 
 `POSITION_SENSOR=AUTO` 会按板型选择默认传感器。CMake 会在配置阶段拒绝不兼容组合，例如 VectorFOC + `HALL` 或 X-STAR-S + `MT6816`。
+
+## PositionSensor 模块
+
+`Src/HAL/position_sensor/` 是当前已经落地的传感器替换边界。公开头文件 `position_sensor.h` 提供函数式 API；私有 `position_sensor_internal.h` 才包含 adapter 表。ALGO/APP/SAFE 不应知道当前选择的是 MT6816、TMR3109、Hall 还是 ABZ。
+
+| 文件 | 职责 |
+|---|---|
+| `position_sensor.h` | 公开 sample、health、calibration snapshot、raw-calibration state 和 typed API |
+| `position_sensor.c` | 初始化状态、last sample、failure counters、校准快照保存/恢复边界 |
+| `position_sensor_selection.c` | 唯一的 sensor-mode 到 adapter 映射 |
+| `position_sensor_mt6816.c` / `position_sensor_tmr3109.c` | 磁编码器 adapter，支持 raw direction/pole/LUT 标定 |
+| `position_sensor_hall.c` / `position_sensor_abz.c` | Hall/ABZ adapter，暴露 commutation/incremental 能力和持久化 valid 状态 |
+| `position_sensor_motor_hal.c` | 旧 `Motor_HAL_EncoderInterface_t` 兼容层 |
+
+添加新传感器时，只应新增底层驱动、一个 PositionSensor adapter、selection 分支、合法构建组合和测试。不得为了新型号改 ALGO 控制器、SAFE 故障检测、APP 参数恢复或通信代码。
+
+主控替换还不是同等级别的完成态。STM32G4 的 ADC/PWM ISR、时钟、CAN/USB、Flash、Bootloader handoff 和部分 platform service 仍需要下一阶段 MCU kit 化；本轮只能保证位置传感器替换路径已经被收束。
 
 ## 构建入口
 
@@ -77,13 +94,13 @@ cmake --build build-test --parallel
 ctest --test-dir build-test --output-on-failure
 ```
 
-当前 `test/CMakeLists.txt` 注册 54 个自动 CTest 测试；最近一次干净 Clang/Ninja 主机构建通过 54/54。覆盖范围包括：
+当前 `test/CMakeLists.txt` 注册 66 个自动 CTest 测试；本次 PositionSensor 模块化改造已完成全量 66/66 主机回归。覆盖范围包括：
 
 - FOC 基础算法、PID、LADRC、轨迹、速率限制、三角函数；
 - 参数运行时通知 seam 与 APP `RuntimeSettings` 适配器的单参数映射、批量重放和编码器 offset 错误传播；
 - 参数 encoder-calibration seam：快照保存/恢复、无效元数据拒绝、默认回退清空校准状态；
 - 参数 target-binding seam：40 个表项的完整 type/target/default 验证、无效 rebind 原子拒绝，以及生产 APP adapter 映射；
-- 编码器启动：MT6816/TMR3109/Hall/ABZ 四种已支持构建分支均验证初始化分发；非法传感器模式必须失败；
+- 编码器启动与 PositionSensor：MT6816/TMR3109/Hall/ABZ 四种已支持构建分支均验证初始化分发；非法传感器模式必须失败；PositionSensor selection、runtime、persistent-only、Motor HAL compatibility、angle math、encoder-calibration settings 和 architecture guard 均有独立测试；
 - APP 通信启动边界：CAN、transport、protocol 和 safety fault callback 的顺序、传输接口注册、非法协议值回退与故障回调失败传播；
 - `test_runner_integration` 简化 PMSM 闭环仿真：电流/速度/负载扰动、速度设定切换、位置设定和参数扫掠；
 - 真实 `MotorStateTask` + mock HAL/motor plant 闭环回归，以及确定性 ADC 噪声稳定性回归；
@@ -100,19 +117,16 @@ Windows/MSVC 与 GCC/Ninja 都是 CI 的一等验证目标；提交前的干净�
 
 ### 当前内存预算与测量方法
 
-最新 ARM Release 矩阵已在同一 xPack GNU Arm GCC 13.3.1 工具链下构建。`BOOTFLAG` 的 `16 / 16 B` 是链接脚本刻意保留的交接区，不计入一般 RAM 余量：
+最新 ARM Release 矩阵的 `VectorFoc.elf` 已用同一 `arm-none-eabi-size` 命令读取。下表是 text/data/bss 静态段大小；它不能替代链接 MEMORY 区域复核，也不能证明任务栈或 ISR 栈安全。`BOOTFLAG` 的 `16 / 16 B` 是链接脚本刻意保留的交接区，不计入一般 RAM 余量：
 
-| 镜像 | RAM | CCMRAM | Flash |
+| 镜像 | text | data | bss |
 |---|---:|---:|---:|
-| VectorFOC / MT6816 | 20,984 / 22,512 B（93.21%） | 9,024 / 10,240 B（88.12%） | 103,452 / 110,592 B（93.54%） |
-| VectorFOC / TMR3109 | 20,992 / 22,512 B（93.25%） | 9,024 / 10,240 B（88.12%） | 103,568 / 110,592 B（93.65%） |
-| X-STAR-S / HALL | 14,248 / 22,512 B（63.29%） | 1,024 / 10,240 B（10.00%） | 81,312 / 126,976 B（64.04%） |
-| X-STAR-S / ABZ | 14,232 / 22,512 B（63.22%） | 1,024 / 10,240 B（10.00%） | 81,024 / 126,976 B（63.81%） |
-| Bootloader | 7,352 / 22,512 B（32.66%） | 0 / 10,240 B | 13,932 / 16,384 B（85.03%） |
+| VectorFOC / MT6816 | 104,052 B | 1,812 B | 28,524 B |
+| VectorFOC / TMR3109 | 104,148 B | 1,820 B | 28,524 B |
+| X-STAR-S / HALL | 84,000 B | 1,092 B | 14,252 B |
+| X-STAR-S / ABZ | 83,844 B | 1,116 B | 14,212 B |
 
-这些数字是链接期静态占用，不是任务/中断栈安全证明，也没有为运行时峰值预留保证。
-
-这些数值是链接期静态占用，不是任务/中断栈安全证明。`task_guard` 每秒输出 `stack_free_w=default/guard/comm`（FreeRTOS word），可与 `Protocol_GetStats()` 的 `rx_queue_peak` 一起记录。必须在硬件压力测试后再调整任务栈、VOFA/USB 队列或 CAN 队列；当前不得以主机仿真替代此结论。
+链接器的对应占用为：MT6816 Flash/RAM/CCMRAM 95.76%/93.46%/90.62%，TMR3109 95.86%/93.50%/90.62%，Hall 67.02%/63.54%/10.00%，ABZ 66.92%/63.47%/10.00%。这些数值是链接期静态占用，不是任务/中断栈安全证明。`task_guard` 每秒输出 `stack_free_w=default/guard/comm`（FreeRTOS word），可与 `Protocol_GetStats()` 的 `rx_queue_peak` 一起记录。必须在硬件压力测试后再调整任务栈、VOFA/USB 队列或 CAN 队列；当前不得以主机仿真替代此结论。
 
 ## Bootloader 和 OTA
 
