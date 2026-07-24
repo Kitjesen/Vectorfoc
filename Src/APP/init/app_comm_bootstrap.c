@@ -32,10 +32,18 @@ static ProtocolType AppComm_GetBootProtocol(void) {
   return PROTOCOL_VECTOR;
 }
 
-void AppComm_Bootstrap(void) {
-  BSP_CAN_Init();
-  CAN_Transport_Init();
-  Protocol_RegisterTransport(CAN_Transport_GetInterface());
+bool AppComm_Bootstrap(void) {
+  if (!CAN_Transport_Init()) {
+    return false;
+  }
+  if (!Protocol_RegisterTransport(CAN_Transport_GetInterface())) {
+    return false;
+  }
   Protocol_Init(AppComm_GetBootProtocol());
   Safety_RegisterFaultCallback(AppComm_ReportFaultCallback);
+
+  if (g_can_baudrate > BSP_CAN_BAUD_250K) {
+    g_can_baudrate = BSP_CAN_BAUD_1M;
+  }
+  return BSP_CAN_Init((BSP_CAN_BaudrateId)g_can_baudrate);
 }

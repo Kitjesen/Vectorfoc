@@ -18,14 +18,14 @@
  */
 #include "hal_encoder.h"
 
-#include "motor.h"
+#include "motor_hal_api.h"
 #include "platform.h"
 #include "position_sensor.h"
 
 static int MHAL_Encoder_ReadData(Motor_HAL_EncoderData_t *data) {
   PositionSensorSample_t sample;
-  if (data == NULL || PositionSensor_GetLastSample(&sample) !=
-                          POSITION_SENSOR_STATUS_OK) {
+  if (data == NULL ||
+      PositionSensor_GetLastSample(&sample) != POSITION_SENSOR_STATUS_OK) {
     return -1;
   }
   data->position_rad = sample.position_rad;
@@ -48,14 +48,12 @@ int MHAL_Encoder_Init(void) {
   return PositionSensor_Init() == POSITION_SENSOR_STATUS_OK ? 0 : -1;
 }
 
-int MHAL_Encoder_Update(void) {
+int MHAL_Encoder_Update(uint8_t pole_pairs) {
   PositionSensorSample_t sample;
-  if (motor_data.parameters.pole_pairs <= 0 ||
-      motor_data.parameters.pole_pairs > UINT8_MAX) {
+  if (pole_pairs == 0U) {
     return -1;
   }
-  return PositionSensor_UpdateAndRead(
-             (uint8_t)motor_data.parameters.pole_pairs, &sample) ==
+  return PositionSensor_UpdateAndRead(pole_pairs, &sample) ==
                  POSITION_SENSOR_STATUS_OK
              ? 0
              : -1;

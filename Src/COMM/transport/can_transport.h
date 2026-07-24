@@ -32,7 +32,7 @@ const TransportInterface *CAN_Transport_GetInterface(void);
  * @brief init CAN
  * @note  BSP_CAN_Init()
  */
-void CAN_Transport_Init(void);
+bool CAN_Transport_Init(void);
 #ifdef __cplusplus
 }
 #endif

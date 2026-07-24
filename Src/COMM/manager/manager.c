@@ -32,34 +32,33 @@
  *   Protocol_SendFrame(&can_frame);         // CAN
     CAN 。
  */
-#include "main.h" // For FDCAN support
 #include "manager.h"
-#include "transport.h"
-#include "bsp_can.h" //  CAN
 #include "bsp_dwt.h"
-#include "protocol/canopen/canopen_protocol.h"
+#include "device_id.h"
 #include "error_manager.h"
 #include "error_types.h"
 #include "executor/executor.h"
-#include "fsm.h"
 #include "fault_detection.h"
+#include "fsm.h"
 #include "hal_abstraction.h"
 #include "hal_encoder.h"
-#include "protocol/vector/vector_protocol.h"
-#include "protocol/mit/mit_protocol.h"
+#include "main.h" // For FDCAN support
 #include "motor.h"
-#include "safety_control.h" // For Safety_GetActiveFaultBits
 #include "param_access.h"
 #include "param_table.h"
 #include "platform.h"
-#include "device_id.h"
+#include "protocol/canopen/canopen_protocol.h"
+#include "protocol/mit/mit_protocol.h"
+#include "protocol/vector/vector_protocol.h"
+#include "safety_control.h" // For Safety_GetActiveFaultBits
+#include "transport.h"
 #include <string.h>
 #define CAN_BROADCAST_ADDR 0x7F   ///< CAN
-#define VECTOR_CMD_GET_ID 0x00   ///< InovxiogetID
+#define VECTOR_CMD_GET_ID 0x00    ///< InovxiogetID
 #define PROTOCOL_RX_QUEUE_LEN 32U ///< Rx ring buffer length
 /*  */
 static ProtocolType s_current_protocol = PROTOCOL_VECTOR;
-/* Optional transport override; NULL falls back to BSP CAN. */
+/* Active transport adapter; communication is disabled until one is bound. */
 static const TransportInterface *s_transport = NULL;
 /* ISR->Task Rx ring buffer */
 static CAN_Frame s_rx_queue[PROTOCOL_RX_QUEUE_LEN];
@@ -88,9 +87,9 @@ static void Protocol_FillMotorStatus(MotorStatus *status) {
   status->can_id = g_can_id;
   status->calib_stage = (uint8_t)motor_data.state.Sub_State;
   status->calib_sub_stage = (uint8_t)motor_data.state.Cs_State;
-  status->calib_progress = CalibContext_GetProgress(
-      motor_data.state.Sub_State, motor_data.state.Cs_State,
-      &motor_data.calib_ctx);
+  status->calib_progress = CalibContext_GetProgress(motor_data.state.Sub_State,
+                                                    motor_data.state.Cs_State,
+                                                    &motor_data.calib_ctx);
   status->calib_result = motor_data.last_calib_result;
 }
 
@@ -111,8 +110,59 @@ static bool Protocol_DequeueRxFrame(CAN_Frame *out) {
 /**
  * @brief
  */
-void Protocol_RegisterTransport(const TransportInterface *transport) {
+static void Protocol_ReceiveTransportFrame(const TransportFrame *frame) {
+  if (frame == NULL || frame->type != TRANSPORT_CAN ||
+      frame->len > sizeof(((CAN_Frame *)0)->data)) {
+    return;
+  }
+  const uint32_t max_id = frame->is_extended ? 0x1FFFFFFFU : 0x7FFU;
+  if (frame->id > max_id) {
+    return;
+  }
+
+  CAN_Frame can_frame;
+  Transport_ToCANFrame(frame, &can_frame);
+  (void)Protocol_QueueRxFrame(&can_frame);
+}
+
+static void Protocol_UnbindTransport(void) {
+  if (s_transport != NULL && s_transport->register_rx_callback != NULL) {
+    (void)s_transport->register_rx_callback(NULL);
+  }
+  s_transport = NULL;
+}
+
+bool Protocol_RegisterTransport(const TransportInterface *transport) {
+  Protocol_UnbindTransport();
+  if (transport == NULL) {
+    return false;
+  }
+  if (transport->type != TRANSPORT_CAN || transport->send == NULL ||
+      transport->register_rx_callback == NULL) {
+    return false;
+  }
+  if (!transport->register_rx_callback(Protocol_ReceiveTransportFrame)) {
+    return false;
+  }
   s_transport = transport;
+  return true;
+}
+static const TransportInterface *Protocol_GetBoundTransport(void) {
+  const TransportInterface *transport;
+  CRITICAL_SECTION_BEGIN();
+  transport = s_transport;
+  CRITICAL_SECTION_END();
+  return transport;
+}
+
+static void Protocol_RecordTxResult(bool success) {
+  CRITICAL_SECTION_BEGIN();
+  if (success) {
+    s_comm_stats.tx_frames_total++;
+  } else {
+    s_comm_stats.tx_frames_failed++;
+  }
+  CRITICAL_SECTION_END();
 }
 /**
  * @brief init
@@ -254,29 +304,20 @@ bool Protocol_BuildCalibStatus(const MotorStatus *status, CAN_Frame *frame) {
 }
 /**
  * @brief CAN
- * @note ， BSP_CAN_SendFrame
  */
 bool Protocol_SendFrame(const CAN_Frame *frame) {
-  if (frame == NULL) {
+  if (frame == NULL || frame->dlc > sizeof(frame->data) || frame->is_rtr) {
     return false;
   }
+
   bool result = false;
-  CRITICAL_SECTION_BEGIN();
-  /*  */
-  if (s_transport != NULL && s_transport->send != NULL) {
-    TransportFrame tf;
-    Transport_FromCANFrame(frame, &tf);
-    result = s_transport->send(&tf);
-  } else {
-    /*  BSP CAN （）*/
-    result = BSP_CAN_SendFrame(frame);
+  const TransportInterface *transport = Protocol_GetBoundTransport();
+  if (transport != NULL && transport->send != NULL) {
+    TransportFrame transport_frame;
+    Transport_FromCANFrame(frame, &transport_frame);
+    result = transport->send(&transport_frame);
   }
-  if (result) {
-    s_comm_stats.tx_frames_total++;
-  } else {
-    s_comm_stats.tx_frames_failed++;
-  }
-  CRITICAL_SECTION_END();
+  Protocol_RecordTxResult(result);
   return result;
 }
 
@@ -285,33 +326,19 @@ bool Protocol_SendTrackedFrame(const CAN_Frame *frame,
   if (frame == NULL || ticket == NULL) {
     return false;
   }
-  bool result = false;
   memset(ticket, 0, sizeof(*ticket));
-  CRITICAL_SECTION_BEGIN();
-  if (s_transport != NULL) {
-    if (s_transport->send_tracked != NULL) {
-      TransportFrame tf;
-      Transport_FromCANFrame(frame, &tf);
-      result = s_transport->send_tracked(&tf, ticket);
-    }
-  } else {
-#ifdef BSP_CAN_HAS_TRACKED_TX
-    BSP_CAN_TxTicket bsp_ticket = {0};
-    result = BSP_CAN_SendTrackedFrame(frame, &bsp_ticket);
-    if (result) {
-      ticket->marker = bsp_ticket.marker;
-      ticket->tx_buffer_mask = bsp_ticket.tx_buffer_mask;
-    }
-#else
-    result = false;
-#endif
+  if (frame->dlc > sizeof(frame->data) || frame->is_rtr) {
+    return false;
   }
-  if (result) {
-    s_comm_stats.tx_frames_total++;
-  } else {
-    s_comm_stats.tx_frames_failed++;
+
+  bool result = false;
+  const TransportInterface *transport = Protocol_GetBoundTransport();
+  if (transport != NULL && transport->send_tracked != NULL) {
+    TransportFrame transport_frame;
+    Transport_FromCANFrame(frame, &transport_frame);
+    result = transport->send_tracked(&transport_frame, ticket);
   }
-  CRITICAL_SECTION_END();
+  Protocol_RecordTxResult(result);
   return result;
 }
 
@@ -319,46 +346,21 @@ bool Protocol_TxTicketIsComplete(const TransportTxTicket *ticket) {
   if (ticket == NULL || ticket->marker == 0U) {
     return false;
   }
-  bool result = false;
-  CRITICAL_SECTION_BEGIN();
-  if (s_transport != NULL) {
-    if (s_transport->tx_ticket_is_complete != NULL) {
-      result = s_transport->tx_ticket_is_complete(ticket);
-    }
-  } else {
-#ifdef BSP_CAN_HAS_TRACKED_TX
-    BSP_CAN_TxTicket bsp_ticket = {
-        .marker = ticket->marker,
-        .tx_buffer_mask = ticket->tx_buffer_mask,
-    };
-    result = BSP_CAN_TxTicketIsComplete(&bsp_ticket);
-#else
-    result = false;
-#endif
-  }
-  CRITICAL_SECTION_END();
-  return result;
+
+  const TransportInterface *transport = Protocol_GetBoundTransport();
+  return transport != NULL && transport->tx_ticket_is_complete != NULL &&
+         transport->tx_ticket_is_complete(ticket);
 }
 
 void Protocol_CancelTrackedSend(const TransportTxTicket *ticket) {
   if (ticket == NULL || ticket->marker == 0U) {
     return;
   }
-  CRITICAL_SECTION_BEGIN();
-  if (s_transport != NULL) {
-    if (s_transport->cancel_tracked_tx != NULL) {
-      s_transport->cancel_tracked_tx(ticket);
-    }
-  } else {
-#ifdef BSP_CAN_HAS_TRACKED_TX
-    BSP_CAN_TxTicket bsp_ticket = {
-        .marker = ticket->marker,
-        .tx_buffer_mask = ticket->tx_buffer_mask,
-    };
-    BSP_CAN_CancelTrackedSend(&bsp_ticket);
-#endif
+
+  const TransportInterface *transport = Protocol_GetBoundTransport();
+  if (transport != NULL && transport->cancel_tracked_tx != NULL) {
+    transport->cancel_tracked_tx(ticket);
   }
-  CRITICAL_SECTION_END();
 }
 /**
  * @brief Rx (ISRsafety)

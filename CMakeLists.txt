@@ -230,7 +230,11 @@ else()
     file(GLOB_RECURSE SOURCES ${SOURCE_GLOBS})
 endif()
 
-list(APPEND SOURCES "Src/APP/isr/encoder_failure_guard.c")
+list(APPEND SOURCES
+    "Src/APP/isr/encoder_failure_guard.c"
+    "Src/APP/rtos/motor_status_led.c"
+)
+list(REMOVE_DUPLICATES SOURCES)
 
 # list(FILTER SOURCES EXCLUDE REGEX "MODULES/hal/.*")
 

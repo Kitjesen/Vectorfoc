@@ -1,0 +1,5 @@
+#ifndef TEST_APP_INIT_BINDING_MOCKS_PARAMETER_BINDINGS_SETTINGS_H
+#define TEST_APP_INIT_BINDING_MOCKS_PARAMETER_BINDINGS_SETTINGS_H
+#include "param_table.h"
+ParamResult ParameterBindingsSettings_Install(void);
+#endif

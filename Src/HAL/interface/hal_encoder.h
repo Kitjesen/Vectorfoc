@@ -77,7 +77,7 @@ typedef struct {
  */
 int MHAL_Encoder_Register(const HAL_Encoder_Interface_t *interface);
 int MHAL_Encoder_Init(void);
-int MHAL_Encoder_Update(void);
+int MHAL_Encoder_Update(uint8_t pole_pairs);
 float MHAL_Encoder_GetPosition(void);
 float MHAL_Encoder_GetVelocity(void);
 float MHAL_Encoder_GetElectricalAngle(uint8_t pole_pairs);

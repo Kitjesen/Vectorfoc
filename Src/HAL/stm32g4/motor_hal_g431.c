@@ -13,13 +13,13 @@
 // limitations under the License.
 
 #ifndef BOARD_XSTAR
-#include "bsp_dwt.h"
-#include "motor_adc.h"
-#include "config.h"
 #include "board_config.h"
+#include "bsp_dwt.h"
+#include "config.h"
+#include "hal_abstraction.h" // For HAL_GetTemperature()
+#include "motor_adc.h"
 #include "motor_hal_api.h"
 #include "position_sensor_motor_hal.h"
-#include "hal_abstraction.h" // For HAL_GetTemperature()
 #include <math.h>
 extern CURRENT_DATA current_data;
 /* ============================================================================
@@ -37,13 +37,19 @@ static void G431_PWM_SetDuty(float dtc_a, float dtc_b, float dtc_c) {
                         (uint16_t)(dtc_c * arr));
 }
 static void G431_PWM_Disable(void);
+static bool G431_PWM_StartSampling(void) {
+  G431_PWM_Disable();
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_A, 0U);
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_B, 0U);
+  __HAL_TIM_SET_COMPARE(&HW_PWM_TIMER, HW_PWM_CH_PHASE_C, 0U);
+  return HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_TRIG) == HAL_OK;
+}
 static bool G431_PWM_StartChannel(uint32_t channel) {
   return HAL_TIM_PWM_Start(&HW_PWM_TIMER, channel) == HAL_OK &&
          HAL_TIMEx_PWMN_Start(&HW_PWM_TIMER, channel) == HAL_OK;
 }
 static bool G431_PWM_Enable(void) {
-  if (HAL_TIM_PWM_Start(&HW_PWM_TIMER, HW_PWM_CH_TRIG) != HAL_OK ||
-      !G431_PWM_StartChannel(HW_PWM_CH_PHASE_A) ||
+  if (!G431_PWM_StartChannel(HW_PWM_CH_PHASE_A) ||
       !G431_PWM_StartChannel(HW_PWM_CH_PHASE_B) ||
       !G431_PWM_StartChannel(HW_PWM_CH_PHASE_C)) {
     G431_PWM_Disable();
@@ -67,6 +73,8 @@ static void G431_PWM_Brake(void) {
   G431_PWM_Disable();
 }
 static const Motor_HAL_PwmInterface_t g431_pwm = {.set_duty = G431_PWM_SetDuty,
+                                                  .start_sampling =
+                                                      G431_PWM_StartSampling,
                                                   .enable = G431_PWM_Enable,
                                                   .disable = G431_PWM_Disable,
                                                   .brake = G431_PWM_Brake};
@@ -75,11 +83,11 @@ static const Motor_HAL_PwmInterface_t g431_pwm = {.set_duty = G431_PWM_SetDuty,
  * ============================================================================
  */
 // temperatureparam
-#define TEMP_UPDATE_INTERVAL_MS 20    // 50Hz temperatureupdatefrequency
-#define TEMP_LPF_ALPHA 0.1f           // filter (0-1，)
-#define TEMP_ADC_MIN_VALID 100        //  ADC （）
-#define TEMP_ADC_MAX_VALID 4000       //  ADC （）
-#define TEMP_DEFAULT 25.0f            // temperature（fault）
+#define TEMP_UPDATE_INTERVAL_MS 20 // 50Hz temperatureupdatefrequency
+#define TEMP_LPF_ALPHA 0.1f        // filter (0-1，)
+#define TEMP_ADC_MIN_VALID 100     //  ADC （）
+#define TEMP_ADC_MAX_VALID 4000    //  ADC （）
+#define TEMP_DEFAULT 25.0f         // temperature（fault）
 static uint32_t s_last_temp_update = 0;
 static float s_temp_filtered = TEMP_DEFAULT;
 static bool s_temp_sensor_ok = true;
@@ -89,10 +97,9 @@ static float G431_NTC_ConvertToTemp(uint16_t adc_raw) {
     return NAN;
   }
   /* VectorFOC topology: 3.3 V -> 10k pull-up -> ADC -> NTC -> GND. */
-  float r_ntc = HW_NTC_PULLUP * (float)adc_raw /
-                (float)(HW_ADC_RESOLUTION - adc_raw);
-  float denominator = logf(r_ntc / HW_NTC_R25) +
-                      HW_NTC_B_VALUE / 298.15f;
+  float r_ntc =
+      HW_NTC_PULLUP * (float)adc_raw / (float)(HW_ADC_RESOLUTION - adc_raw);
+  float denominator = logf(r_ntc / HW_NTC_R25) + HW_NTC_B_VALUE / 298.15f;
   if (!isfinite(denominator) || denominator <= 0.0f) {
     return NAN;
   }
@@ -106,7 +113,7 @@ static float G431_ReadTemperature(void) {
   // 1. ：checkupdate
   uint32_t now = HAL_GetSystemTick();
   if (now - s_last_temp_update < TEMP_UPDATE_INTERVAL_MS) {
-    return s_temp_filtered;  // filter
+    return s_temp_filtered; // filter
   }
   s_last_temp_update = now;
   // 2.  ADC （，filter）
@@ -194,15 +201,13 @@ static bool G431_ADC_CalibrateOffsets(void) {
   __DSB();
 
   G431AdcCalibrationContext context = {
-      .timeout_cycles = SystemCoreClock / (1000000U / G431_ADC_OFFSET_TIMEOUT_US),
+      .timeout_cycles =
+          SystemCoreClock / (1000000U / G431_ADC_OFFSET_TIMEOUT_US),
       .acquired = 0U,
   };
   MotorAdcCurrentOffsets offsets = {0};
-  bool ok = MotorAdc_CalibrateOffsets(G431_ADC_ReadNextOffsetSample,
-                                      &context,
-                                      G431_ADC_OFFSET_SAMPLE_COUNT,
-                                      256U,
-                                      3840U,
+  bool ok = MotorAdc_CalibrateOffsets(G431_ADC_ReadNextOffsetSample, &context,
+                                      G431_ADC_OFFSET_SAMPLE_COUNT, 256U, 3840U,
                                       &offsets);
 
   __HAL_ADC_CLEAR_FLAG(&HW_ADC_CURRENT, ADC_FLAG_JEOC | ADC_FLAG_JEOS);

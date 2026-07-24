@@ -19,6 +19,8 @@
 #ifndef APP_COMM_BOOTSTRAP_H
 #define APP_COMM_BOOTSTRAP_H
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -29,7 +31,7 @@ extern "C" {
  * This must run after early parameter recovery so the persisted CAN baud rate
  * and protocol type are available, and before the runtime-settings replay.
  */
-void AppComm_Bootstrap(void);
+bool AppComm_Bootstrap(void);
 
 #ifdef __cplusplus
 }

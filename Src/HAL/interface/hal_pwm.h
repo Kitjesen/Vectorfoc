@@ -19,8 +19,9 @@
  */
 #ifndef HAL_PWM_H
 #define HAL_PWM_H
-#include <stdint.h>
+#include "motor_hal_api.h"
 #include <stdbool.h>
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -43,7 +44,7 @@ typedef struct {
   void (*set_duty)(float Ta, float Tb, float Tc);
   /**
    * @brief  PWM output
-    * @return true when every required bridge output was enabled.
+   * @return true when every required bridge output was enabled.
    */
   bool (*enable)(void);
   /**
@@ -73,6 +74,7 @@ typedef struct {
  * @param interface PWM
  * @return 0: , -1:
  */
+int MHAL_PWM_Bind(const Motor_HAL_PwmInterface_t *interface);
 int MHAL_PWM_Register(const HAL_PWM_Interface_t *interface);
 int MHAL_PWM_Init(void);
 /**

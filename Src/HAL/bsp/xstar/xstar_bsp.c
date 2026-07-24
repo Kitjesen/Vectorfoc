@@ -292,8 +292,8 @@ void XStar_FDCAN1_Init(void) {
     hfdcan1.Init.DataSyncJumpWidth     = 3;
     hfdcan1.Init.DataTimeSeg1          = 13;
     hfdcan1.Init.DataTimeSeg2          = 3;
-    hfdcan1.Init.StdFiltersNbr         = 0;
-    hfdcan1.Init.ExtFiltersNbr         = 1;  /* Protocol uses 29-bit extended IDs */
+    hfdcan1.Init.StdFiltersNbr         = 1;
+    hfdcan1.Init.ExtFiltersNbr         = 1;  /* Vector protocol uses 29-bit IDs. */
     hfdcan1.Init.TxFifoQueueMode       = FDCAN_TX_FIFO_OPERATION;
     if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK) { Error_Handler(); }
 }

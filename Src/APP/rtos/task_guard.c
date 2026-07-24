@@ -16,36 +16,42 @@
  * @file task_guard.c
  * @brief 200 Hz safety supervision and periodic diagnostic logging.
  */
+#include "../../SAFE/watchdog_supervisor.h"
 #include "FreeRTOS.h"
 #include "app_freertos.h"
 #include "bsp_log.h"
 #include "cmsis_os.h"
 #include "fsm.h"
 #include "hal_abstraction.h"
+#include "led.h"
 #include "motor.h"
+#include "motor_status_led.h"
 #include "rtos_tasks.h"
 #include "safety_control.h"
-#include "../../SAFE/watchdog_supervisor.h"
 
 __attribute__((noreturn)) void StartGuardTask(void const *argument) {
   (void)argument;
   uint32_t diagnostic_count = 0u;
   static AppFreertosRuntimeStats_t runtime_stats;
+  MotorStatusLedState status_led;
   WatchdogSupervisorState watchdog_state;
-  WatchdogSupervisor_Init(
-      &watchdog_state, HAL_GetSystemTick(), WATCHDOG_SUPERVISION_WINDOW_MS,
-      WatchdogSupervisor_GetFOCHeartbeat(),
-      WatchdogSupervisor_GetCommHeartbeat());
+  MotorStatusLed_Init(&status_led);
+  WatchdogSupervisor_Init(&watchdog_state, HAL_GetSystemTick(),
+                          WATCHDOG_SUPERVISION_WINDOW_MS,
+                          WatchdogSupervisor_GetFOCHeartbeat(),
+                          WatchdogSupervisor_GetCommHeartbeat());
 
   for (;;) {
     /* This task observes and reports safety state.  It must never change the
      * requested control mode, clear faults, or request motor enable. */
     MotorGuardTask(&motor_data);
+    RGB_DisplayColorById(MotorStatusLed_Update(
+        &status_led, motor_data.state.State_Mode, Safety_HasActiveFault()));
 
-    WatchdogWindowStatus watchdog_status = WatchdogSupervisor_Evaluate(
-        &watchdog_state, HAL_GetSystemTick(),
-        WatchdogSupervisor_GetFOCHeartbeat(),
-        WatchdogSupervisor_GetCommHeartbeat());
+    WatchdogWindowStatus watchdog_status =
+        WatchdogSupervisor_Evaluate(&watchdog_state, HAL_GetSystemTick(),
+                                    WatchdogSupervisor_GetFOCHeartbeat(),
+                                    WatchdogSupervisor_GetCommHeartbeat());
     if (watchdog_status == WATCHDOG_WINDOW_HEALTHY) {
       HAL_WatchdogFeed();
     }

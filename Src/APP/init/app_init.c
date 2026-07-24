@@ -78,7 +78,9 @@ static bool App_CaptureInitialFeedback(void) {
   motor_data.algo_input.Vbus = sensors.v_bus;
   motor_data.feedback.temperature = sensors.temp;
 
-  if (MHAL_Encoder_Update() != 0) {
+  if (motor_data.parameters.pole_pairs <= 0 ||
+      motor_data.parameters.pole_pairs > UINT8_MAX ||
+      MHAL_Encoder_Update((uint8_t)motor_data.parameters.pole_pairs) != 0) {
     return false;
   }
   Motor_HAL_EncoderData_t encoder = {0};
@@ -114,6 +116,16 @@ void App_Init(void) {
   Detection_Init(NULL);
   Safety_Init(NULL);
   __enable_irq();
+
+  const Motor_HAL_Handle_t *motor_hal = motor_data.components.hal;
+  if (motor_hal == NULL || MHAL_ADC_Bind(motor_hal->adc) != 0) {
+    ERROR_REPORT(ERROR_HW_ADC_INIT, "Motor ADC port binding failed");
+    Error_Handler();
+  }
+  if (MHAL_PWM_Bind(motor_hal->pwm) != 0) {
+    ERROR_REPORT(ERROR_HW_PWM_INIT, "Motor PWM port binding failed");
+    Error_Handler();
+  }
 
   if (ParameterBindingsSettings_Install() != PARAM_OK) {
     ERROR_REPORT(ERROR_PARAM_INVALID_VALUE,
@@ -154,13 +166,15 @@ void App_Init(void) {
   } else {
     uint32_t initial_faults = Detection_Check_Slow(&motor_data);
     if (initial_faults != FAULT_NONE) {
-      Safety_TriggerFault(initial_faults, &motor_data,
-                          &g_ds402_state_machine);
+      Safety_TriggerFault(initial_faults, &motor_data, &g_ds402_state_machine);
     }
   }
   s_initial_safety_scan_ready = true;
 
-  AppComm_Bootstrap();
+  if (!AppComm_Bootstrap()) {
+    ERROR_REPORT(ERROR_HW_CAN_INIT, "Communication bootstrap failed");
+    Error_Handler();
+  }
 
   Init_Motor_No_Calib(&motor_data);
   MHAL_PWM_Disable();

@@ -4,6 +4,21 @@
 
 ---
 
+## [Unreleased]
+
+### 修复
+
+- `FDCAN` 同时配置 11-bit 标准帧与 29-bit 扩展帧范围过滤器，恢复 CANopen/MIT 真机接收路径，同时继续拒绝 RTR 与非匹配帧。
+- 非法持久化 CAN 波特率在初始化前归一化为 1 Mbps；有效波特率下的过滤、启动或中断通知失败不再二次尝试并掩盖硬件错误。
+- `hal_encoder.c` 显式包含 `Motor_HAL_EncoderData_t` 的定义头，消除跨主控构建对偶然包含顺序的依赖。
+
+### 文档
+
+- 更新 `README.md` 的项目介绍、分层架构和替换边界，明确 `Motor_HAL_Handle_t`、`board_config`/CMake、`PositionSensorAdapter_t`、`HW_POSITION_SENSOR_MODE` 与旧 `Motor_HAL_EncoderInterface_t` 兼容桥的职责。
+- 补充 CAN 链路 protocol manager -> generic transport -> BSP CAN -> STM32 HAL 及反向 ISR 回调路径、启动顺序、fail-closed 行为、新增板/传感器清单和测试/仿真命令说明。
+- 记录 A-U、B-V、C-W 相位映射变更的低压硬件核验/重新标定要求、GitHub 上游合并准则，以及当前未做实体硬件验证。
+- 明确拒绝将不安全的 `V/F`、`I/F`、固定电压/固定电流开环实现合入为默认控制路径。
+
 ## [1.0.0] — 2026-03-24
 
 **首个正式发布版本**。STM32G431 FOC 电机控制器固件，经两轮专家级代码审查 + 43 项单元测试全部通过。

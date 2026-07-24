@@ -8,7 +8,7 @@
 #include "protocol_types.h"
 #include "transport.h"
 
-void Protocol_RegisterTransport(const TransportInterface *transport);
+bool Protocol_RegisterTransport(const TransportInterface *transport);
 void Protocol_Init(ProtocolType default_protocol);
 bool Protocol_ReportFaultCallback(uint32_t fault_bits, MOTOR_DATA *motor);
 

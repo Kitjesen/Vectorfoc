@@ -13,13 +13,13 @@
 // limitations under the License.
 
 #include "motor_api.h"
-#include "current_calib.h"
-#include "flux_calib.h"
-#include "control/control.h"
 #include "control/cogging.h"
+#include "control/control.h"
 #include "control/feedforward.h"
 #include "control/field_weakening.h"
 #include "control/ladrc.h"
+#include "current_calib.h"
+#include "flux_calib.h"
 #include "hal_pwm.h" // For MHAL_PWM_Brake ( HAL)
 #include "observer/smo_observer.h"
 #include "param_access.h"
@@ -54,7 +54,8 @@ void Init_Motor_No_Calib(MOTOR_DATA *motor) {
   motor->state.Cs_State = CS_STATE_IDLE;
   // motor->state.State_Mode = STATE_MODE_RUNNING; // Legacy
   // Stay in SWITCH_ON_DISABLED at startup; demo task requests OPERATION_ENABLED
-  // This prevents the velocity current loop from running with uncalibrated offsets
+  // This prevents the velocity current loop from running with uncalibrated
+  // offsets
   // 5. paramupdatecurrentgain
   CurrentLoop_ApplyConfiguredGains(motor);
   // 6. init LADRC speed/velocity
@@ -216,10 +217,6 @@ bool Motor_ClearFaults(MOTOR_DATA *motor) {
     LADRC_Reset(&motor->ladrc_state);
     // 3.  IDLE state
     motor->state.State_Mode = STATE_MODE_IDLE;
-    // 4.  LED  (Assuming RGB_DisplayColorById is available via some
-    // include, or need to verify) RGB_DisplayColorById(3); // ，
-    // headers incomplete. Wait, led.h is in motor.c but not here. Let's include
-    // it.
   }
   return true;
 }

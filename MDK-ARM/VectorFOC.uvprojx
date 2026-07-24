@@ -1921,6 +1921,11 @@
               <FilePath>..\Src\APP\rtos\task_guard.c</FilePath>
             </File>
             <File>
+              <FileName>motor_status_led.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\APP\rtos\motor_status_led.c</FilePath>
+            </File>
+            <File>
               <FileName>watchdog_supervisor.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\SAFE\watchdog_supervisor.c</FilePath>
@@ -1959,11 +1964,6 @@
               <FileName>bsp_usart.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\HAL\bsp\bsp_usart.c</FilePath>
-            </File>
-            <File>
-              <FileName>can_transport.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Src\HAL\bsp\can_transport.c</FilePath>
             </File>
             <File>
               <FileName>mt6816_encoder.c</FileName>
@@ -2239,6 +2239,11 @@
               <FileName>mit_protocol.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Src\COMM\protocol\mit\mit_protocol.c</FilePath>
+            </File>
+            <File>
+              <FileName>can_transport.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Src\COMM\transport\can_transport.c</FilePath>
             </File>
           </Files>
         </Group>

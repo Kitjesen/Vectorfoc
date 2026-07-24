@@ -14,11 +14,10 @@
 
 #include "motor.h"
 #include "bsp_dwt.h"
-#include "current_calib.h"
-#include "flux_calib.h"
-#include "led.h"
 #include "config.h"
 #include "control/control.h"
+#include "current_calib.h"
+#include "flux_calib.h"
 #include "hal_pwm.h" // For MHAL_PWM_Brake ( HAL)
 #include "param_access.h"
 #include "param_table.h"
@@ -45,7 +44,7 @@ extern MOTOR_DATA motor_data;
 static void MotorCalibrationFailSafe(MOTOR_DATA *motor, CalibResult result) {
   MHAL_PWM_Disable();
   (void)StateMachine_SetCalibrationPower(&g_ds402_state_machine, false);
-  #if !defined(TEST_ENV)
+#if !defined(TEST_ENV)
   CalibContext_Reset(&motor->calib_ctx);
 #endif
   motor->last_calib_result = result;
@@ -166,28 +165,18 @@ void MotorStateTask(MOTOR_DATA *motor) {
   }
 }
 /**
- * @brief safetyprotection (200Hz)
- * ////，driver LED
+ * @brief 安全监控任务（200Hz）
  */
 void MotorGuardTask(MOTOR_DATA *motor) {
-  // 1. runningsafety (200Hz)
+  // 1. 执行慢速安全检测（200Hz）
   Safety_Update_Slow(motor, &g_ds402_state_machine);
-  // 2. get
-  uint32_t fault_bits = Safety_GetActiveFaultBits();
-  // 3. LED state
-  if (motor->state.State_Mode == STATE_MODE_IDLE ||
-      motor->state.State_Mode == STATE_MODE_DETECTING) {
-    static uint32_t blink_cnt = 0;  /* 1 Hz blink: 100 × 5 ms = 500 ms half-period */
-    if (++blink_cnt >= 100u) { blink_cnt = 0u; }
-    RGB_DisplayColorById(blink_cnt < 50u ? 9u : 7u); /* 9=on, 7=off */
-  } else if (Safety_HasActiveFault()) {
-    // protectionstate
-    RGB_DisplayColorById(0); //  faultprotectionstate
-    // motorstate GUARD
+  // 2. 若有故障，更新 motor state 到 GUARD
+  if (Safety_HasActiveFault()) {
     if (motor->state.State_Mode != STATE_MODE_GUARD) {
       motor->state.State_Mode = STATE_MODE_GUARD;
-      // fault Fault_State（，）
-      // @deprecated  Safety_GetActiveFaultBits() getfault
+      uint32_t fault_bits = Safety_GetActiveFaultBits();
+      /* 更新已弃用的 Fault_State 字段（兼容旧代码，正式应用
+       * Safety_GetActiveFaultBits()） */
       if (fault_bits & FAULT_OVER_VOLTAGE)
         motor->state.Fault_State = FAULT_STATE_OVER_VOLTAGE;
       else if (fault_bits & FAULT_UNDER_VOLTAGE)
@@ -201,12 +190,5 @@ void MotorGuardTask(MOTOR_DATA *motor) {
       else if (fault_bits & FAULT_ENCODER_LOSS)
         motor->state.Fault_State = FAULT_STATE_ENCODER_LOSS;
     }
-  } else if (motor->state.State_Mode == STATE_MODE_RUNNING) {
-    RGB_DisplayColorById(3); //  normalrunning
-  } else {
-    /* GUARD without active fault — fast blink (100ms period) to signal issue */
-    static uint32_t guard_cnt = 0;
-    if (++guard_cnt >= 20u) { guard_cnt = 0u; }
-    RGB_DisplayColorById(guard_cnt < 10u ? 0u : 7u);
   }
 }

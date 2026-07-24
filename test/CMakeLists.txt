@@ -175,6 +175,12 @@ add_executable(test_runner_led
 )
 register_test_target(test_runner_led)
 
+add_executable(test_runner_motor_status_led
+    test_motor_status_led.c
+    ${PROJ_ROOT}/Src/APP/rtos/motor_status_led.c
+)
+register_test_target(test_runner_motor_status_led)
+
 # Feedforward + CoggingComp tests
 add_executable(test_runner_ff_cogging
     test_feedforward_cogging.c
@@ -268,6 +274,19 @@ target_include_directories(test_runner_app_comm_bootstrap PRIVATE
 )
 register_test_target(test_runner_app_comm_bootstrap)
 
+# App_Init must fail closed if an MCU/board adapter cannot bind or start.
+add_executable(test_runner_app_init_bindings
+    test_app_init_bindings.c
+    ${PROJ_ROOT}/Src/APP/init/app_init.c
+)
+target_include_directories(test_runner_app_init_bindings BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/app_init_binding_mocks
+)
+target_include_directories(test_runner_app_init_bindings PRIVATE
+    ${PROJ_ROOT}/Src/APP/init
+)
+register_test_target(test_runner_app_init_bindings)
+
 add_executable(test_runner_runtime_settings
     test_runtime_settings.c
     ${PROJ_ROOT}/Src/APP/settings/runtime_settings.c
@@ -342,6 +361,67 @@ add_executable(test_runner_comm_manager
     ${PROJ_ROOT}/Src/COMM/manager/manager.c
 )
 register_test_target(test_runner_comm_manager)
+
+# CAN transport adapter contract: generic frames never leak into the BSP and
+# receive callbacks cross the seam only after validation.
+add_executable(test_runner_can_transport
+    test_can_transport.c
+    ${PROJ_ROOT}/Src/COMM/transport/can_transport.c
+)
+register_test_target(test_runner_can_transport)
+
+# Compile the concrete STM32 FDCAN BSP against host HAL doubles. This keeps
+# filter/notification sequencing, frame validation, and tracked TX observable.
+add_executable(test_runner_bsp_can
+    test_bsp_can.c
+)
+target_include_directories(test_runner_bsp_can BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/bsp_can_mocks
+)
+register_test_target(test_runner_bsp_can)
+
+# Typed ADC/PWM binding contract used by swappable MCU/board adapters.
+add_executable(test_runner_hal_port_binding
+    test_hal_port_binding.c
+    ${PROJ_ROOT}/Src/HAL/stm32g4/hal_adc.c
+    ${PROJ_ROOT}/Src/HAL/stm32g4/hal_pwm.c
+)
+target_include_directories(test_runner_hal_port_binding PRIVATE
+    ${PROJ_ROOT}/Src/HAL/stm32g4
+)
+register_test_target(test_runner_hal_port_binding)
+
+# Compile the actual board ports against register/HAL test doubles. These
+# protect the ADC trigger channel, bridge enable rollback, phase mapping, and
+# calibration timeout/interrupt-restore behavior.
+add_executable(test_runner_motor_hal_g431
+    test_motor_hal_g431.c
+    ${PROJ_ROOT}/Src/HAL/stm32g4/motor_hal_g431.c
+)
+target_include_directories(test_runner_motor_hal_g431 BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/motor_hal_g431_mocks
+)
+target_compile_definitions(test_runner_motor_hal_g431 PRIVATE CORE_ADC_H)
+if(MSVC)
+    target_compile_options(test_runner_motor_hal_g431 PRIVATE
+        /FI"${CMAKE_SOURCE_DIR}/motor_hal_g431_mocks/motor_adc.h"
+    )
+else()
+    target_compile_options(test_runner_motor_hal_g431 PRIVATE
+        -include "${CMAKE_SOURCE_DIR}/motor_hal_g431_mocks/motor_adc.h"
+    )
+endif()
+register_test_target(test_runner_motor_hal_g431)
+
+add_executable(test_runner_motor_hal_xstar
+    test_motor_hal_xstar.c
+    ${PROJ_ROOT}/Src/HAL/stm32g4/motor_hal_xstar.c
+)
+target_include_directories(test_runner_motor_hal_xstar BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/motor_hal_xstar_mocks
+)
+target_compile_definitions(test_runner_motor_hal_xstar PRIVATE BOARD_XSTAR)
+register_test_target(test_runner_motor_hal_xstar)
 
 add_executable(test_runner_app_freertos_runtime_stats
     test_app_freertos_runtime_stats.c
@@ -526,6 +606,13 @@ add_test(
             ${CMAKE_SOURCE_DIR}/test_position_sensor_architecture.py
 )
 set_tests_properties(test_position_sensor_architecture PROPERTIES
+    WORKING_DIRECTORY ${PROJ_ROOT}
+)
+add_test(
+    NAME test_layer_architecture
+    COMMAND ${VECTORFOC_PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test_layer_architecture.py
+)
+set_tests_properties(test_layer_architecture PROPERTIES
     WORKING_DIRECTORY ${PROJ_ROOT}
 )
 
