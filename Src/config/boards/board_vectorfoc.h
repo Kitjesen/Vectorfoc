@@ -56,6 +56,8 @@
 #define HW_PWM_TIMER            htim1
 #define HW_PWM_TIM_INSTANCE     TIM1
 #define HW_PWM_FREQ_HZ          20000
+#define HW_PWM_PERIOD_TICKS     4200U
+#define HW_PWM_ADC_TRIGGER_OFFSET_TICKS 100U
 #define HW_PWM_DEADTIME_CLKS    20
 
 #define HW_PWM_CH_U             TIM_CHANNEL_1   /* PA8  */
@@ -63,13 +65,17 @@
 #define HW_PWM_CH_W             TIM_CHANNEL_3   /* PA10 */
 #define HW_PWM_CH_TRIG          TIM_CHANNEL_4   /* ADC 注入触发 */
 
-/* Legacy VectorFOC electrical phase mapping. Board U/V/W labels are physical
- * timer outputs; the control algorithm's A/B/C phases historically map
- * A->W(CH3), B->V(CH2), C->U(CH1). Keep this permutation explicit until
- * hardware phase proof says it can change. */
-#define HW_PWM_CH_PHASE_A       HW_PWM_CH_W
+/* Electrical phases must stay aligned with the current channels below:
+ * phase A/Ia -> U/CH1, phase B/Ib -> V/CH2, phase C/Ic -> W/CH3.
+ * Keep this mapping at board level so another power stage can replace it
+ * without changing the control algorithm or the STM32 motor HAL. */
+#define HW_PWM_CH_PHASE_A       HW_PWM_CH_U
 #define HW_PWM_CH_PHASE_B       HW_PWM_CH_V
-#define HW_PWM_CH_PHASE_C       HW_PWM_CH_U
+#define HW_PWM_CH_PHASE_C       HW_PWM_CH_W
+
+#if HW_PWM_ADC_TRIGGER_OFFSET_TICKS >= HW_PWM_PERIOD_TICKS
+#error "ADC trigger offset must be smaller than the PWM period"
+#endif
 
 /*
  * No BKIN/BKIN2 net is present in the published IOC/pin map. Enable these

@@ -29,6 +29,49 @@ CURRENT_DATA current_data = {
     .current_offset_sum_b = 0.0f,
     .current_offset_sum_c = 0.0f,
 };
+
+bool MotorAdc_CalibrateOffsets(MotorAdcSampleReader read_next,
+                               void *context,
+                               uint32_t sample_count,
+                               uint16_t valid_min,
+                               uint16_t valid_max,
+                               MotorAdcCurrentOffsets *result) {
+  if (read_next == NULL || result == NULL || sample_count == 0U ||
+      valid_min >= valid_max) {
+    return false;
+  }
+
+  uint64_t sum_a = 0U;
+  uint64_t sum_b = 0U;
+  uint64_t sum_c = 0U;
+  for (uint32_t i = 0U; i < sample_count; ++i) {
+    MotorAdcCurrentSample sample = {0};
+    if (!read_next(context, &sample)) {
+      return false;
+    }
+    sum_a += sample.phase_a;
+    sum_b += sample.phase_b;
+    sum_c += sample.phase_c;
+  }
+
+  MotorAdcCurrentOffsets candidate = {
+      .phase_a = (float)sum_a / (float)sample_count,
+      .phase_b = (float)sum_b / (float)sample_count,
+      .phase_c = (float)sum_c / (float)sample_count,
+  };
+  if (candidate.phase_a <= (float)valid_min ||
+      candidate.phase_a >= (float)valid_max ||
+      candidate.phase_b <= (float)valid_min ||
+      candidate.phase_b >= (float)valid_max ||
+      candidate.phase_c <= (float)valid_min ||
+      candidate.phase_c >= (float)valid_max) {
+    return false;
+  }
+
+  *result = candidate;
+  return true;
+}
+
 /**
  * : 10k NTC
  * B: 3950

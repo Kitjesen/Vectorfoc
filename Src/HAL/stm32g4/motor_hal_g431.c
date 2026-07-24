@@ -153,30 +153,70 @@ static void G431_ADC_Update(Motor_HAL_SensorData_t *data) {
   // temperature（、filtererrorcheck）
   data->temp = G431_ReadTemperature();
 }
-static bool G431_ADC_CalibrateOffsets(void) {
-  uint64_t sum_a = 0, sum_b = 0, sum_c = 0;
-  const uint32_t samples = 1024u;
-  for (uint32_t i = 0; i < samples; i++) {
-    DWT_Delay(CURRENT_MEASURE_PERIOD);
-    sum_a += HW_ADC_CURRENT.Instance->HW_ADC_JDR_IA;
-    sum_b += HW_ADC_CURRENT.Instance->HW_ADC_JDR_IB;
-    sum_c += HW_ADC_CURRENT.Instance->HW_ADC_JDR_IC;
-    if ((i & 0x3Fu) == 0u) {
-      HAL_WatchdogFeed();
+#define G431_ADC_OFFSET_SAMPLE_COUNT 1024U
+#define G431_ADC_OFFSET_TIMEOUT_US 1000U
+
+typedef struct {
+  uint32_t timeout_cycles;
+  uint32_t acquired;
+} G431AdcCalibrationContext;
+
+static bool G431_ADC_ReadNextOffsetSample(void *opaque,
+                                          MotorAdcCurrentSample *sample) {
+  if (opaque == NULL || sample == NULL) {
+    return false;
+  }
+
+  G431AdcCalibrationContext *context = opaque;
+  __HAL_ADC_CLEAR_FLAG(&HW_ADC_CURRENT, ADC_FLAG_JEOS);
+  uint32_t started = DWT->CYCCNT;
+  while (!__HAL_ADC_GET_FLAG(&HW_ADC_CURRENT, ADC_FLAG_JEOS)) {
+    if ((uint32_t)(DWT->CYCCNT - started) >= context->timeout_cycles) {
+      return false;
     }
   }
-  current_data.Ia_offset = (float)sum_a / (float)samples;
-  current_data.Ib_offset = (float)sum_b / (float)samples;
-  current_data.Ic_offset = (float)sum_c / (float)samples;
-  return isfinite(current_data.Ia_offset) &&
-         isfinite(current_data.Ib_offset) &&
-         isfinite(current_data.Ic_offset) &&
-         current_data.Ia_offset > 256.0f &&
-         current_data.Ia_offset < 3840.0f &&
-         current_data.Ib_offset > 256.0f &&
-         current_data.Ib_offset < 3840.0f &&
-         current_data.Ic_offset > 256.0f &&
-         current_data.Ic_offset < 3840.0f;
+
+  sample->phase_a = (uint16_t)HW_ADC_CURRENT.Instance->HW_ADC_JDR_IA;
+  sample->phase_b = (uint16_t)HW_ADC_CURRENT.Instance->HW_ADC_JDR_IB;
+  sample->phase_c = (uint16_t)HW_ADC_CURRENT.Instance->HW_ADC_JDR_IC;
+  if ((++context->acquired & 0x3FU) == 0U) {
+    HAL_WatchdogFeed();
+  }
+  return true;
+}
+
+static bool G431_ADC_CalibrateOffsets(void) {
+  const uint32_t injected_it_mask = ADC_IT_JEOC | ADC_IT_JEOS;
+  const uint32_t saved_injected_it =
+      READ_BIT(HW_ADC_CURRENT.Instance->IER, injected_it_mask);
+  __HAL_ADC_DISABLE_IT(&HW_ADC_CURRENT, injected_it_mask);
+  __HAL_ADC_CLEAR_FLAG(&HW_ADC_CURRENT, ADC_FLAG_JEOC | ADC_FLAG_JEOS);
+  __DSB();
+
+  G431AdcCalibrationContext context = {
+      .timeout_cycles = SystemCoreClock / (1000000U / G431_ADC_OFFSET_TIMEOUT_US),
+      .acquired = 0U,
+  };
+  MotorAdcCurrentOffsets offsets = {0};
+  bool ok = MotorAdc_CalibrateOffsets(G431_ADC_ReadNextOffsetSample,
+                                      &context,
+                                      G431_ADC_OFFSET_SAMPLE_COUNT,
+                                      256U,
+                                      3840U,
+                                      &offsets);
+
+  __HAL_ADC_CLEAR_FLAG(&HW_ADC_CURRENT, ADC_FLAG_JEOC | ADC_FLAG_JEOS);
+  if (saved_injected_it != 0U) {
+    __HAL_ADC_ENABLE_IT(&HW_ADC_CURRENT, saved_injected_it);
+  }
+  if (!ok) {
+    return false;
+  }
+
+  current_data.Ia_offset = offsets.phase_a;
+  current_data.Ib_offset = offsets.phase_b;
+  current_data.Ic_offset = offsets.phase_c;
+  return true;
 }
 static const Motor_HAL_AdcInterface_t g431_adc = {
     .update = G431_ADC_Update, .calibrate_offsets = G431_ADC_CalibrateOffsets};

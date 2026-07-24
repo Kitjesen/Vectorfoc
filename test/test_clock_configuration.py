@@ -39,6 +39,34 @@ class ClockConfigurationTest(unittest.TestCase):
             self.assertRegex(source, r"PLLN\s*=\s*42")
             self.assertRegex(source, r"PLLR\s*=\s*RCC_PLLR_DIV2")
 
+    def test_vector_pwm_timing_comes_from_board_contract(self) -> None:
+        board = read("Src/config/boards/board_vectorfoc.h")
+        timer = read("Lib/Core/Src/tim.c")
+        ioc = read("VectorFOC.ioc")
+
+        self.assertRegex(board, r"#define HW_PWM_PERIOD_TICKS\s+4200U")
+        self.assertRegex(
+            board, r"#define HW_PWM_ADC_TRIGGER_OFFSET_TICKS\s+100U"
+        )
+        self.assertIn(
+            "HW_PWM_PERIOD_TICKS - HW_PWM_ADC_TRIGGER_OFFSET_TICKS", timer
+        )
+        self.assertIn("HW_PWM_DEADTIME_CLKS", timer)
+        self.assertNotIn("sConfigOC.Pulse = 4190", timer)
+        self.assertIn("MCPWM_PERIOD_CLOCKS-100", ioc)
+
+    def test_vector_pwm_phases_align_with_current_channels(self) -> None:
+        board = read("Src/config/boards/board_vectorfoc.h")
+        expected = (
+            r"#define HW_PWM_CH_PHASE_A\s+HW_PWM_CH_U",
+            r"#define HW_PWM_CH_PHASE_B\s+HW_PWM_CH_V",
+            r"#define HW_PWM_CH_PHASE_C\s+HW_PWM_CH_W",
+            r"#define HW_ADC_IA_JDR\s+HW_ADC_JDR_IA",
+            r"#define HW_ADC_IB_JDR\s+HW_ADC_JDR_IB",
+            r"#define HW_ADC_IC_JDR\s+HW_ADC_JDR_IC",
+        )
+        for contract in expected:
+            self.assertRegex(board, contract)
     def test_bootloader_stops_when_clock_setup_fails(self) -> None:
         source = read("Src/BOOT/boot_main.c")
         for call in (

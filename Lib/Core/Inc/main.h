@@ -68,8 +68,10 @@ void Emergency_Shutdown(void);
 
 /* Private defines -----------------------------------------------------------*/
 #define MCPWM_CLOCK_HZ 168000000
+#ifndef MCPWM_DEADTIME_CLOCKS
 #define MCPWM_DEADTIME_CLOCKS 20
-#define MCPWM_TGRO_TIME MCPWM_PERIOD_CLOCKS-10
+#endif
+#define MCPWM_TGRO_TIME (MCPWM_PERIOD_CLOCKS - 100U)
 #define MCPWM_RCR 0
 #define MCPWM_FREQ 20000
 #define MCPWM_PERIOD_CLOCKS MCPWM_CLOCK_HZ/2/MCPWM_FREQ

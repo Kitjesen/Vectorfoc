@@ -170,34 +170,81 @@ static void XStar_ADC_Update(Motor_HAL_SensorData_t *data) {
     data->temp = XStar_ReadTemperature((uint16_t)adc_temp);
 }
 
-static bool XStar_ADC_CalibrateOffsets(void) {
-    /* 静止时采集1000次，取均值作为零偏
-     * 偏置电压1.65V对应ADC值约2047，实际因OPAMP和电路略有偏差 */
-    uint64_t sum_u = 0, sum_v = 0, sum_w = 0;
-    const uint32_t samples = 1024u;
-    for (uint32_t i = 0; i < samples; i++) {
-        DWT_Delay(CURRENT_MEASURE_PERIOD);
-        sum_u += (uint32_t)hadc1.Instance->HW_ADC1_JDR_IU;
-        sum_v += (uint32_t)hadc2.Instance->HW_ADC2_JDR_IV;
-        sum_w += (uint32_t)hadc1.Instance->HW_ADC1_JDR_IW;
-        if ((i & 0x3Fu) == 0u) {
-            HAL_WatchdogFeed();
+#define XSTAR_ADC_OFFSET_SAMPLE_COUNT 1024U
+#define XSTAR_ADC_OFFSET_TIMEOUT_US 1000U
+
+typedef struct {
+    uint32_t timeout_cycles;
+    uint32_t acquired;
+} XStarAdcCalibrationContext;
+
+static bool XStar_ADC_ReadNextOffsetSample(void *opaque,
+                                           MotorAdcCurrentSample *sample) {
+    if (opaque == NULL || sample == NULL) {
+        return false;
+    }
+
+    XStarAdcCalibrationContext *context = opaque;
+    __HAL_ADC_CLEAR_FLAG(&HW_ADC_CURRENT, ADC_FLAG_JEOS);
+    __HAL_ADC_CLEAR_FLAG(&HW_ADC2_CURRENT, ADC_FLAG_JEOS);
+    uint32_t started = DWT->CYCCNT;
+    while (!__HAL_ADC_GET_FLAG(&HW_ADC_CURRENT, ADC_FLAG_JEOS) ||
+           !__HAL_ADC_GET_FLAG(&HW_ADC2_CURRENT, ADC_FLAG_JEOS)) {
+        if ((uint32_t)(DWT->CYCCNT - started) >= context->timeout_cycles) {
+            return false;
         }
     }
-    current_data.Ia_offset = (float)sum_u / (float)samples;
-    current_data.Ib_offset = (float)sum_v / (float)samples;
-    current_data.Ic_offset = (float)sum_w / (float)samples;
-    return isfinite(current_data.Ia_offset) &&
-           isfinite(current_data.Ib_offset) &&
-           isfinite(current_data.Ic_offset) &&
-           current_data.Ia_offset > 256.0f &&
-           current_data.Ia_offset < 3840.0f &&
-           current_data.Ib_offset > 256.0f &&
-           current_data.Ib_offset < 3840.0f &&
-           current_data.Ic_offset > 256.0f &&
-           current_data.Ic_offset < 3840.0f;
+
+    sample->phase_a = (uint16_t)hadc1.Instance->HW_ADC1_JDR_IU;
+    sample->phase_b = (uint16_t)hadc2.Instance->HW_ADC2_JDR_IV;
+    sample->phase_c = (uint16_t)hadc1.Instance->HW_ADC1_JDR_IW;
+    if ((++context->acquired & 0x3FU) == 0U) {
+        HAL_WatchdogFeed();
+    }
+    return true;
 }
 
+static bool XStar_ADC_CalibrateOffsets(void) {
+    const uint32_t injected_it_mask = ADC_IT_JEOC | ADC_IT_JEOS;
+    const uint32_t saved_adc1_it =
+        READ_BIT(HW_ADC_CURRENT.Instance->IER, injected_it_mask);
+    const uint32_t saved_adc2_it =
+        READ_BIT(HW_ADC2_CURRENT.Instance->IER, injected_it_mask);
+    __HAL_ADC_DISABLE_IT(&HW_ADC_CURRENT, injected_it_mask);
+    __HAL_ADC_DISABLE_IT(&HW_ADC2_CURRENT, injected_it_mask);
+    __HAL_ADC_CLEAR_FLAG(&HW_ADC_CURRENT, ADC_FLAG_JEOC | ADC_FLAG_JEOS);
+    __HAL_ADC_CLEAR_FLAG(&HW_ADC2_CURRENT, ADC_FLAG_JEOC | ADC_FLAG_JEOS);
+    __DSB();
+
+    XStarAdcCalibrationContext context = {
+        .timeout_cycles = SystemCoreClock / (1000000U / XSTAR_ADC_OFFSET_TIMEOUT_US),
+        .acquired = 0U,
+    };
+    MotorAdcCurrentOffsets offsets = {0};
+    bool ok = MotorAdc_CalibrateOffsets(XStar_ADC_ReadNextOffsetSample,
+                                        &context,
+                                        XSTAR_ADC_OFFSET_SAMPLE_COUNT,
+                                        256U,
+                                        3840U,
+                                        &offsets);
+
+    __HAL_ADC_CLEAR_FLAG(&HW_ADC_CURRENT, ADC_FLAG_JEOC | ADC_FLAG_JEOS);
+    __HAL_ADC_CLEAR_FLAG(&HW_ADC2_CURRENT, ADC_FLAG_JEOC | ADC_FLAG_JEOS);
+    if (saved_adc1_it != 0U) {
+        __HAL_ADC_ENABLE_IT(&HW_ADC_CURRENT, saved_adc1_it);
+    }
+    if (saved_adc2_it != 0U) {
+        __HAL_ADC_ENABLE_IT(&HW_ADC2_CURRENT, saved_adc2_it);
+    }
+    if (!ok) {
+        return false;
+    }
+
+    current_data.Ia_offset = offsets.phase_a;
+    current_data.Ib_offset = offsets.phase_b;
+    current_data.Ic_offset = offsets.phase_c;
+    return true;
+}
 static const Motor_HAL_AdcInterface_t xstar_adc = {
     .update            = XStar_ADC_Update,
     .calibrate_offsets = XStar_ADC_CalibrateOffsets,

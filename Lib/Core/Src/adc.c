@@ -43,7 +43,7 @@ void MX_ADC1_Init(void) {
     Error_Handler();
   }
 
-  /* Injected channels: triggered by TIM1_CC4 rising edge */
+  /* Ch1: Ic — Rank1, PA0 (ADC1_IN1) */
   sConfigInjected.InjectedChannel = ADC_CHANNEL_1;
   sConfigInjected.InjectedRank = ADC_INJECTED_RANK_1;
   sConfigInjected.InjectedSamplingTime = ADC_SAMPLETIME_6CYCLES_5;

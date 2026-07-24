@@ -26,7 +26,7 @@ void MX_TIM1_Init(void) {
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
   htim1.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
-  htim1.Init.Period = 4200;
+  htim1.Init.Period = HW_PWM_PERIOD_TICKS;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = MCPWM_RCR;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -60,8 +60,10 @@ void MX_TIM1_Init(void) {
     Error_Handler();
   }
 
-  /* CH4: ADC trigger pulse near counter peak (4190/4200) */
-  sConfigOC.Pulse = 4190;
+  /* CH4: sample close to the center-aligned counter peak.  The margin is a
+   * board property because gate timing and the analogue front-end can change
+   * independently of the MCU. */
+  sConfigOC.Pulse = HW_PWM_PERIOD_TICKS - HW_PWM_ADC_TRIGGER_OFFSET_TICKS;
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_4) != HAL_OK) {
     Error_Handler();
   }
@@ -70,7 +72,7 @@ void MX_TIM1_Init(void) {
   sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
   sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = MCPWM_DEADTIME_CLOCKS;
+  sBreakDeadTimeConfig.DeadTime = HW_PWM_DEADTIME_CLKS;
   sBreakDeadTimeConfig.BreakState =
       HW_PWM_BREAK_ENABLED ? TIM_BREAK_ENABLE : TIM_BREAK_DISABLE;
   sBreakDeadTimeConfig.BreakPolarity = HW_PWM_BREAK_POLARITY;
