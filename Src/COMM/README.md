@@ -4,35 +4,30 @@
 
 ## 概述
 
-本模块实现VectorFOC电机控制器的通信协议,支持3种主流协议:**Inovxio私有协议**、**CANopen DS402**和**MIT Cheetah协议**。
+本模块实现 VectorFOC 电机控制器的通信协议，支持 3 种协议：**Vector 私有协议**、**CANopen DS402** 和 **MIT Cheetah 协议**。
 
 ## 目录结构
 
 ```
-communication/
-├── manager.h/c              # 协议管理器(路由分发)
-├── protocol_types.h         # 共享数据类型定义
-│
-├── executor/                # 指令执行器 [NEW]
+Src/COMM/
+├── executor/                # 指令执行器
 │   ├── executor.h
-│   └── executor.c           # 业务逻辑(状态机/参数/目标)
-│
-├── inovxio/                 # Inovxio私有协议
-│   ├── inovxio_protocol.h
-│   └── inovxio_protocol.c
-│
-├── canopen/                 # CANopen DS402
-│   ├── canopen_protocol.h
-│   └── canopen_protocol.c
-│
-└── mit/                     # MIT Cheetah协议
-    ├── mit_protocol.h
-    └── mit_protocol.c
+│   └── executor.c           # 状态机、参数和目标业务逻辑
+├── manager/                 # 协议路由与接收队列
+│   ├── manager.h/c
+│   └── protocol_types.h     # portable 共享类型
+├── protocol/
+│   ├── vector/              # Vector 私有协议
+│   ├── canopen/             # CANopen DS402
+│   └── mit/                 # MIT Cheetah 协议
+└── transport/               # 通用 CAN transport，向下适配 BSP
+    ├── transport.h
+    └── can_transport.h/c
 ```
 
 ## 协议说明
 
-### 1. Inovxio私有协议 (`inovxio/`)
+### 1. Vector 私有协议 (`protocol/vector/`)
 
 **特点**: CAN 2.0 Extended Frame (29-bit ID),高性能运控
 
@@ -90,11 +85,11 @@ NMT `STOP` 后节点只处理 NMT；RPDO1 与 SDO download 会被忽略，不会
 ### 初始化
 
 ```c
-#include "communication/manager.h"
+#include "manager.h"
 
 void System_Init(void) {
     // 初始化为默认协议
-    Protocol_Init(PROTOCOL_INOVXIO);
+    Protocol_Init(PROTOCOL_VECTOR);
     
     // 或动态切换
     Protocol_SetType(PROTOCOL_CANOPEN);
@@ -142,13 +137,13 @@ bool Protocol_BuildFeedback(const MotorStatus*, CAN_Frame*);
 
 Vector `GET_ID` 快路径只接受 29-bit extended frame；标准帧、RTR 帧和不完整帧不会被该路径接受或用于喂 CAN watchdog。
 
-## 共享类型 (`types.h`)
+## 共享类型 (`manager/protocol_types.h`)
 
 **定义的核心类型**:
 ```c
 // 协议类型枚举
 typedef enum {
-    PROTOCOL_INOVXIO,    // Inovxio(穹沛)私有协议
+    PROTOCOL_VECTOR,     // Vector 私有协议
     PROTOCOL_CANOPEN,    // CANopen DS402
     PROTOCOL_MIT         // MIT Cheetah
 } ProtocolType;
@@ -221,40 +216,47 @@ case PROTOCOL_MODBUS:
 └──────────────────────┘
           ↑
 ┌──────────────────────┐
-│   Executor Layer     │  executor.c (执行业务逻辑)
+│   Executor Layer     │  executor/
 └──────────────────────┘
           ↑
 ┌──────────────────────┐
-│   Manager Layer      │  manager.c (路由与调度)
+│   Manager Layer      │  manager/
 └──────────────────────┘
           ↑
 ┌──────────────────────┐
-│   Protocol Layer     │  inovxio/ canopen/ mit/ (翻译字节流)
+│   Protocol Layer     │  protocol/vector, canopen, mit
 └──────────────────────┘
           ↑
 ┌──────────────────────┐
-│   Transport Layer    │  BSP/can/bsp_can.c (硬件驱动)
+│   Transport Layer    │  transport/can_transport.c
 └──────────────────────┘
+          ↑
+┌──────────────────────┐
+│   BSP CAN            │  HAL/bsp/bsp_can.c
+└──────────────────────┘
+          ↑
+       STM32 HAL/FDCAN
 ```
 
 **各层职责**:
-- **Transport**: 硬件IO, 只负责收发字节
+- **Transport**: 将 portable CAN frame 适配到 BSP CAN，并管理发送票据
+- **BSP CAN**: 配置过滤器、中断回调和物理收发
 - **Protocol**: 翻译字节流为标准指令 (`MotorCommand`)
 - **Manager**: 路由管理, 协议切换, 接收队列
 - **Executor**: 执行指令 (状态机/参数/目标更新)
 
 ### 模块独立
 
-- **inovxio/**: 独立实现,无依赖其他协议
+- **protocol/vector/**: 独立实现，无依赖其他协议
 - **canopen/**: 独立实现
 - **mit/**: 独立实现
 - **manager**: 只负责路由,不实现具体协议
 
 ### 命名规范
 
-- **目录**: 小写协议名 (`mineru/`, `canopen/`)
+- **目录**: 小写协议名 (`vector/`, `canopen/`)
 - **文件**: `<协议>_protocol.c/h`
-- **函数**: `<协议>_<动词>()` (如`MinerU_ParseFrame()`)
+- **函数**: `Protocol<协议>_<动词>()`（如 `ProtocolVector_Parse()`）
 
 ## 性能指标
 

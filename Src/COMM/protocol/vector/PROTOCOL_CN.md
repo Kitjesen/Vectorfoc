@@ -1,6 +1,6 @@
-# Inovxio 私有协议文档
+# Vector 私有协议文档
 
-本文档描述了 VectorFOC 固件中使用的私有通信协议（Inovxio / Robstride 兼容）。
+本文档描述了 VectorFOC 固件中使用的 Vector 私有通信协议。
 
 ## 1. CAN 帧结构 (29-bit Extended Frame)
 
@@ -226,7 +226,7 @@
 *   **响应 (Response)**: 开启/关闭 CMD 2 的发送。
 
 ### 3.11 切换协议 (CMD: 25)
-切换 CAN 通信协议 (Inovxio / CANopen / MIT)。
+切换 CAN 通信协议 (Vector / CANopen / MIT)。
 *   **帧 ID (Arbitration ID)**:
     *   **[28:24] CMD**: `0x19` (25)
     *   **[23:8] Info**: `0x0000`
@@ -237,7 +237,7 @@
 | Byte 0 |
 | :---: |
 | **Protocol Type** |
-| 0: Inovxio |
+| 0: Vector |
 | 1: CANopen |
 | 2: MIT Cheetah |
 

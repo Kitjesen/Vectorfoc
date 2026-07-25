@@ -43,4 +43,4 @@
 *   **Level 4 (急停)**: 立即切断 PWM (如: 硬件过流、短路)。
 
 ### 4. 协议解耦 (Protocol Decoupling)
-*   通过回调函数 (`Safety_SetReportCallback(...)`) 将故障上报逻辑与具体协议 (Inovxio/CANopen) 解耦。
+*   通过回调函数 (`Safety_SetReportCallback(...)`) 将故障上报逻辑与具体协议 (Vector/CANopen) 解耦。

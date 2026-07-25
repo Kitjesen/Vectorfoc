@@ -1,5 +1,5 @@
 """
-CAN ping test for VectorFOC / X-STAR-S (inovxio protocol)
+CAN ping test for VectorFOC / X-STAR-S (vector protocol)
 
 CAN ID format (29-bit extended):
   bits[28:24] = cmd_type

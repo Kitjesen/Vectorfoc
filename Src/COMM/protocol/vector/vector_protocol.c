@@ -353,7 +353,7 @@ bool ProtocolVector_BuildFeedback(const MotorStatus *status,
     return false;
   memset(frame, 0, sizeof(*frame));
   // ID (Bit 23-8)
-  // MinerU MD:
+  // Vector feedback ID layout:
   // Bit 23-22: Mode (0:Reset, 1:Cali, 2:Motor)
   // Bit 21-16: Fault bits (6 bits)
   // Bit 15-8:  Master ID (0xFD)
@@ -424,7 +424,7 @@ bool ProtocolVector_BuildFault(uint32_t fault_code, uint32_t warning_code,
   return true;
 }
 /**
- * @brief init Inovxio
+ * @brief Initialize the Vector private protocol.
  */
 void ProtocolVector_Init(void) {
   if (s_power_action_ticket.marker != 0U) {

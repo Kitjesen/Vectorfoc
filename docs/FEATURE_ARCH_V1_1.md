@@ -15,7 +15,7 @@ v1.0 发布后遗留两个非阻塞性缺口，本文档定义其 v1.1 的功能
 
 | 特性 | 文件影响范围 | 优先级 |
 |------|------------|--------|
-| **F1** CAN 总线扫描（多节点拓扑发现） | `bsp_can`, `inovxio_protocol`, `manager` | P1 — Thunder 多电机必要 |
+| **F1** CAN 总线扫描（多节点拓扑发现） | `bsp_can`, `vector_protocol`, `manager` | P1 — Thunder 多电机必要 |
 | **F2** Flash 参数原子写入 | `param_storage`, `bsp_flash` | P2 — 电源保护增强 |
 
 ---
@@ -57,7 +57,7 @@ DLC: 0
 
 ### 1.4 固件侧变更
 
-固件 **无需改动**。CMD 0 广播响应逻辑已在 `inovxio_protocol.c` 中实现：收到 Target=`0x7F` 的 CMD 0 时回复自身信息。
+固件 **无需改动**。CMD 0 广播响应逻辑已在 `vector_protocol.c` 中实现：收到 Target=`0x7F` 的 CMD 0 时回复自身信息。
 
 ### 1.5 主机侧（嵌入式 / PC）架构
 
@@ -388,7 +388,7 @@ STM32G431CB 128KB Flash:
 
 | 步骤 | 位置 | 工作量 |
 |------|------|--------|
-| 1. 固件侧：确认 CMD 0 广播响应已覆盖所有协议模式 | `inovxio_protocol.c`, `canopen_protocol.c` | 0.5h |
+| 1. 固件侧：确认 CMD 0 广播响应已覆盖所有协议模式 | `vector_protocol.c`, `canopen_protocol.c` | 0.5h |
 | 2. 主机侧：实现 `scan_bus()` API | Brainstem `can_manager.dart` 或独立 C 库 | 2h |
 | 3. 主机侧：NodeTable 数据结构 + 去重 + ID 碰撞检测 | 同上 | 1h |
 | 4. OpenClaw Console：拓扑发现 UI | Flutter | 2h |
@@ -441,6 +441,6 @@ STM32G431CB 128KB Flash:
 |------|------|
 | `Src/HAL/bsp/bsp_flash.h/.c` | Flash 底层 BSP（WriteDoubleWord, CRC32）|
 | `Src/UI/parameter/param_storage.h/.c` | 参数存储层（F2 主要修改点）|
-| `Src/COMM/protocol/inovxio/inovxio_protocol.h/.c` | CMD 0 广播响应（F1 验证点）|
+| `Src/COMM/protocol/vector/vector_protocol.h/.c` | CMD 0 广播响应（F1 验证点）|
 | `Src/APP/device_id.h` | STM32 96-bit UID（F1 节点唯一标识）|
-| `Src/COMM/protocol/inovxio/PROTOCOL_CN.md` | 协议文档（参考 CMD 0 格式）|
+| `Src/COMM/protocol/vector/PROTOCOL_CN.md` | 协议文档（参考 CMD 0 格式）|

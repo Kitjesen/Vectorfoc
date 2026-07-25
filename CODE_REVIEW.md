@@ -2,7 +2,7 @@
 
 **审查日期**: 2026-02-22  
 **审查人**: FOC 电机控制专家  
-**项目路径**: `D:\inovxio\modules\foc\vectorfoc`
+**项目路径**: VectorFOC 仓库根目录
 
 ---
 

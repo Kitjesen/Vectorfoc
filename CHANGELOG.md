@@ -18,6 +18,8 @@
 - 补充 CAN 链路 protocol manager -> generic transport -> BSP CAN -> STM32 HAL 及反向 ISR 回调路径、启动顺序、fail-closed 行为、新增板/传感器清单和测试/仿真命令说明。
 - 记录 A-U、B-V、C-W 相位映射变更的低压硬件核验/重新标定要求、GitHub 上游合并准则，以及当前未做实体硬件验证。
 - 明确拒绝将不安全的 `V/F`、`I/F`、固定电压/固定电流开环实现合入为默认控制路径。
+- 在 `CONTRIBUTING.md` 中明确 `main` 是唯一长期分支，规定功能分支合并后清理、批量删分支前备份，以及多分支收敛必须保留可审计祖先关系。
+- 清除源码注释、工具脚本和文档中的旧私有协议名称，统一使用 `Vector`、`vector_protocol` 与 `PROTOCOL_VECTOR`。
 
 ## [1.0.0] — 2026-03-24
 
@@ -39,7 +41,7 @@
 - 校准状态支持 Shutdown 命令退出
 
 #### 三协议通信栈
-- **Inovxio 私有协议**：CAN 2.0B 29-bit 扩展帧，20 条命令，支持广播寻址（Target=0x7F）
+- **Vector 私有协议**：CAN 2.0B 29-bit 扩展帧，20 条命令，支持广播寻址（Target=0x7F）
 - **CANopen DS402**：NMT / SDO / PDO / Heartbeat / Emergency
 - **MIT Cheetah 协议**：12 字节紧凑格式，适用于机器人关节控制
 - 协议管理器统一路由，运行时切换 <1ms

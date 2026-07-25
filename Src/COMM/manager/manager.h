@@ -16,7 +16,7 @@
  * @file    manager.h
  * @brief   Communication protocol manager - multi-protocol router.
  * @details
- * - Supported protocols: Inovxio (MinerU), CANopen DS402, MIT Cheetah.
+ * - Supported protocols: Vector private protocol, CANopen DS402, MIT Cheetah.
  * - Context: Routes CAN frames to appropriate protocol handler.
  * - Thread safety: Rx can be queued from ISR; heavy processing should run in a
  *   task context via Protocol_ProcessQueuedFrames().

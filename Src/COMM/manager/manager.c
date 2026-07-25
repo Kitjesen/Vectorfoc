@@ -17,7 +17,7 @@
  * @brief  -
  *
  * :
- *   1. : Inovxio/CANopen/MIT
+ *   1. : Vector/CANopen/MIT
  *   2. :
  *   3. : motor
  *
@@ -54,7 +54,7 @@
 #include "transport.h"
 #include <string.h>
 #define CAN_BROADCAST_ADDR 0x7F   ///< CAN
-#define VECTOR_CMD_GET_ID 0x00    ///< InovxiogetID
+#define VECTOR_CMD_GET_ID 0x00    ///< Vector GET_ID
 #define PROTOCOL_RX_QUEUE_LEN 32U ///< Rx ring buffer length
 /*  */
 static ProtocolType s_current_protocol = PROTOCOL_VECTOR;
@@ -181,7 +181,7 @@ void Protocol_Init(ProtocolType default_protocol) {
     ProtocolMIT_Init();
     break;
   default:
-    // Inovxio
+    // Vector private protocol
     s_current_protocol = PROTOCOL_VECTOR;
     ProtocolVector_Init();
     break;

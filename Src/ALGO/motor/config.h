@@ -150,7 +150,7 @@
 /* config */
 #define DEFAULT_CAN_ID 0x01
 #define DEFAULT_CAN_BAUDRATE 0   // 0=1Mbps, 1=500kbps, 2=250kbps
-#define DEFAULT_PROTOCOL_TYPE 0  // Inovxio
+#define DEFAULT_PROTOCOL_TYPE 0  // Vector
 #define DEFAULT_CAN_TIMEOUT_MS 1000 // CAN command watchdog timeout [ms]
 #define DEFAULT_ZERO_STA 0
 #define DEFAULT_ADD_OFFSET 0.0f

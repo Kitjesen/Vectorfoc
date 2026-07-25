@@ -14,7 +14,7 @@ VectorFOC 是面向 STM32G431 电机控制板的开源 FOC 固件。项目包含
 - 状态机：DS402 风格状态切换，空闲/故障态保持去使能，运行/标定态显式上电。逻辑状态更新保持短 critical section；常规 PWM HAL 调用在锁外执行，过渡期间发生故障会直接关闭 TIM1 桥臂输出并阻止重入。
 - 启动保护：ADC 注入转换虽可在外设启动后立即触发，但 FOC ISR 会在电机、传感器和安全对象全部初始化完成前保持惰性，避免启动窗口访问半初始化状态。X-STAR-S 还要求 ADC1 与 ADC2 注入序列均完成且无错误才接受一个 FOC 样本，并在接受后清除 ADC2 完成标记，避免复用陈旧样本。
 - 位置传感器：VectorFOC 板支持 MT6816、TMR3109；X-STAR-S 支持 Hall、ABZ。四种传感器统一经过 `Src/HAL/position_sensor/` 的 `PositionSensor` 模块发布位置、机械角、电角度、速度、健康状态和校准快照；ALGO/APP/SAFE 不再直接依赖具体传感器型号。
-- 通信：CAN 上的 Vector/Inovxio、MIT、CANopen 风格帧；USB CDC 调试与 VOFA+/VectorStudio 命令。CAN 链路按 protocol manager -> generic transport -> BSP CAN -> STM32 HAL 分层，接收回调按 STM32 HAL/FDCAN ISR -> BSP CAN -> CAN transport -> protocol manager 反向上送。Vector `GET_ID` 快路径只接受 29-bit 扩展帧；CANopen stopped 状态只处理 NMT，忽略 RPDO/SDO。CAN 的 `RESET`/`BOOTLOADER` ACK 必须由 FDCAN Tx event 确认完成后才执行动作；等待期间功率桥保持去使能，超时会取消待发请求、报告通信超时且不复位。
+- 通信：CAN 上的 Vector、MIT、CANopen 风格帧；USB CDC 调试与 VOFA+/VectorStudio 命令。CAN 链路按 protocol manager -> generic transport -> BSP CAN -> STM32 HAL 分层，接收回调按 STM32 HAL/FDCAN ISR -> BSP CAN -> CAN transport -> protocol manager 反向上送。Vector `GET_ID` 快路径只接受 29-bit 扩展帧；CANopen stopped 状态只处理 NMT，忽略 RPDO/SDO。CAN 的 `RESET`/`BOOTLOADER` ACK 必须由 FDCAN Tx event 确认完成后才执行动作；等待期间功率桥保持去使能，超时会取消待发请求、报告通信超时且不复位。
 - 参数与安全边界：Flash 参数页带 CRC/提交标记；显式保存和外部命令触发的持久化参数修改会先取得安全维护租约，运行/标定/其他维护占用时明确返回 `busy`。异步保存连续三次失败进入终态时，会丢弃对应保存代际并重新加载最后有效提交镜像；没有可加载镜像时恢复默认参数并清除编码器标定有效状态。
 - 故障处理：过压、欠压、过流、过温、堵转、CAN 超时、ADC/编码器异常等保护逻辑有主机回归；CAN timeout 默认 1000 ms，只有有效 CAN 通信已喂狗且处于 `STATE_MODE_RUNNING` 时才触发，设为 `0` 可禁用。故障反应态未完成时拒绝清故障，避免对外报告“已清除”而 FSM 仍处于故障态。
 - 资源观测：安全任务每秒输出 default/guard/comm 三个 FreeRTOS 任务的剩余栈高水位（单位为 word）；这用于上板压力测试，不代表已经完成硬件栈裕量认证。
