@@ -11,6 +11,9 @@
 - `FDCAN` 同时配置 11-bit 标准帧与 29-bit 扩展帧范围过滤器，恢复 CANopen/MIT 真机接收路径，同时继续拒绝 RTR 与非匹配帧。
 - 非法持久化 CAN 波特率在初始化前归一化为 1 Mbps；有效波特率下的过滤、启动或中断通知失败不再二次尝试并掩盖硬件错误。
 - `hal_encoder.c` 显式包含 `Motor_HAL_EncoderData_t` 的定义头，消除跨主控构建对偶然包含顺序的依赖。
+- 补齐 X-STAR 的 170 MHz/20 kHz PWM 周期与 ADC 触发余量板级契约，并让共享定时器和 X-STAR BSP 使用同一组常量。
+- X-STAR Motor HAL 主机测试直接复用生产 `motor_adc.h` 的类型与结构体布局，消除通用 mock 遮蔽造成的 Linux/Windows 编译失败及潜在 ABI 越界。
+- 删除已弃用的 X-STAR 专用板配置兼容入口，BSP、Hall/ABZ 传感器统一通过 `board_config.h` 选择板级实现。
 
 ### 文档
 

@@ -55,6 +55,25 @@ class ClockConfigurationTest(unittest.TestCase):
         self.assertNotIn("sConfigOC.Pulse = 4190", timer)
         self.assertIn("MCPWM_PERIOD_CLOCKS-100", ioc)
 
+    def test_xstar_pwm_timing_comes_from_board_contract(self) -> None:
+        board = read("Src/config/boards/board_xstar.h")
+        timer = read("Src/HAL/bsp/xstar/xstar_tim.c")
+
+        self.assertRegex(board, r"#define SYS_CLOCK_MHZ\s+170")
+        self.assertRegex(board, r"#define HW_PWM_FREQ_HZ\s+20000")
+        self.assertRegex(board, r"#define HW_PWM_PERIOD_TICKS\s+4250U")
+        self.assertRegex(
+            board, r"#define HW_PWM_ADC_TRIGGER_OFFSET_TICKS\s+10U"
+        )
+        self.assertEqual(170_000_000, 2 * 20_000 * 4250)
+        self.assertIn("htim1.Init.Period            = HW_PWM_PERIOD_TICKS", timer)
+        self.assertIn(
+            "HW_PWM_PERIOD_TICKS - HW_PWM_ADC_TRIGGER_OFFSET_TICKS", timer
+        )
+        self.assertNotIn("XSTAR_TIM1_ARR", timer)
+        self.assertNotIn("XSTAR_TIM1_TRIG_PULSE", timer)
+        self.assertIn('#include "board_config.h"', timer)
+
     def test_vector_pwm_phases_align_with_current_channels(self) -> None:
         board = read("Src/config/boards/board_vectorfoc.h")
         expected = (
@@ -67,6 +86,7 @@ class ClockConfigurationTest(unittest.TestCase):
         )
         for contract in expected:
             self.assertRegex(board, contract)
+
     def test_bootloader_stops_when_clock_setup_fails(self) -> None:
         source = read("Src/BOOT/boot_main.c")
         for call in (

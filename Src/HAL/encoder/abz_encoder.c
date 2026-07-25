@@ -16,7 +16,7 @@
 
 #ifdef BOARD_XSTAR
 
-#include "board_config_xstar.h"
+#include "board_config.h"
 #include "encoder_angle_math.h"
 #include "hal_abstraction.h"
 #include <math.h>

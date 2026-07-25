@@ -73,8 +73,9 @@
 #define HW_PWM_CH_PHASE_B       HW_PWM_CH_V
 #define HW_PWM_CH_PHASE_C       HW_PWM_CH_W
 
-#if HW_PWM_ADC_TRIGGER_OFFSET_TICKS >= HW_PWM_PERIOD_TICKS
-#error "ADC trigger offset must be smaller than the PWM period"
+#if HW_PWM_ADC_TRIGGER_OFFSET_TICKS == 0U || \
+    HW_PWM_ADC_TRIGGER_OFFSET_TICKS >= HW_PWM_PERIOD_TICKS
+#error "ADC trigger offset must be non-zero and smaller than the PWM period"
 #endif
 
 /*

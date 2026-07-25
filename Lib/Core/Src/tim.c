@@ -15,7 +15,7 @@ DMA_HandleTypeDef hdma_tim3_ch2;
 
 /**
  * @brief  TIM1 init - center-aligned PWM for 3-phase motor drive.
- *         Period=4200 => 168MHz / (2*4200) = 20kHz
+ *         Period and ADC sample point come from the selected board contract.
  *         CH1/CH2/CH3: motor phases, CH4: ADC trigger
  */
 void MX_TIM1_Init(void) {
@@ -34,7 +34,8 @@ void MX_TIM1_Init(void) {
     Error_Handler();
   }
 
-  /* Master: OC4REF triggers ADC injected conversion */
+  /* Preserve OC4REF as the timer master signal.  The injected ADC conversion
+   * itself selects the TIM1_CC4 rising edge in the ADC configuration. */
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC4REF;
   sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;

@@ -62,6 +62,8 @@
 #define HW_PWM_TIMER            htim1
 #define HW_PWM_TIM_INSTANCE     TIM1
 #define HW_PWM_FREQ_HZ          20000
+#define HW_PWM_PERIOD_TICKS     4250U
+#define HW_PWM_ADC_TRIGGER_OFFSET_TICKS 10U
 #define HW_PWM_DEADTIME_CLKS    20
 
 #define HW_PWM_CH_U             TIM_CHANNEL_1   /* PA8  */
@@ -73,6 +75,11 @@
 #define HW_PWM_CH_PHASE_A       HW_PWM_CH_U
 #define HW_PWM_CH_PHASE_B       HW_PWM_CH_V
 #define HW_PWM_CH_PHASE_C       HW_PWM_CH_W
+
+#if HW_PWM_ADC_TRIGGER_OFFSET_TICKS == 0U || \
+    HW_PWM_ADC_TRIGGER_OFFSET_TICKS >= HW_PWM_PERIOD_TICKS
+#error "ADC trigger offset must be non-zero and smaller than the PWM period"
+#endif
 
 /* This board definition currently has no verified BKIN/BKIN2 connection. */
 #define HW_PWM_BREAK_ENABLED    0u

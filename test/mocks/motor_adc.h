@@ -20,7 +20,15 @@ static inline void ADC_SetCurrentOffsets(float a, float b, float c) {
     (void)a; (void)b; (void)c;
 }
 static inline bool ADC_GetCurrentOffsets(float *a, float *b, float *c) {
-    if (a) *a = 0; if (b) *b = 0; if (c) *c = 0;
+    if (a) {
+        *a = 0;
+    }
+    if (b) {
+        *b = 0;
+    }
+    if (c) {
+        *c = 0;
+    }
     return true;
 }
 

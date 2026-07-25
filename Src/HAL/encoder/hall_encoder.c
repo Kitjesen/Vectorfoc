@@ -31,7 +31,7 @@
  *       无需修改本文件其余逻辑。
  */
 #include "hall_encoder.h"
-#include "board_config_xstar.h"
+#include "board_config.h"
 #include "hal_abstraction.h"  /* HAL_GetMicroseconds() */
 #include <math.h>
 #include <string.h>

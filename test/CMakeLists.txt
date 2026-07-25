@@ -419,6 +419,7 @@ add_executable(test_runner_motor_hal_xstar
 )
 target_include_directories(test_runner_motor_hal_xstar BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/motor_hal_xstar_mocks
+    ${PROJ_ROOT}/Src/HAL/stm32g4
 )
 target_compile_definitions(test_runner_motor_hal_xstar PRIVATE BOARD_XSTAR)
 register_test_target(test_runner_motor_hal_xstar)
