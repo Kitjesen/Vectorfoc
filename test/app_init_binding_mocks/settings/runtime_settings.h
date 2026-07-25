@@ -1,0 +1,5 @@
+#ifndef TEST_APP_INIT_BINDING_MOCKS_RUNTIME_SETTINGS_H
+#define TEST_APP_INIT_BINDING_MOCKS_RUNTIME_SETTINGS_H
+int RuntimeSettings_ApplyEncoderOffset(void);
+void RuntimeSettings_InstallAdapter(void);
+#endif

@@ -22,9 +22,8 @@
  */
 #ifndef HAL_ABSTRACTION_H
 #define HAL_ABSTRACTION_H
-#include "stdint.h"
 #include "stdbool.h"
-#include "protocol_types.h"
+#include "stdint.h"
 /**
  * @brief get（）
  * @return start
@@ -37,19 +36,6 @@ uint32_t HAL_GetSystemTick(void);
  * @return start
  */
 uint32_t HAL_GetMicroseconds(void);
-/**
- * @brief CAN
- * @param frame CAN
- * @return true=, false=（error）
- *
- * @note CAN ID（/）RTR
- */
-bool HAL_CAN_Transmit(const CAN_Frame *frame);
-/**
- * @brief checkCAN
- * @return true=, false=
- */
-bool HAL_CAN_IsTxMailboxAvailable(void);
 /**
  * @brief gettemperature
  * @return temperature（）

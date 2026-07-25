@@ -13,13 +13,13 @@
 // limitations under the License.
 
 #include "motor_api.h"
-#include "current_calib.h"
-#include "flux_calib.h"
-#include "control/control.h" // For CurrentLoop_UpdateGain, Control_Init
 #include "control/cogging.h"
+#include "control/control.h"
 #include "control/feedforward.h"
 #include "control/field_weakening.h"
 #include "control/ladrc.h"
+#include "current_calib.h"
+#include "flux_calib.h"
 #include "hal_pwm.h" // For MHAL_PWM_Brake ( HAL)
 #include "observer/smo_observer.h"
 #include "param_access.h"
@@ -28,6 +28,15 @@
 #include "safety_control.h"
 // External reference to the main motor data structure
 extern MOTOR_DATA motor_data;
+
+static bool Motor_IsCalibrationTypeValid(uint8_t calibration_type) {
+  return calibration_type >= 1u && calibration_type <= 5u;
+}
+
+static bool Motor_CalibrationPreconditionsPass(MOTOR_DATA *motor) {
+  uint8_t fail_mask = 0u;
+  return Motor_PreCalibCheck(motor, &fail_mask) == 0x0Fu;
+}
 // =============================================================================
 // Lifecycle / Management API
 // =============================================================================
@@ -45,23 +54,59 @@ void Init_Motor_No_Calib(MOTOR_DATA *motor) {
   motor->state.Cs_State = CS_STATE_IDLE;
   // motor->state.State_Mode = STATE_MODE_RUNNING; // Legacy
   // Stay in SWITCH_ON_DISABLED at startup; demo task requests OPERATION_ENABLED
-  // This prevents the velocity current loop from running with uncalibrated offsets
+  // This prevents the velocity current loop from running with uncalibrated
+  // offsets
   // 5. paramupdatecurrentgain
-  CurrentLoop_UpdateGain(motor);
+  CurrentLoop_ApplyConfiguredGains(motor);
   // 6. init LADRC speed/velocity
   LADRC_Init(&motor->ladrc_state, &motor->ladrc_config);
   // 7. paramupdate (inner loop)
   motor->params_updated = true;
 }
 void Init_Motor_Calib(MOTOR_DATA *motor) {
-  // motor->components.encoder->calib_valid = false;
   motor->state.Sub_State =
       RSLS_CALIBRATING; //  Rs/Ls//pole pairs/encodercalibration
   motor->state.Cs_State = CS_MOTOR_R_START; //
 }
 void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type) {
+  if (motor == NULL) {
+    return;
+  }
+
+  if (!Motor_IsCalibrationTypeValid(calibration_type) ||
+      motor->state.Sub_State != SUB_STATE_IDLE) {
+    MHAL_PWM_Disable();
+    motor->last_calib_result = CALIB_FAILED_INVALID_PARAMS;
+    return;
+  }
+
+  if (calibration_type != 5u && !Motor_CalibrationPreconditionsPass(motor)) {
+    MHAL_PWM_Disable();
+    motor->last_calib_result = CALIB_FAILED_INVALID_PARAMS;
+    return;
+  }
+
+  if (calibration_type == 5u) {
+    if (StateMachine_GetState(&g_ds402_state_machine) !=
+        STATE_OPERATION_ENABLED) {
+      MHAL_PWM_Disable();
+      motor->last_calib_result = CALIB_FAILED_INVALID_PARAMS;
+      return;
+    }
+    PID_clear(&motor->IqPID);
+    PID_clear(&motor->IdPID);
+    PID_clear(&motor->VelPID);
+    PID_clear(&motor->PosPID);
+    LADRC_Reset(&motor->ladrc_state);
+    FOC_Algorithm_ResetState(&motor->algo_state);
+    motor->calib_type_requested = calibration_type;
+    motor->last_calib_result = CALIB_IN_PROGRESS;
+    Motor_API_StartCoggingCalib(motor);
+    return;
+  }
+
   // 1. PWMoutput (safety)
-  MHAL_PWM_Brake();
+  MHAL_PWM_Disable();
   // 2. resetPIDintegral (start)
   PID_clear(&motor->IqPID);
   PID_clear(&motor->IdPID);
@@ -90,13 +135,12 @@ void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type) {
     motor->state.Sub_State = FLUX_CALIBRATING;
     FluxCalib_Start(motor, &motor->calib_ctx);
     break;
-  case 5: // Anti-cogging calibration
-    Motor_API_StartCoggingCalib(motor);
-    return; // Cogging calib runs independently, skip DS402 state change
   default:
-    motor->state.Sub_State = CURRENT_CALIBRATING;
-    CurrentCalib_Start(motor, &motor->calib_ctx);
-    break;
+    MHAL_PWM_Disable();
+    motor->state.Sub_State = SUB_STATE_IDLE;
+    motor->state.Cs_State = CS_STATE_IDLE;
+    motor->last_calib_result = CALIB_FAILED_INVALID_PARAMS;
+    return;
   }
   // 5. statemode ( FSM )
   // motor->state.State_Mode = STATE_MODE_DETECTING; // Legacy
@@ -106,7 +150,8 @@ void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type) {
 void Motor_AbortCalibration(MOTOR_DATA *motor) {
   if (motor->state.Sub_State == SUB_STATE_IDLE)
     return;
-  MHAL_PWM_Brake();
+  MHAL_PWM_Disable();
+  (void)StateMachine_SetCalibrationPower(&g_ds402_state_machine, false);
   CalibContext_Reset(&motor->calib_ctx);
   motor->state.Sub_State = SUB_STATE_IDLE;
   motor->state.Cs_State = CS_STATE_IDLE;
@@ -153,7 +198,14 @@ uint8_t Motor_PreCalibCheck(MOTOR_DATA *motor, uint8_t *fail_mask) {
     *fail_mask = fail;
   return pass;
 }
-void Motor_ClearFaults(MOTOR_DATA *motor) {
+bool Motor_ClearFaults(MOTOR_DATA *motor) {
+  if (motor == NULL || Detection_Check(motor) != FAULT_NONE) {
+    return false;
+  }
+
+  if (!Safety_ClearFaults(&g_ds402_state_machine)) {
+    return false;
+  }
   if (motor->state.State_Mode == STATE_MODE_GUARD) {
     // 1. fault
     motor->state.Fault_State = FAULT_STATE_NORMAL;
@@ -165,11 +217,8 @@ void Motor_ClearFaults(MOTOR_DATA *motor) {
     LADRC_Reset(&motor->ladrc_state);
     // 3.  IDLE state
     motor->state.State_Mode = STATE_MODE_IDLE;
-    // 4.  LED  (Assuming RGB_DisplayColorById is available via some
-    // include, or need to verify) RGB_DisplayColorById(3); // ，
-    // headers incomplete. Wait, led.h is in motor.c but not here. Let's include
-    // it.
   }
+  return true;
 }
 // =============================================================================
 // Tuning / Configuration Implementations

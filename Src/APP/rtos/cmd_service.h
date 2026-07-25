@@ -25,6 +25,17 @@ extern "C" {
 void CmdService_Init(void);                   // init
 void CmdService_Process(void);                //
 void CmdService_SetReportEnable(bool enable); // setstate
+/**
+ * @brief Reserve Flash-save maintenance before mutating persistent state.
+ * @return true when the maintenance lease is held for this save request.
+ */
+bool CmdService_BeginScheduledSave(void);
+/** @brief Queue the Flash save after CmdService_BeginScheduledSave succeeds. */
+void CmdService_CommitScheduledSave(void);
+/** @brief Release an uncommitted save reservation without queuing Flash I/O. */
+void CmdService_CancelScheduledSave(void);
+/** @brief Reserve maintenance and queue a save with no additional mutation. */
+bool CmdService_RequestScheduledSave(void);
 #ifdef __cplusplus
 }
 #endif

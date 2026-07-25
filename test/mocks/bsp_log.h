@@ -15,7 +15,10 @@
 /* 在 TEST_ENV 下不引入 bsp_usart.h（含 HAL），改用 mock */
 #ifdef TEST_ENV
 #include "mock_hal_types.h"  /* 提供 __disable_irq 等 CMSIS intrinsics */
+#ifndef TEST_UART_HANDLE_TYPEDEF
+#define TEST_UART_HANDLE_TYPEDEF
 typedef void *UART_HandleTypeDef;
+#endif
 #else
 #include "bsp_usart.h"
 #endif

@@ -36,27 +36,10 @@ void Flash_Lock(void)
 /* ============================================================================
  * Flash 擦除
  * ============================================================================ */
-BootStatus_t Flash_ErasePage(uint32_t page_num)
-{
-    FLASH_EraseInitTypeDef erase_init;
-    uint32_t page_error;
-
-    erase_init.TypeErase = FLASH_TYPEERASE_PAGES;
-    erase_init.Page = page_num;
-    erase_init.NbPages = 1;
-    erase_init.Banks = FLASH_BANK_1;
-
-    if (HAL_FLASHEx_Erase(&erase_init, &page_error) != HAL_OK) {
-        return BOOT_ERR_ERASE_FAIL;
-    }
-
-    return BOOT_OK;
-}
-
 BootStatus_t Flash_EraseAppArea(void)
 {
-    FLASH_EraseInitTypeDef erase_init;
-    uint32_t page_error;
+    FLASH_EraseInitTypeDef erase_init = {0};
+    uint32_t page_error = 0;
 
     erase_init.TypeErase = FLASH_TYPEERASE_PAGES;
     erase_init.Page = APP_PAGE_START;
@@ -75,6 +58,10 @@ BootStatus_t Flash_EraseAppArea(void)
  * ============================================================================ */
 BootStatus_t Flash_WriteData(uint32_t addr, const uint8_t *data, uint32_t len)
 {
+    if (data == NULL || len == 0u || (len & 0x7u) != 0u) {
+        return BOOT_ERR_INVALID_ADDR;
+    }
+
     /* 检查地址对齐 */
     if ((addr & 0x07) != 0) {
         return BOOT_ERR_INVALID_ADDR;
@@ -120,6 +107,9 @@ BootStatus_t Flash_WriteData(uint32_t addr, const uint8_t *data, uint32_t len)
  * ============================================================================ */
 void Flash_ReadData(uint32_t addr, uint8_t *data, uint32_t len)
 {
+    if (data == NULL || !Flash_IsAddrInAppArea(addr, len)) {
+        return;
+    }
     memcpy(data, (void *)addr, len);
 }
 
@@ -128,25 +118,58 @@ void Flash_ReadData(uint32_t addr, uint8_t *data, uint32_t len)
  * ============================================================================ */
 uint32_t Flash_CalcCRC32(const uint8_t *data, uint32_t len)
 {
-    uint32_t crc = 0xFFFFFFFF;
-    
+    if (data == NULL || len == 0u) {
+        return 0u;
+    }
+
+    return ~Flash_CRC32Update(0xFFFFFFFFu, data, len);
+}
+
+uint32_t Flash_CRC32Update(uint32_t crc, const uint8_t *data, uint32_t len)
+{
+    if (data == NULL) {
+        return crc;
+    }
+
     for (uint32_t i = 0; i < len; i++) {
         crc ^= data[i];
         for (uint8_t j = 0; j < 8; j++) {
-            if (crc & 1) {
-                crc = (crc >> 1) ^ 0xEDB88320;
+            if (crc & 1u) {
+                crc = (crc >> 1) ^ 0xEDB88320u;
             } else {
                 crc >>= 1;
             }
         }
     }
-    
-    return ~crc;
+
+    return crc;
 }
 
 uint32_t Flash_CalcFlashCRC32(uint32_t addr, uint32_t len)
 {
+    if (!Flash_IsAddrInAppArea(addr, len)) {
+        return 0u;
+    }
     return Flash_CalcCRC32((const uint8_t *)addr, len);
+}
+
+uint32_t Flash_CalcAppImageCRC32(uint32_t payload_len)
+{
+    uint32_t payload_start = APP_HEADER_ADDR + sizeof(AppHeader_t);
+    uint32_t vector_len = APP_HEADER_OFFSET;
+    uint32_t max_payload_size = APP_ADDR_END + 1u - payload_start;
+
+    if (payload_len == 0u || payload_len > max_payload_size ||
+        !Flash_IsAddrInAppArea(APP_ADDR_START, vector_len) ||
+        !Flash_IsAddrInAppArea(payload_start, payload_len)) {
+        return 0u;
+    }
+
+    uint32_t crc = Flash_CRC32Update(
+        0xFFFFFFFFu, (const uint8_t *)APP_ADDR_START, vector_len);
+    crc = Flash_CRC32Update(
+        crc, (const uint8_t *)payload_start, payload_len);
+    return ~crc;
 }
 
 /* ============================================================================
@@ -154,10 +177,13 @@ uint32_t Flash_CalcFlashCRC32(uint32_t addr, uint32_t len)
  * ============================================================================ */
 bool Flash_IsAddrInAppArea(uint32_t addr, uint32_t len)
 {
-    if (addr < APP_ADDR_START) {
+    if (len == 0u) {
         return false;
     }
-    if (addr + len > APP_ADDR_END + 1) {
+    if (addr < APP_ADDR_START || addr > APP_ADDR_END) {
+        return false;
+    }
+    if (len - 1u > APP_ADDR_END - addr) {
         return false;
     }
     return true;

@@ -18,10 +18,14 @@
 #include "config.h"
 #include "control/control.h"
 #include "foc/foc_algorithm.h"
+#include "foc/math_common.h"
 #include "foc/park.h"
 #include "foc/svpwm.h"
-#include "mt6816_encoder.h"
 #include "trajectory/trap_traj.h"
+#include "torque_utils.h"
+#include "error_manager.h"
+#include "error_types.h"
+#include "safety_control.h"
 #include <math.h>
 /**
  * @brief Control Mode Implementations
@@ -91,9 +95,22 @@ void Control_InjectVoltage(MOTOR_DATA *motor, float Vd, float Vq, float angle) {
   // 4.  (HAL)
   MHAL_PWM_SetDuty(motor->algo_output.Ta, motor->algo_output.Tb,
                    motor->algo_output.Tc);
+  if (StateMachine_GetState(&g_ds402_state_machine) == STATE_CALIBRATING) {
+    (void)StateMachine_SetCalibrationPower(&g_ds402_state_machine, true);
+  }
 }
 void ControlImpl_Open(MOTOR_DATA *motor) { OpenControlMode(motor, 40); }
-void ControlImpl_Torque(MOTOR_DATA *motor, MotorControlCtx *ctx) {
+static bool ControlImpl_RejectInvalidTorqueConstant(MOTOR_DATA *motor) {
+  motor->algo_input.Iq_ref = 0.0f;
+  motor->algo_input.Id_ref = 0.0f;
+  motor->algo_input.enabled = false;
+  MHAL_PWM_Disable();
+  Safety_TriggerFault(FAULT_CONTROL_INVALID, motor,
+                      &g_ds402_state_machine);
+  return false;
+}
+
+bool ControlImpl_Torque(MOTOR_DATA *motor, MotorControlCtx *ctx) {
   ControlImpl_SetThetaFromEncoder(motor);
 #if TORQUE_AND_CURRENT
 #if TORQUE_ADJUST
@@ -103,29 +120,27 @@ void ControlImpl_Torque(MOTOR_DATA *motor, MotorControlCtx *ctx) {
   motor->Controller.input_current =
       CLAMP(motor->Controller.input_current, -motor->Controller.current_limit,
             motor->Controller.current_limit);
-  float max_step_size =
-      fabsf(CURRENT_MEASURE_PERIOD * motor->Controller.torque_ramp_rate);
-  float full_step =
-      motor->Controller.input_current - motor->algo_input.Iq_ref;
-  float step = CLAMP(full_step, -max_step_size, max_step_size);
-  motor->algo_input.Iq_ref += step;
+  motor->algo_input.Iq_ref = motor->Controller.input_current;
   motor->algo_input.Id_ref = 0.0f;
 #endif
 #else
-  motor->Controller.input_torque =
-      CLAMP(motor->Controller.input_torque, -motor->Controller.torque_limit,
-            motor->Controller.torque_limit);
+  float torque_command = ctx != NULL ? ctx->limited_torque
+                                     : motor->Controller.input_torque;
+  torque_command = CLAMP(torque_command, -motor->Controller.torque_limit,
+                         motor->Controller.torque_limit);
+  float current_command = 0.0f;
+  if (!Control_TorqueToCurrent(torque_command,
+                               motor->Controller.torque_const,
+                               &current_command)) {
+    return ControlImpl_RejectInvalidTorqueConstant(motor);
+  }
   motor->Controller.input_current =
-      CLAMP(motor->Controller.input_torque / motor->Controller.torque_const,
-            -motor->Controller.current_limit, +motor->Controller.current_limit);
-  float max_step_size =
-      fabsf(CURRENT_MEASURE_PERIOD * motor->Controller.torque_ramp_rate);
-  float full_step =
-      motor->Controller.input_current - motor->algo_input.Iq_ref;
-  float step = CLAMP(full_step, -max_step_size, max_step_size);
-  motor->algo_input.Iq_ref += step;
+      CLAMP(current_command, -motor->Controller.current_limit,
+            +motor->Controller.current_limit);
+  motor->algo_input.Iq_ref = motor->Controller.input_current;
   motor->algo_input.Id_ref = 0.0f;
 #endif
+  return true;
 }
 void ControlImpl_Velocity(MOTOR_DATA *motor) {
   ControlImpl_SetThetaFromEncoder(motor);
@@ -141,7 +156,8 @@ void ControlImpl_VelocityRamp(MOTOR_DATA *motor) {
   float step = CLAMP(full_step, -max_step_size, max_step_size);
   motor->Controller.vel_setpoint += step;
   motor->Controller.torque_setpoint =
-      (step / VEL_POS_PERIOD) * motor->Controller.inertia;
+      Control_InertiaTorque(motor->Controller.inertia,
+                            step / VEL_POS_PERIOD);
 }
 void ControlImpl_PositionRamp(MOTOR_DATA *motor, MotorControlCtx *ctx) {
   ControlImpl_SetThetaFromEncoder(motor);
@@ -171,20 +187,20 @@ void ControlImpl_PositionRamp(MOTOR_DATA *motor, MotorControlCtx *ctx) {
     motor->Controller.pos_setpoint = ctx->traj.Y;
     motor->Controller.vel_setpoint = ctx->traj.Yd;
     motor->Controller.torque_setpoint =
-        ctx->traj.Ydd * motor->Controller.inertia;
+        Control_InertiaTorque(motor->Controller.inertia, ctx->traj.Ydd);
     if (fabsf(motor->Controller.pos_setpoint - motor->feedback.position) <
         MIT_POSITION_ERROR_TOLERANCE) {
       ctx->traj.t += VEL_POS_PERIOD;
     }
   }
 }
-void ControlImpl_MIT(MOTOR_DATA *motor) {
+bool ControlImpl_MIT(MOTOR_DATA *motor, MotorControlCtx *ctx) {
   ControlImpl_SetThetaFromEncoder(motor);
   // ========== Parameter Validity Check ==========
   if (motor->Controller.mit_kp < 0.0f || motor->Controller.mit_kd < 0.0f) {
     motor->algo_input.Iq_ref = 0.0f;
     motor->algo_input.Id_ref = 0.0f;
-    return;
+    return true;
   }
   // ========== Unit Conversion: turn -> rad ==========
   float pos_actual_rad = motor->feedback.position * M_2PI;
@@ -197,22 +213,30 @@ void ControlImpl_MIT(MOTOR_DATA *motor) {
       fabsf(vel_error) > MIT_VELOCITY_STABILITY_THRESH) {
     motor->algo_input.Iq_ref *= MIT_MODE_DECAY_FACTOR;
     motor->algo_input.Id_ref = 0.0f;
-    return;
+    return true;
   }
   // Calculate Impedance Torque
   float impedance_torque = motor->Controller.mit_kp * pos_error +
                            motor->Controller.mit_kd * vel_error;
   // ========== Torque Limiting ==========
+  float torque_feedforward =
+      ctx != NULL ? ctx->limited_torque : motor->Controller.input_torque;
   float desired_torque =
-      CLAMP(impedance_torque + motor->Controller.input_torque,
+      CLAMP(impedance_torque + torque_feedforward,
             -motor->Controller.torque_limit, motor->Controller.torque_limit);
   // ========== Convert to Current and Limit ==========
-  float desired_current = desired_torque / motor->Controller.torque_const;
+  float desired_current = 0.0f;
+  if (!Control_TorqueToCurrent(desired_torque,
+                               motor->Controller.torque_const,
+                               &desired_current)) {
+    return ControlImpl_RejectInvalidTorqueConstant(motor);
+  }
   motor->Controller.input_current =
       CLAMP(desired_current, -motor->Controller.current_limit,
             motor->Controller.current_limit);
   motor->algo_input.Iq_ref = motor->Controller.input_current;
   motor->algo_input.Id_ref = 0.0f;
+  return true;
 }
 /**
  * @brief open loopmode (speed/velocityintegralangle)
@@ -228,7 +252,7 @@ void OpenControlMode(MOTOR_DATA *motor, float target_velocity) {
   float Ts = CURRENT_MEASURE_PERIOD; // period [s]
   // angleintegral: θ(k+1) = θ(k) + ω×Ts
   //
-  motor->algo_input.theta_elec = normalize_angle(
+  motor->algo_input.theta_elec = Math_NormalizeAngle(
       motor->algo_input.theta_elec + target_velocity * Ts);
   // voltage (Vd=0, Vq=)
   //  FOC_voltage  Control_InjectVoltage

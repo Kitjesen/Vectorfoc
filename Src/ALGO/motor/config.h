@@ -31,7 +31,7 @@
 #define SYS_CLOCK_HZ_F          ((float)SYS_CLOCK_HZ)
 #define TIMER1_CLK_MHz          (SYS_CLOCK_HZ / 1000000UL)
 #define PWM_FREQUENCY           HW_PWM_FREQ_HZ
-#define MCPWM_DEADTIME_CLOCKS   HW_PWM_DEADTIME_CLKS
+#define MOTOR_DEADTIME_CLOCKS   HW_PWM_DEADTIME_CLKS
 #define V_REG                   HW_ADC_MIDPOINT
 #define FAC_CURRENT             HW_FAC_CURRENT
 #define VOLTAGE_TO_ADC_FACTOR   HW_VOLTAGE_FACTOR
@@ -47,7 +47,7 @@
 #define SYS_CLOCK_HZ_F          ((float)SYS_CLOCK_HZ)
 #define TIMER1_CLK_MHz          (SYS_CLOCK_HZ / 1000000UL)
 #define PWM_FREQUENCY           20000
-#define MCPWM_DEADTIME_CLOCKS   20
+#define MOTOR_DEADTIME_CLOCKS   20
 #define V_REG                   1.65f
 #define CURRENT_SHUNT_RES       0.02f
 #define CURRENT_AMP_GAIN        50.0f
@@ -61,7 +61,7 @@
 #define PWM_FREQUENCY_HZ        ((float)PWM_FREQUENCY)
 #define PWM_PERIOD_CYCLES       (uint16_t)((TIMER1_CLK_MHz * 1000000u / PWM_FREQUENCY) & 0xFFFE)
 #define PWM_ARR                 (uint16_t)(PWM_PERIOD_CYCLES / 2u)
-#define DEADTIME_COMP           MCPWM_DEADTIME_CLOCKS
+#define DEADTIME_COMP           MOTOR_DEADTIME_CLOCKS
 /* ==============================================================================
    2.  (System Timing)
    ==============================================================================
@@ -82,7 +82,13 @@
 #define FSM_UPDATE_HZ 1000  // DS402 stateupdatefrequency [Hz]
 #define ADV_CONTROL_HZ 5000 // （feedforward//）updatefrequency [Hz]
 #define HS_LOG_HZ 1000      // /updatefrequency [Hz]
-#define HS_LOG_ENABLE 1     // 1: enable ISR , 0:
+#ifndef HS_LOG_ENABLE
+#ifdef TEST_ENV
+#define HS_LOG_ENABLE 0
+#else
+#define HS_LOG_ENABLE HW_USB_ENABLED
+#endif
+#endif
 // safety（1）
 #define MOTOR_DECIM_MIN1(x) ((x) < 1 ? 1 : (x))
 #define MOTOR_DECIM_DIV(control_hz, target_hz)                                 \
@@ -143,9 +149,9 @@
  */
 /* config */
 #define DEFAULT_CAN_ID 0x01
-#define DEFAULT_CAN_BAUDRATE 1   // 1Mbps
-#define DEFAULT_PROTOCOL_TYPE 0  // Inovxio
-#define DEFAULT_CAN_TIMEOUT_MS 0 // 0=Disable (Safety managed separately)
+#define DEFAULT_CAN_BAUDRATE 0   // 0=1Mbps, 1=500kbps, 2=250kbps
+#define DEFAULT_PROTOCOL_TYPE 0  // Vector
+#define DEFAULT_CAN_TIMEOUT_MS 1000 // CAN command watchdog timeout [ms]
 #define DEFAULT_ZERO_STA 0
 #define DEFAULT_ADD_OFFSET 0.0f
 #define DEFAULT_DAMPER_ENABLE 0

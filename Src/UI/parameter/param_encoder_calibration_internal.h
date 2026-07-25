@@ -12,28 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/**
- * @file can_transport.h
- * @brief CAN
- * @note  TransportInterface， CAN BSP
- */
-#ifndef CAN_TRANSPORT_H
-#define CAN_TRANSPORT_H
-#include "transport.h"
-#ifdef __cplusplus
-extern "C" {
-#endif
-/**
- * @brief get CAN
- * @return TransportInterface
- */
-const TransportInterface *CAN_Transport_GetInterface(void);
-/**
- * @brief init CAN
- * @note  BSP_CAN_Init()
- */
-void CAN_Transport_Init(void);
-#ifdef __cplusplus
-}
-#endif
-#endif /* CAN_TRANSPORT_H */
+/** Internal Flash mapping for the encoder-calibration persistence module. */
+#ifndef PARAM_ENCODER_CALIBRATION_INTERNAL_H
+#define PARAM_ENCODER_CALIBRATION_INTERNAL_H
+
+#include "param_encoder_calibration.h"
+#include "param_storage.h"
+
+void ParamEncoderCalibration_Collect(FlashParamData *flash_data);
+void ParamEncoderCalibration_Restore(const FlashParamData *flash_data);
+void ParamEncoderCalibration_Clear(void);
+bool ParamEncoderCalibration_IsFlashDataValid(const FlashParamData *flash_data);
+
+#endif /* PARAM_ENCODER_CALIBRATION_INTERNAL_H */

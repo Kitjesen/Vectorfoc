@@ -35,21 +35,31 @@
 #ifndef PARAM_ACCESS_H
 #define PARAM_ACCESS_H
 #include "param_table.h"
+
 /**
- * @brief param
- * @param index param
- * @param data output
- * @param type output (NULL)
- * @return ParamResult
+ * Marker delivered to the runtime adapter after a batch restore or when the
+ * application explicitly asks for all runtime settings to be applied.
+ * ParamIndex values occupy the persisted range below this marker.
  */
-ParamResult Param_Read(uint16_t index, void *data, ParamType *type);
+#define PARAM_RUNTIME_APPLY_ALL UINT16_MAX
+
 /**
- * @brief param
- * @param index param
- * @param data input
- * @return ParamResult
+ * Runtime adapter seam.  The callback runs after an accepted parameter write
+ * has left the parameter critical section, or once after a batch restore.
+ * It must not write parameters recursively.
  */
-ParamResult Param_Write(uint16_t index, const void *data);
+typedef void (*ParamRuntimeApplyCallback)(void *context, uint16_t index);
+
+/**
+ * Install or clear the runtime adapter.  Install it before runtime changes
+ * need to take effect; passing NULL clears the adapter.
+ */
+void Param_SetRuntimeApplyCallback(ParamRuntimeApplyCallback callback,
+                                   void *context);
+
+/** Ask the installed runtime adapter to apply every persisted runtime value. */
+void Param_ApplyRuntimeState(void);
+
 /**
  * @brief floatparam ()
  * @param index param
@@ -78,6 +88,21 @@ ParamResult Param_ReadUint8(uint16_t index, uint8_t *value);
  * @return ParamResult
  */
 ParamResult Param_WriteUint8(uint16_t index, uint8_t value);
+ParamResult Param_ReadUint16(uint16_t index, uint16_t *value);
+ParamResult Param_WriteUint16(uint16_t index, uint16_t value);
+ParamResult Param_ReadUint32(uint16_t index, uint32_t *value);
+ParamResult Param_WriteUint32(uint16_t index, uint32_t value);
+ParamResult Param_ReadInt32(uint16_t index, int32_t *value);
+ParamResult Param_WriteInt32(uint16_t index, int32_t value);
+
+/** Convert a typed parameter to the float representation used on the wire. */
+ParamResult Param_ReadAsFloat(uint16_t index, float *value);
+
+/**
+ * Convert the wire-format float to the parameter's declared type.
+ * Integer targets require a finite, integral, in-range value.
+ */
+ParamResult Param_WriteFromFloat(uint16_t index, float value);
 /**
  * @brief paramFlash
  * @return ParamResult
@@ -110,6 +135,16 @@ ParamResult Param_GetInfo(uint16_t index, const ParamEntry **entry);
  * @note set，actual Param_ProcessScheduledSave
  */
 void Param_ScheduleSave(void);
+/** @brief true when a deferred Flash save request is pending. */
+bool Param_HasScheduledSave(void);
+/** @brief Monotonic generation for externally scheduled Flash save requests. */
+uint32_t Param_GetScheduledSaveGeneration(void);
+/** @brief Drop any pending deferred Flash save request. */
+void Param_DiscardScheduledSave(void);
+/** @brief Drop a pending save only if no newer request has arrived. */
+bool Param_DiscardScheduledSaveIfGeneration(uint32_t generation);
+/** @brief Restore committed Flash or defaults after a terminal deferred-save failure. */
+ParamResult Param_RollbackScheduledSave(void);
 /**
  * @brief  ()
  * @return true if save occurred, false otherwise

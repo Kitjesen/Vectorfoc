@@ -17,7 +17,10 @@
  * @brief   CANopen DS402 protocol implementation.
  * @details
  * - Standard industrial protocol for drives.
- * - Units: Position [counts], Velocity [counts/s], Torque [0.1%].
+ * - Motion values use signed 32-bit fixed point. Position and velocity scaling
+ *   can be overridden independently at build time.
+ * - DS402 target torque (6071h) uses signed per-mille of the configured torque
+ *   limit.
  * @version 1.0
  */
 
@@ -25,6 +28,14 @@
 #define PROTOCOL_CANOPEN_H
 
 #include "protocol_types.h"
+
+#ifndef CANOPEN_POSITION_UNITS_PER_RADIAN
+#define CANOPEN_POSITION_UNITS_PER_RADIAN (1000.0f)
+#endif
+
+#ifndef CANOPEN_VELOCITY_UNITS_PER_RADIAN
+#define CANOPEN_VELOCITY_UNITS_PER_RADIAN (1000.0f)
+#endif
 
 /* CANopen Object Dictionary indices (DS402 standard) */
 #define CANOPEN_OBJ_CONTROLWORD 0x6040     /**< Control word */

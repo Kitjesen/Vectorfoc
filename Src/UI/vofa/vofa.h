@@ -53,7 +53,9 @@
  *  Scope  (ISR → Task )
  * ============================================================================
  */
-#define SCOPE_BUFFER_SIZE 64 // 64 * 12 * 4 = 3 KB
+#ifndef SCOPE_BUFFER_SIZE
+#define SCOPE_BUFFER_SIZE 16 // 16 ms backlog at the 1 kHz producer rate
+#endif
 #define SCOPE_CHANNELS 12
 typedef struct {
   float data[SCOPE_BUFFER_SIZE][SCOPE_CHANNELS];
@@ -69,6 +71,25 @@ void Scope_Init(void);
 void Scope_Update(void);
 /** @brief Task  ( task_debug.c , 1kHz) */
 void Scope_Process(void);
+/** @brief Retry a queued USB transmission after a transient BUSY response. */
+void Vofa_Service(void);
+/** @brief Copy one USB OUT packet into the ISR-to-task receive queue. */
+bool Vofa_QueueReceive(const uint8_t *buf, uint16_t len);
+/** @brief Number of packets dropped because the receive queue was full. */
+uint32_t Vofa_GetReceiveOverflowCount(void);
+/**
+ * @brief Publish the result of a previously queued Flash save.
+ *
+ * The command service owns the actual write because it first obtains the
+ * motor-state maintenance lease.  This function only emits the corresponding
+ * asynchronous USB acknowledgement.
+ */
+void Vofa_ReportScheduledSaveResult(bool succeeded);
+/** @brief Publish terminal failure after bounded command-service retries. */
+void Vofa_ReportScheduledSaveFailed(void);
+/** @brief Release the in-flight queue slot from the USB TX-complete callback.
+ */
+void Vofa_OnTransmitComplete(void);
 /*  (mode) */
 void vofa_start(void);
 void vofa_send_data(uint8_t num, float data);
@@ -82,13 +103,13 @@ void Vofa_Packet(void);
  * @brief   ( '\n')
  * @param  text   ()
  */
-void Studio_SendText(const char *text);
+bool Studio_SendText(const char *text);
 /**
  * @brief   ( printf,  '\n')
  * @param  fmt
  * @param  ...  param
  */
-void Studio_SendTextf(const char *fmt, ...);
+bool Studio_SendTextf(const char *fmt, ...);
 /** @brief : "fw_version=X.Y.Z" */
 void Studio_ReportVersion(void);
 /** @brief  ( set_scope_enable ) */

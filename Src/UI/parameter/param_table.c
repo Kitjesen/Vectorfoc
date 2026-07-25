@@ -17,18 +17,9 @@
  * @brief ㄥ?- ユ
  */
 #include "param_table.h"
-#include "fault_detection.h"
-#include "motor.h"
-#include "config.h"
-#ifdef BOARD_XSTAR
-#include "board_config_xstar.h"
-#include "hall_encoder.h"
-#include "abz_encoder.h"
-#else
-#include "mt6816_encoder.h"
-extern MT6816_Handle_t encoder_data;
-#endif
-#include <string.h>
+#include <limits.h>
+#include <math.h>
+#include <stddef.h>
 /* ============================================================================
  * ㄥ?
  * ============================================================================
@@ -40,40 +31,40 @@ static const ParamEntry s_param_table[] = {
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "motor_rs",
-     .ptr = &motor_data.parameters.Rs,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 10.0f,
-     .default_val = 0.5f,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_MOTOR_LS,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "motor_ls",
-     .ptr = &motor_data.parameters.Ls,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 0.01f,
-     .default_val = 0.001f,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_MOTOR_FLUX,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "motor_flux",
-     .ptr = &motor_data.parameters.flux,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 0.1f,
-     .default_val = 0.01f,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_MOTOR_POLE_PAIRS,
      .type = PARAM_TYPE_UINT8,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "motor_pole_pairs",
-     .ptr = &motor_data.parameters.pole_pairs,
+     .ptr = NULL,
      .min = 1,
      .max = 50,
-     .default_val = (float)DEFAULT_POLE_PAIRS,
+     .default_val = 0.0f,
      .need_save = true},
     /* === PID === */
     {.index = PARAM_CUR_KP,
@@ -81,50 +72,50 @@ static const ParamEntry s_param_table[] = {
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "cur_kp",
-     .ptr = &motor_data.Controller.current_ctrl_p_gain,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 100.0f,
-     .default_val = DEFAULT_CURRENT_P_GAIN,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_CUR_KI,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "cur_ki",
-     .ptr = &motor_data.Controller.current_ctrl_i_gain,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 1000.0f,
-     .default_val = DEFAULT_CURRENT_I_GAIN,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_SPD_KP,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "spd_kp",
-     .ptr = &motor_data.VelPID.Kp,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 100.0f,
-     .default_val = DEFAULT_VEL_P_GAIN,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_SPD_KI,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "spd_ki",
-     .ptr = &motor_data.VelPID.Ki,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 100.0f,
-     .default_val = DEFAULT_VEL_I_GAIN,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_POS_KP, // Same as PARAM_LOC_KP
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "pos_kp",
-     .ptr = &motor_data.PosPID.Kp,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 100.0f,
-     .default_val = DEFAULT_POS_P_GAIN,
+     .default_val = 0.0f,
      .need_save = true},
     // Note: filter_alpha removed - PidTypeDef doesn't have this member
     // CUR_FILT_GAIN and SPD_FILT_GAIN parameters disabled
@@ -134,30 +125,30 @@ static const ParamEntry s_param_table[] = {
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "limit_torque",
-     .ptr = &motor_data.Controller.torque_limit,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 50.0f,
-     .default_val = DEFAULT_TORQUE_LIMIT,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_LIMIT_CURRENT, // Same as PARAM_LIMIT_CUR
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "limit_current",
-     .ptr = &motor_data.Controller.current_limit,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 50.0f,
-     .default_val = DEFAULT_CURRENT_LIMIT,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_LIMIT_SPEED, // Same as PARAM_LIMIT_SPD
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "limit_speed",
-     .ptr = &motor_data.Controller.vel_limit,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 1000.0f,
-     .default_val = DEFAULT_VEL_LIMIT,
+     .default_val = 0.0f,
      .need_save = true},
     /* === /″ === */
     {.index = PARAM_VEL_MAX,
@@ -165,40 +156,40 @@ static const ParamEntry s_param_table[] = {
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "vel_max",
-     .ptr = &motor_data.Controller.traj_vel,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 1000.0f,
-     .default_val = DEFAULT_TRAJ_VEL,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_ACC_SET,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "acc_set",
-     .ptr = &motor_data.Controller.traj_accel,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 10000.0f,
-     .default_val = DEFAULT_TRAJ_ACCEL,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_ACC_RAD,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "acc_rad",
-     .ptr = &motor_data.Controller.traj_decel,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 10000.0f,
-     .default_val = DEFAULT_TRAJ_DECEL,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_INERTIA,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "inertia",
-     .ptr = &motor_data.Controller.inertia,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 1.0f,
-     .default_val = DEFAULT_INERTIA, // Default 0 (Disable FF)
+     .default_val = 0.0f,
      .need_save = true},
     /* === CAN === */
     {.index = PARAM_CAN_ID,
@@ -206,40 +197,40 @@ static const ParamEntry s_param_table[] = {
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "can_id",
-     .ptr = &g_can_id,
+     .ptr = NULL,
      .min = 1,
      .max = 127,
-     .default_val = (float)DEFAULT_CAN_ID,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_CAN_BAUDRATE,
      .type = PARAM_TYPE_UINT8,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "can_baudrate",
-     .ptr = &g_can_baudrate,
+     .ptr = NULL,
      .min = 0,
      .max = 2,
-     .default_val = (float)DEFAULT_CAN_BAUDRATE, // 0=1M, 1=500K, 2=250K
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_PROTOCOL_TYPE,
      .type = PARAM_TYPE_UINT8,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "protocol_type",
-     .ptr = &g_protocol_type,
+     .ptr = NULL,
      .min = 0,
      .max = 2,
-     .default_val = (float)DEFAULT_PROTOCOL_TYPE, // 0=, 1=CANopen, 2=MIT
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_CAN_TIMEOUT,
      .type = PARAM_TYPE_UINT32,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "can_timeout",
-     .ptr = &g_can_timeout_ms,
+     .ptr = NULL,
      .min = 0,
      .max = 10000,
-     .default_val = (float)DEFAULT_CAN_TIMEOUT_MS, // 1000ms
+     .default_val = 0.0f,
      .need_save = true},
     /* ===  === */
     {.index = PARAM_ZERO_STA,
@@ -247,40 +238,40 @@ static const ParamEntry s_param_table[] = {
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "zero_sta",
-     .ptr = &g_zero_sta,
+     .ptr = NULL,
      .min = 0,
      .max = 1,
-     .default_val = (float)DEFAULT_ZERO_STA, // 0: 0~2, 1: -~
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_ADD_OFFSET,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "add_offset",
-     .ptr = &g_add_offset,
+     .ptr = NULL,
      .min = -6.28f,
      .max = 6.28f,
-     .default_val = DEFAULT_ADD_OFFSET,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_DAMPER,
      .type = PARAM_TYPE_UINT8,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "damper",
-     .ptr = &g_damper_enable,
+     .ptr = NULL,
      .min = 0,
      .max = 1,
-     .default_val = (float)DEFAULT_DAMPER_ENABLE,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_RUN_MODE,
      .type = PARAM_TYPE_UINT8,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "run_mode",
-     .ptr = &g_run_mode,
+     .ptr = NULL,
      .min = 0,
-     .max = 10,
-     .default_val = (float)DEFAULT_RUN_MODE,
+     .max = 5,
+     .default_val = 0.0f,
      .need_save = true},
     /* ===  === */
     {.index = PARAM_OV_THRESHOLD,
@@ -288,40 +279,40 @@ static const ParamEntry s_param_table[] = {
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "ov_threshold",
-     .ptr = &s_config.over_voltage_threshold,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 100.0f,
-     .default_val = FAULT_VBUS_OVERVOLT_V,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_UV_THRESHOLD,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "uv_threshold",
-     .ptr = &s_config.under_voltage_threshold,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 100.0f,
-     .default_val = FAULT_VBUS_UNDERVOLT_V,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_OC_THRESHOLD,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "oc_threshold",
-     .ptr = &s_config.over_current_threshold,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 200.0f,
-     .default_val = FAULT_OVER_CURRENT_A,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_OT_THRESHOLD,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "ot_threshold",
-     .ptr = &s_config.over_temp_threshold,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 200.0f,
-     .default_val = FAULT_TEMP_ERROR_C,
+     .default_val = 0.0f,
      .need_save = true},
     /* === у === */
     {.index = PARAM_SMO_ALPHA,
@@ -329,27 +320,27 @@ static const ParamEntry s_param_table[] = {
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "smo_alpha",
-     .ptr = &motor_data.advanced.smo_alpha,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 10.0f,
-     .default_val = 0.1f,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_SMO_BETA,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "smo_beta",
-     .ptr = &motor_data.advanced.smo_beta,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 10.0f,
-     .default_val = 0.1f,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_FF_FRICTION,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "ff_friction",
-     .ptr = &motor_data.advanced.ff_friction,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 10.0f,
      .default_val = 0.0f,
@@ -359,7 +350,7 @@ static const ParamEntry s_param_table[] = {
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "fw_max_cur",
-     .ptr = &motor_data.advanced.fw_max_current,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 20.0f,
      .default_val = 0.0f,
@@ -369,17 +360,17 @@ static const ParamEntry s_param_table[] = {
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "fw_start_vel",
-     .ptr = &motor_data.advanced.fw_start_velocity,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 1000.0f,
-     .default_val = 100.0f,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_COGGING_EN,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "cogging_en",
-     .ptr = &motor_data.advanced.cogging_comp_enabled,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 1.0f,
      .default_val = 0.0f,
@@ -389,7 +380,7 @@ static const ParamEntry s_param_table[] = {
      .attr = PARAM_ATTR_RUNTIME,
      .access = PARAM_ACCESS_RW,
      .name = "cogging_calib",
-     .ptr = &motor_data.advanced.cogging_calib_request,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 1.0f,
      .default_val = 0.0f,
@@ -400,50 +391,50 @@ static const ParamEntry s_param_table[] = {
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "ladrc_en",
-     .ptr = &motor_data.ladrc_enable,
+     .ptr = NULL,
      .min = 0.0f,
      .max = 1.0f,
-     .default_val = (float)DEFAULT_LADRC_ENABLE,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_LADRC_OMEGA_O,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "ladrc_wo",
-     .ptr = &motor_data.ladrc_config.omega_o,
+     .ptr = NULL,
      .min = 10.0f,
      .max = 5000.0f,
-     .default_val = DEFAULT_LADRC_OMEGA_O,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_LADRC_OMEGA_C,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "ladrc_wc",
-     .ptr = &motor_data.ladrc_config.omega_c,
+     .ptr = NULL,
      .min = 5.0f,
      .max = 2000.0f,
-     .default_val = DEFAULT_LADRC_OMEGA_C,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_LADRC_B0,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "ladrc_b0",
-     .ptr = &motor_data.ladrc_config.b0,
+     .ptr = NULL,
      .min = 0.1f,
      .max = 10000.0f,
-     .default_val = DEFAULT_LADRC_B0,
+     .default_val = 0.0f,
      .need_save = true},
     {.index = PARAM_LADRC_MAX_OUT,
      .type = PARAM_TYPE_FLOAT,
      .attr = PARAM_ATTR_PERSISTENT,
      .access = PARAM_ACCESS_RW,
      .name = "ladrc_max",
-     .ptr = &motor_data.ladrc_config.max_output,
+     .ptr = NULL,
      .min = 0.1f,
      .max = 200.0f,
-     .default_val = DEFAULT_LADRC_MAX_OUT,
+     .default_val = 0.0f,
      .need_save = true},
     /* ===================================================================
      * ㄥ�ц?
@@ -494,30 +485,139 @@ static const ParamEntry s_param_table[] = {
      */
 };
 static const uint32_t s_param_count =
-    sizeof(s_param_table) / sizeof(ParamEntry);
+    sizeof(s_param_table) / sizeof(s_param_table[0]);
+static ParamTargetBindingAdapter s_binding_adapter = NULL;
+static void *s_binding_context = NULL;
+
+static bool ParamTable_IsBindingDefaultValid(const ParamEntry *entry,
+                                             float default_val) {
+  if (!isfinite(default_val) || default_val < entry->min ||
+      default_val > entry->max) {
+    return false;
+  }
+
+  switch (entry->type) {
+  case PARAM_TYPE_FLOAT:
+    return true;
+  case PARAM_TYPE_UINT8: {
+    if (default_val < 0.0f || default_val > (float)UINT8_MAX) {
+      return false;
+    }
+    uint8_t typed = (uint8_t)default_val;
+    return default_val == (float)typed;
+  }
+  case PARAM_TYPE_UINT16: {
+    if (default_val < 0.0f || default_val > (float)UINT16_MAX) {
+      return false;
+    }
+    uint16_t typed = (uint16_t)default_val;
+    return default_val == (float)typed;
+  }
+  case PARAM_TYPE_UINT32: {
+    if (default_val < 0.0f || (double)default_val > (double)UINT32_MAX) {
+      return false;
+    }
+    uint32_t typed = (uint32_t)default_val;
+    return default_val == (float)typed;
+  }
+  case PARAM_TYPE_INT32: {
+    if ((double)default_val < (double)INT32_MIN ||
+        (double)default_val > (double)INT32_MAX) {
+      return false;
+    }
+    int32_t typed = (int32_t)default_val;
+    return default_val == (float)typed;
+  }
+  default:
+    return false;
+  }
+}
+
+static ParamResult ParamTable_ValidateBinding(const ParamEntry *entry,
+                                              const ParamTargetBinding *binding) {
+  if (binding->index != entry->index) {
+    return PARAM_ERR_INVALID_INDEX;
+  }
+  if (binding->type != entry->type) {
+    return PARAM_ERR_INVALID_TYPE;
+  }
+  if (binding->target == NULL) {
+    return PARAM_ERR_NULL_PTR;
+  }
+  if (!ParamTable_IsBindingDefaultValid(entry, binding->default_val)) {
+    return PARAM_ERR_OUT_OF_RANGE;
+  }
+  return PARAM_OK;
+}
+
+ParamResult ParamTable_SetBindingAdapter(ParamTargetBindingAdapter adapter,
+                                         void *context) {
+  if (adapter == NULL) {
+    return PARAM_ERR_NULL_PTR;
+  }
+
+  for (uint32_t i = 0U; i < s_param_count; ++i) {
+    const ParamEntry *entry = &s_param_table[i];
+    ParamTargetBinding binding = {0};
+    if (!adapter(context, entry->index, entry->type, &binding)) {
+      return PARAM_ERR_INVALID_INDEX;
+    }
+    ParamResult result = ParamTable_ValidateBinding(entry, &binding);
+    if (result != PARAM_OK) {
+      return result;
+    }
+  }
+
+  s_binding_adapter = adapter;
+  s_binding_context = context;
+  return PARAM_OK;
+}
+
+bool ParamTable_IsBound(void) { return s_binding_adapter != NULL; }
+
+ParamResult ParamTable_GetBinding(const ParamEntry *entry,
+                                  ParamTargetBinding *binding) {
+  if (entry == NULL || binding == NULL || s_binding_adapter == NULL) {
+    return PARAM_ERR_NULL_PTR;
+  }
+
+  if (!s_binding_adapter(s_binding_context, entry->index, entry->type,
+                         binding)) {
+    return PARAM_ERR_INVALID_INDEX;
+  }
+  return ParamTable_ValidateBinding(entry, binding);
+}
+
 /* ============================================================================
  * ㄦｅ?
  * ============================================================================
  */
 void ParamTable_Init(void) {
+  if (s_binding_adapter == NULL) {
+    return;
+  }
   // ?
   for (uint32_t i = 0; i < s_param_count; i++) {
     const ParamEntry *entry = &s_param_table[i];
+    ParamTargetBinding binding = {0};
+    if (ParamTable_GetBinding(entry, &binding) != PARAM_OK) {
+      return;
+    }
     switch (entry->type) {
     case PARAM_TYPE_FLOAT:
-      *(float *)entry->ptr = entry->default_val;
+      *(float *)binding.target = binding.default_val;
       break;
     case PARAM_TYPE_UINT8:
-      *(uint8_t *)entry->ptr = (uint8_t)entry->default_val;
+      *(uint8_t *)binding.target = (uint8_t)binding.default_val;
       break;
     case PARAM_TYPE_UINT16:
-      *(uint16_t *)entry->ptr = (uint16_t)entry->default_val;
+      *(uint16_t *)binding.target = (uint16_t)binding.default_val;
       break;
     case PARAM_TYPE_UINT32:
-      *(uint32_t *)entry->ptr = (uint32_t)entry->default_val;
+      *(uint32_t *)binding.target = (uint32_t)binding.default_val;
       break;
     case PARAM_TYPE_INT32:
-      *(int32_t *)entry->ptr = (int32_t)entry->default_val;
+      *(int32_t *)binding.target = (int32_t)binding.default_val;
       break;
     }
   }

@@ -4,6 +4,28 @@
 
 ---
 
+## [Unreleased]
+
+### 修复
+
+- `FDCAN` 同时配置 11-bit 标准帧与 29-bit 扩展帧范围过滤器，恢复 CANopen/MIT 真机接收路径，同时继续拒绝 RTR 与非匹配帧。
+- 非法持久化 CAN 波特率在初始化前归一化为 1 Mbps；有效波特率下的过滤、启动或中断通知失败不再二次尝试并掩盖硬件错误。
+- `hal_encoder.c` 显式包含 `Motor_HAL_EncoderData_t` 的定义头，消除跨主控构建对偶然包含顺序的依赖。
+- 补齐 X-STAR 的 170 MHz/20 kHz PWM 周期与 ADC 触发余量板级契约，并让共享定时器和 X-STAR BSP 使用同一组常量。
+- X-STAR Motor HAL 主机测试直接复用生产 `motor_adc.h` 的类型与结构体布局，消除通用 mock 遮蔽造成的 Linux/Windows 编译失败及潜在 ABI 越界。
+- 删除已弃用的 X-STAR 专用板配置兼容入口，BSP、Hall/ABZ 传感器统一通过 `board_config.h` 选择板级实现。
+- 为 X-STAR Hall 实现补回显式板级编译边界，避免通用源码收集在 Vector 磁编码器构建中引用不存在的 Hall 引脚。
+- `hal_encoder.c` 显式包含 `NULL` 的标准定义，消除 GCC/Linux 对间接头文件包含顺序的依赖。
+
+### 文档
+
+- 更新 `README.md` 的项目介绍、分层架构和替换边界，明确 `Motor_HAL_Handle_t`、`board_config`/CMake、`PositionSensorAdapter_t`、`HW_POSITION_SENSOR_MODE` 与旧 `Motor_HAL_EncoderInterface_t` 兼容桥的职责。
+- 补充 CAN 链路 protocol manager -> generic transport -> BSP CAN -> STM32 HAL 及反向 ISR 回调路径、启动顺序、fail-closed 行为、新增板/传感器清单和测试/仿真命令说明。
+- 记录 A-U、B-V、C-W 相位映射变更的低压硬件核验/重新标定要求、GitHub 上游合并准则，以及当前未做实体硬件验证。
+- 明确拒绝将不安全的 `V/F`、`I/F`、固定电压/固定电流开环实现合入为默认控制路径。
+- 在 `CONTRIBUTING.md` 中明确 `main` 是唯一长期分支，规定功能分支合并后清理、批量删分支前备份，以及多分支收敛必须保留可审计祖先关系。
+- 清除源码注释、工具脚本和文档中的旧私有协议名称，统一使用 `Vector`、`vector_protocol` 与 `PROTOCOL_VECTOR`。
+
 ## [1.0.0] — 2026-03-24
 
 **首个正式发布版本**。STM32G431 FOC 电机控制器固件，经两轮专家级代码审查 + 43 项单元测试全部通过。
@@ -24,7 +46,7 @@
 - 校准状态支持 Shutdown 命令退出
 
 #### 三协议通信栈
-- **Inovxio 私有协议**：CAN 2.0B 29-bit 扩展帧，20 条命令，支持广播寻址（Target=0x7F）
+- **Vector 私有协议**：CAN 2.0B 29-bit 扩展帧，20 条命令，支持广播寻址（Target=0x7F）
 - **CANopen DS402**：NMT / SDO / PDO / Heartbeat / Emergency
 - **MIT Cheetah 协议**：12 字节紧凑格式，适用于机器人关节控制
 - 协议管理器统一路由，运行时切换 <1ms

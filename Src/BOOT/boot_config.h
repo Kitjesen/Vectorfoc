@@ -16,10 +16,10 @@
  * @file boot_config.h
  * @brief OTA Bootloader 配置 - Flash 布局与常量定义
  *
- * Flash Layout (STM32G4, 256KB):
+ * Flash Layout (STM32G431CB/RB, 128KB):
  *   0x08000000 - 0x08003FFF : Bootloader (16KB, 8 pages)
- *   0x08004000 - 0x0803BFFF : Application (224KB, 112 pages)
- *   0x0803C000 - 0x0803FFFF : Config/Params (16KB, 8 pages)
+ *   0x08004000 - 0x0801EFFF : Application (108KB, 54 pages)
+ *   0x0801F000 - 0x0801FFFF : Config/Params (4KB, 2 pages)
  */
 #ifndef BOOT_CONFIG_H
 #define BOOT_CONFIG_H
@@ -30,25 +30,25 @@
 /* ============================================================================
  * Flash 地址定义
  * ============================================================================ */
-#define BOOT_FLASH_BASE         0x08000000
-#define BOOT_FLASH_PAGE_SIZE    2048        /* STM32G4: 2KB per page */
+#define BOOT_FLASH_BASE         0x08000000u
+#define BOOT_FLASH_PAGE_SIZE    2048u       /* STM32G431: 2KB per page */
 
 /* Bootloader 区域 (16KB = 8 pages) */
-#define BOOT_ADDR_START         0x08000000
-#define BOOT_ADDR_END           0x08003FFF
-#define BOOT_SIZE               (16 * 1024)
+#define BOOT_ADDR_START         0x08000000u
+#define BOOT_ADDR_END           0x08003FFFu
+#define BOOT_SIZE               (16u * 1024u)
 
-/* Application 区域 (224KB = 112 pages) */
-#define APP_ADDR_START          0x08004000
-#define APP_ADDR_END            0x0803BFFF
-#define APP_SIZE                (224 * 1024)
-#define APP_PAGE_START          8           /* Page 8 */
-#define APP_PAGE_COUNT          112
+/* Application 区域 (108KB = 54 pages) */
+#define APP_ADDR_START          0x08004000u
+#define APP_ADDR_END            0x0801EFFFu
+#define APP_SIZE                (108u * 1024u)
+#define APP_PAGE_START          8u          /* Page 8 */
+#define APP_PAGE_COUNT          54u
 
-/* Config/Params 区域 (16KB = 8 pages) */
-#define CONFIG_ADDR_START       0x0803C000
-#define CONFIG_ADDR_END         0x0803FFFF
-#define CONFIG_SIZE             (16 * 1024)
+/* Config/Params 区域 (4KB = 2 pages) */
+#define CONFIG_ADDR_START       0x0801F000u
+#define CONFIG_ADDR_END         0x0801FFFFu
+#define CONFIG_SIZE             (4u * 1024u)
 
 /* ============================================================================
  * App 有效性检查
@@ -68,11 +68,33 @@ typedef struct {
     uint32_t reserved[3];       /* 保留 */
 } AppHeader_t;
 
+typedef char AppHeaderSizeMustBe32[(sizeof(AppHeader_t) == 32) ? 1 : -1];
+
+#if (APP_ADDR_START + APP_SIZE - 1u) != APP_ADDR_END
+#error "Application address range and size are inconsistent"
+#endif
+
+#if (APP_PAGE_START * BOOT_FLASH_PAGE_SIZE) != (APP_ADDR_START - BOOT_FLASH_BASE)
+#error "Application start page does not match APP_ADDR_START"
+#endif
+
+#if (APP_PAGE_COUNT * BOOT_FLASH_PAGE_SIZE) != APP_SIZE
+#error "Application page count does not match APP_SIZE"
+#endif
+
+#if CONFIG_ADDR_START != (APP_ADDR_END + 1u)
+#error "Parameter area must immediately follow the application"
+#endif
+
 /* ============================================================================
  * 升级标志 (RAM 中，复位不清除)
  * ============================================================================ */
 /* 使用 RAM 末尾的特殊区域存放升级标志 */
-#define BOOT_FLAG_ADDR          0x20007FF0  /* RAM 末尾 16 bytes */
+#define BOOT_FLAG_ADDR          0x200057F0  /* End of contiguous SRAM1 + SRAM2 */
+#define BOOT_SRAM_BASE          0x20000000
+#define BOOT_SRAM_END           0x20005800
+#define BOOT_CCMRAM_BASE        0x10000000
+#define BOOT_CCMRAM_END         0x10002800
 #define BOOT_FLAG_MAGIC         0x424F4F54  /* "BOOT" */
 #define BOOT_FLAG_UPGRADE       0x55504752  /* "UPGR" - 请求升级 */
 #define BOOT_FLAG_APP_VALID     0x56414C44  /* "VALD" - App 有效 */
@@ -83,6 +105,8 @@ typedef struct {
     uint32_t request;           /* BOOT_FLAG_UPGRADE = 请求升级 */
     uint32_t reserved[2];
 } BootFlag_t;
+
+typedef char BootFlagSizeMustBe16[(sizeof(BootFlag_t) == 16) ? 1 : -1];
 
 /* ============================================================================
  * 协议配置
@@ -112,6 +136,7 @@ typedef enum {
     BOOT_ERR_TIMEOUT,
     BOOT_ERR_INVALID_CMD,
     BOOT_ERR_APP_INVALID,
+    BOOT_ERR_RX_OVERFLOW,
 } BootStatus_t;
 
 #endif /* BOOT_CONFIG_H */

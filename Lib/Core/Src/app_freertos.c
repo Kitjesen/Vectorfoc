@@ -6,6 +6,7 @@
  */
 
 #include "FreeRTOS.h"
+#include "app_freertos.h"
 #include "cmsis_os.h"
 #include "main.h"
 #include "task.h"
@@ -17,6 +18,29 @@
 osThreadId defaultTaskHandle;
 osThreadId guardtaskHandle;
 osThreadId customtaskHandle;
+
+#define DEFAULT_TASK_STACK_DEPTH 256U
+#define GUARD_TASK_STACK_DEPTH   256U
+#define COMM_TASK_STACK_DEPTH    512U
+
+#if defined(__GNUC__)
+#define APP_FREERTOS_CCM_STACK __attribute__((section(".ccm_bss"), aligned(8)))
+#else
+#define APP_FREERTOS_CCM_STACK
+#endif
+
+/*
+ * The debug stack is CPU-only and shares CCM with the encoder calibration
+ * workspace. Guard/communication stacks remain in regular SRAM to preserve
+ * headroom in both physical RAM banks.
+ */
+static StackType_t xDefaultTaskStack[DEFAULT_TASK_STACK_DEPTH]
+    APP_FREERTOS_CCM_STACK;
+static StackType_t xGuardTaskStack[GUARD_TASK_STACK_DEPTH];
+static StackType_t xCommTaskStack[COMM_TASK_STACK_DEPTH];
+static StaticTask_t xDefaultTaskTCB;
+static StaticTask_t xGuardTaskTCB;
+static StaticTask_t xCommTaskTCB;
 
 /* Task entry point declarations (implemented in Src/APP/rtos/) */
 void StartDefaultTask(void const *argument);
@@ -33,6 +57,7 @@ void vApplicationGetIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffer,
 /* OS hook prototypes */
 void vApplicationIdleHook(void);
 void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
+void vApplicationMallocFailedHook(void);
 
 __weak void vApplicationIdleHook(void) {
   /* Called on each idle task iteration. Must never block. */
@@ -40,7 +65,13 @@ __weak void vApplicationIdleHook(void) {
 
 __weak void vApplicationStackOverflowHook(xTaskHandle xTask,
                                           signed char *pcTaskName) {
-  /* Called when stack overflow is detected (configCHECK_FOR_STACK_OVERFLOW) */
+  (void)xTask;
+  (void)pcTaskName;
+  Error_Handler();
+}
+
+__weak void vApplicationMallocFailedHook(void) {
+  Error_Handler();
 }
 
 static StaticTask_t xIdleTaskTCBBuffer;
@@ -54,19 +85,60 @@ void vApplicationGetIdleTaskMemory(StaticTask_t **ppxIdleTaskTCBBuffer,
   *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
 }
 
+bool AppFreertos_GetRuntimeStats(AppFreertosRuntimeStats_t *stats) {
+  if (stats == NULL) {
+    return false;
+  }
+
+  stats->scheduler_running = false;
+  stats->task_handles_ready = false;
+  stats->default_stack_high_water_words = 0u;
+  stats->guard_stack_high_water_words = 0u;
+  stats->comm_stack_high_water_words = 0u;
+
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING) {
+    return false;
+  }
+  stats->scheduler_running = true;
+
+  if (defaultTaskHandle == NULL || guardtaskHandle == NULL ||
+      customtaskHandle == NULL) {
+    return false;
+  }
+  stats->task_handles_ready = true;
+
+  stats->default_stack_high_water_words =
+      (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)defaultTaskHandle);
+  stats->guard_stack_high_water_words =
+      (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)guardtaskHandle);
+  stats->comm_stack_high_water_words =
+      (uint32_t)uxTaskGetStackHighWaterMark((TaskHandle_t)customtaskHandle);
+
+  return true;
+}
+
 /**
  * @brief  FreeRTOS initialization - create all application tasks.
  */
 void MX_FREERTOS_Init(void) {
   /* Debug task: USB/VOFA data output (1kHz) */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 256);
+  osThreadStaticDef(defaultTask, StartDefaultTask, osPriorityNormal, 0,
+                    DEFAULT_TASK_STACK_DEPTH, xDefaultTaskStack,
+                    &xDefaultTaskTCB);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* Guard task: motor safety monitoring + LED (200Hz) */
-  osThreadDef(guardtask, StartGuardTask, osPriorityNormal, 0, 256);
+  osThreadStaticDef(guardtask, StartGuardTask, osPriorityNormal, 0,
+                    GUARD_TASK_STACK_DEPTH, xGuardTaskStack, &xGuardTaskTCB);
   guardtaskHandle = osThreadCreate(osThread(guardtask), NULL);
 
   /* Communication task: CAN command processing (500Hz) */
-  osThreadDef(customtask, StartCustomTask, osPriorityAboveNormal, 0, 1024);
+  osThreadStaticDef(customtask, StartCustomTask, osPriorityAboveNormal, 0,
+                    COMM_TASK_STACK_DEPTH, xCommTaskStack, &xCommTaskTCB);
   customtaskHandle = osThreadCreate(osThread(customtask), NULL);
+
+  if (defaultTaskHandle == NULL || guardtaskHandle == NULL ||
+      customtaskHandle == NULL) {
+    Error_Handler();
+  }
 }

@@ -1,0 +1,4 @@
+#ifndef MOTOR_HAL_XSTAR_MOCK_COMMON_H
+#define MOTOR_HAL_XSTAR_MOCK_COMMON_H
+
+#endif

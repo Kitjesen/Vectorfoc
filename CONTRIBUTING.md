@@ -28,6 +28,19 @@ Open a GitHub Issue tagged `enhancement`. Describe the use case, not just the so
 - One pull request per feature or fix.
 - All new algorithm code must have corresponding tests under `test/`.
 
+### Branch Policy
+
+- `main` is the only long-lived development branch and the target of every pull request.
+- Do not create or continue development on a parallel `master` branch.
+- Feature, fix, and automation branches must be short-lived and deleted after their
+  commits are present in `main`.
+- Do not merge a stale branch only because it still exists. First prove its tip is
+  contained with `git merge-base --is-ancestor <branch> main`.
+- For a bulk branch cleanup, preserve the integration commit with a verified Git
+  bundle or archive tag before deleting remote refs.
+- Use an ancestry-preserving merge commit for a multi-branch consolidation. Do not
+  squash that consolidation, because the original branch tips must remain auditable.
+
 ### Development Workflow
 
 ```bash
@@ -76,8 +89,12 @@ Scopes: `foc`, `motor`, `hal`, `comm`, `config`, `test`, `ci`
 ### Testing Requirements
 
 - Every new algorithm function must have at least one unit test in `test/`.
-- All 43 existing tests must continue to pass: `ctest --test-dir build_test -V`.
-- CI runs these tests automatically on every push.
+- Every test registered by the current CMake graph must pass; do not hard-code an
+  expected count in documentation.
+- Run `ctest --test-dir build_test --output-on-failure` after a fresh configure and
+  build.
+- CI also builds the VectorFOC MT6816/TMR3109 and X-STAR-S Hall/ABZ firmware matrix,
+  the bootloader, and host tests on Linux and Windows.
 
 ## License
 

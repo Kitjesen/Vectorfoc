@@ -6,9 +6,14 @@ project(VectorFoc_Bootloader C CXX ASM)
 # MCU specific definitions
 set(MCU_FLAGS "-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb")
 add_definitions(-DSTM32G431xx -DUSE_HAL_DRIVER -DSTM32G4xx -DBOOTLOADER_BUILD)
+# system_stm32g4xx.c does not include stm32g4xx_hal_conf.h, so provide the
+# board oscillator explicitly to both CMSIS and HAL sources.
+add_compile_definitions(HSE_VALUE=8000000U)
 
 # Build type - always optimize for size
 set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_C_FLAGS_RELEASE "-Os -DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-Os -DNDEBUG")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${MCU_FLAGS} -Wall -fdata-sections -ffunction-sections -Os")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MCU_FLAGS} -Wall -fdata-sections -ffunction-sections -Os")
@@ -71,6 +76,7 @@ set(USB_SOURCES
 set(SYSTEM_SOURCES
     ${CMAKE_SOURCE_DIR}/Lib/Core/Src/system_stm32g4xx.c
     ${CMAKE_SOURCE_DIR}/Lib/Core/Src/stm32g4xx_hal_msp.c
+    ${CMAKE_SOURCE_DIR}/Src/HAL/stm32g4/syscalls.c
 )
 
 # Startup file
@@ -103,6 +109,6 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
 
 # Print size
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
-    COMMAND ${CMAKE_SIZE} ${CMAKE_PROJECT_NAME}.elf
+    COMMAND ${CMAKE_SIZE_UTIL} ${CMAKE_PROJECT_NAME}.elf
     COMMENT "Firmware size:"
 )

@@ -7,6 +7,8 @@
 #include "main.h"
 #include "stm32g4xx_it.h"
 
+#include <stdbool.h>
+
 /* External peripheral handles */
 extern ADC_HandleTypeDef   hadc1;
 extern ADC_HandleTypeDef   hadc2;
@@ -30,26 +32,31 @@ extern TIM_HandleTypeDef   htim17;
 /* ---- Cortex-M4 Exception Handlers ---- */
 
 void NMI_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
 
 void HardFault_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
 
 void MemManage_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
 
 void BusFault_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
 
 void UsageFault_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
@@ -59,9 +66,24 @@ void DebugMon_Handler(void) {
 
 /* ---- Peripheral Interrupt Handlers ---- */
 
+static bool ADC_HasPendingEnabledInterrupt(const ADC_HandleTypeDef *hadc) {
+  const uint32_t adc_irq_mask =
+      ADC_IT_RDY | ADC_IT_EOSMP | ADC_IT_EOC | ADC_IT_EOS | ADC_IT_OVR |
+      ADC_IT_JEOC | ADC_IT_JEOS | ADC_IT_AWD1 | ADC_IT_AWD2 | ADC_IT_AWD3 |
+      ADC_IT_JQOVF;
+
+  return hadc != NULL && hadc->Instance != NULL &&
+         ((hadc->Instance->ISR & hadc->Instance->IER & adc_irq_mask) != 0U);
+}
+
 /* ADC1 + ADC2 shared interrupt（FOC ISR，两块板通用） */
 void ADC1_2_IRQHandler(void) {
-  HAL_ADC_IRQHandler(&hadc1);
+  if (ADC_HasPendingEnabledInterrupt(&hadc1)) {
+    HAL_ADC_IRQHandler(&hadc1);
+  }
+  if (ADC_HasPendingEnabledInterrupt(&hadc2)) {
+    HAL_ADC_IRQHandler(&hadc2);
+  }
 }
 
 /* FDCAN1 interrupt line 0 */

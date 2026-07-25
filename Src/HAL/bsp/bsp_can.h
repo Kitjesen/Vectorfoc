@@ -14,77 +14,80 @@
 
 /**
  * @file bsp_can.h
- * @brief CAN
+ * @brief Portable classic-CAN BSP contract.
  */
 #ifndef BSP_CAN_H
 #define BSP_CAN_H
-#include "common.h"
-#include "fdcan.h"
-#include "main.h"
-#include "protocol_types.h"
+#include <stdbool.h>
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* CAN（） */
-#define FDCAN_MX_REGISTER_CNT 6
-#define DEVICE_CAN_CNT 1
-/**
- * @brief FDCAN
- */
-typedef struct fdcaninstance {
-  FDCAN_HandleTypeDef *fdcan_handle; // CAN
-  FDCAN_TxHeaderTypeDef txconf;      // config
-  uint32_t tx_id;                    // ID
-  uint32_t tx_mailbox;               //
-  uint8_t tx_buff[8];                //
-  uint8_t rx_buff[8];                //
-  uint32_t rx_id;                    // ID
-  uint8_t rx_len;                    //
-  void (*fdcan_module_callback)(struct fdcaninstance *); // （）
-  void *id;                                              // ID
-} FDCANInstance;
-/**
- * @brief CANinitconfig（）
- */
+typedef enum {
+  BSP_CAN_BAUD_1M = 0U,
+  BSP_CAN_BAUD_500K = 1U,
+  BSP_CAN_BAUD_250K = 2U,
+} BSP_CAN_BaudrateId;
+
 typedef struct {
-  FDCAN_HandleTypeDef *fdcan_handle;
-  uint32_t tx_id;
-  uint32_t rx_id;
-  void (*fdcan_module_callback)(FDCANInstance *);
-  void *id;
-} FDCAN_Init_Config_s;
-/* ==========  ========== */
+  uint32_t id;
+  uint8_t data[8];
+  uint8_t dlc;
+  bool is_extended;
+  bool is_rtr;
+} BSP_CAN_Frame;
+
+typedef struct {
+  uint32_t marker; /**< Completion marker from the FDCAN Tx event FIFO. */
+  uint32_t tx_buffer_mask; /**< HAL Tx FIFO/Q request buffer bit for abort. */
+} BSP_CAN_TxTicket;
+#define BSP_CAN_HAS_TRACKED_TX 1
+
 /**
- * @brief initCAN（）
- * @note RobotInit
+ * @brief Receive-frame callback invoked from the FDCAN ISR.
+ * @note The callback must copy any data it needs before returning.
  */
-void BSP_CAN_Init(void);
+typedef void (*BSP_CAN_RxCallback_t)(const BSP_CAN_Frame *frame);
+
 /**
- * @brief CAN ()
- * @param frame CAN
- * @return true，false
+ * @brief Register the receive callback before starting the peripheral.
+ * @return true when a non-NULL callback was installed.
  */
-bool BSP_CAN_SendFrame(const CAN_Frame *frame);
-/* ========== （） ========== */
+bool BSP_CAN_SetRxCallback(BSP_CAN_RxCallback_t cb);
+
 /**
- * @brief CAN
- * @param config configparam
- * @return CAN
+ * @brief Configure and start classic CAN with the selected baud rate.
+ * @return true only when timing, filters, start, and notifications succeeded.
  */
-FDCANInstance *FDCANRegister(FDCAN_Init_Config_s *config);
+bool BSP_CAN_Init(BSP_CAN_BaudrateId baudrate_id);
+/** Return true when the hardware Tx FIFO can accept another frame. */
+bool BSP_CAN_IsTxReady(void);
 /**
- * @brief set
- * @param _instance CAN
- * @param length （0-8）
+ * @brief Queue one classic-CAN data frame.
+ * @param frame Validated
+ * standard or extended frame.
+ * @return true if accepted by the hardware Tx
+ * FIFO.
  */
-void FDCANSetDLC(FDCANInstance *_instance, uint8_t length);
+bool BSP_CAN_SendFrame(const BSP_CAN_Frame *frame);
 /**
- * @brief CAN
- * @param _instance CAN
- * @param timeout timeout（ms）
- * @return 1，0
+ * @brief Send one CAN frame with Tx event tracking enabled.
+ * @param frame  CAN frame.
+ * @param ticket [out] Completion ticket, valid only on true.
+ * @return true if queued with a unique marker; false on busy or HAL failure.
+ * @note Only one tracked request may be pending. Normal BSP_CAN_SendFrame()
+ *       does not create Tx events.
  */
-uint8_t FDCANTransmit(FDCANInstance *_instance, float timeout);
+bool BSP_CAN_SendTrackedFrame(const BSP_CAN_Frame *frame,
+                              BSP_CAN_TxTicket *ticket);
+/**
+ * @brief Check and consume completion for a tracked send ticket.
+ */
+bool BSP_CAN_TxTicketIsComplete(const BSP_CAN_TxTicket *ticket);
+/**
+ * @brief Cancel a pending tracked send ticket after timeout/abort.
+ */
+void BSP_CAN_CancelTrackedSend(const BSP_CAN_TxTicket *ticket);
 #ifdef __cplusplus
 }
 #endif

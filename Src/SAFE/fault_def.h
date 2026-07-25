@@ -30,6 +30,8 @@ typedef enum {
   FAULT_ENCODER_UNCALIBRATED = (1 << 7), // bit7: encoder
   FAULT_HARDWARE_ID = (1 << 8),          // bit8: fault
   FAULT_POSITION_INIT = (1 << 9),        // bit9: positioninitfault
+  FAULT_CONTROL_INVALID = (1 << 10),      // bit10: invalid control configuration
+  FAULT_ADC_STALE = (1 << 11),           // bit11: ADC sample incomplete/stale/error
   FAULT_STALL_OVERLOAD = (1 << 14),      // bit14: motoroverloadprotection
   FAULT_CAN_TIMEOUT = (1 << 15),         // bit15: CAN 通信超时保护
   FAULT_CURRENT_A = (1 << 16),           // bit16: Aphasecurrentsample
@@ -54,11 +56,15 @@ typedef struct {
   float temp_filtered;   // filtertemperature
   float temp_calculated; // calctemperature
   uint32_t stall_counter; //
+  uint32_t stall_start_time_ms;
+  bool stall_tracking;
   bool is_stall;          //
   uint32_t last_can_time; // CAN
   bool is_can_timeout;    // CANtimeout
   uint32_t encoder_err_consecutive; // encodererror
   uint32_t encoder_err_count;       // encodererror()
+  bool vbus_initialized;
+  bool temp_initialized;
 } DetectionState;
 /* protectionconfigparam */
 typedef struct {
@@ -98,6 +104,8 @@ typedef struct {
   uint32_t pending_fault_bits; /**< /fault */
   uint32_t fault_count;        /**< fault */
   uint32_t last_fault_time;    /**< fault (ms) */
+  uint32_t pending_report_bits; /**< Fault callback reports awaiting delivery */
+  uint32_t fsm_reported_fault_bits; /**< Fault bits already sent to the FSM */
   bool initialized;
 } SafetyContext;
 /* protectionparam */
@@ -116,7 +124,6 @@ typedef struct {
 /* fault */
 #define FAULT_FILTER_ALPHA_SLOW 0.99f // voltage/temperaturefilter
 #define FAULT_FILTER_ALPHA_FAST 0.01f // voltage/temperaturefilter
-#define STALL_DETECT_COUNT_PER_MS 20  //  (20kHzfrequency)
 /* /safetyconfig ( fault_def.c) */
 extern const DetectionConfig DEFAULT_DETECTION_CONFIG;
 extern const SafetyConfig DEFAULT_SAFETY_CONFIG;

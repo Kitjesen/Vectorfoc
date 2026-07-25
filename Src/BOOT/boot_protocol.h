@@ -40,33 +40,48 @@
 
 /* ============================================================================
  * 协议状态
- * ============================================================================ */
+ * ============================================================================
+ */
 typedef enum {
-    PROTO_STATE_IDLE,           /* 等待命令 */
-    PROTO_STATE_WAIT_DATA,      /* 等待二进制数据 */
+  PROTO_STATE_IDLE,      /* 等待命令 */
+  PROTO_STATE_WAIT_DATA, /* 等待二进制数据 */
 } ProtoState_t;
 
 /* ============================================================================
  * 协议上下文
- * ============================================================================ */
+ * ============================================================================
+ */
 typedef struct {
-    ProtoState_t state;
-    uint32_t write_addr;        /* 当前写入地址 */
-    uint32_t write_len;         /* 期望数据长度 */
-    uint32_t received_len;      /* 已接收长度 */
-    uint8_t rx_buf[BOOT_RX_BUFFER_SIZE];
-    uint16_t rx_pos;
-    uint32_t last_activity;     /* 最后活动时间 (用于超时) */
+  ProtoState_t state;
+  uint32_t write_addr;   /* 当前写入地址 */
+  uint32_t write_len;    /* 期望数据长度 */
+  uint32_t received_len; /* 已接收长度 */
+  uint8_t write_buf[BOOT_WRITE_BLOCK_SIZE];
+  uint8_t rx_buf[BOOT_RX_BUFFER_SIZE];
+  uint16_t rx_pos;
+  uint32_t last_activity; /* 最后活动时间 (用于超时) */
 } ProtoContext_t;
 
 /* ============================================================================
  * API
- * ============================================================================ */
+ * ============================================================================
+ */
 
 /**
  * @brief 初始化协议处理
  */
 void BootProto_Init(void);
+
+/**
+ * @brief Copy one USB OUT packet into the ISR-to-main-loop receive queue.
+ * @param data Packet data.
+ * @param len Packet length (maximum USB FS packet size).
+ * @return true when queued, false for invalid input or a full queue.
+ */
+bool BootProto_QueueData(const uint8_t *data, uint16_t len);
+
+/** @brief Number of USB packets discarded because the RX queue was full. */
+uint32_t BootProto_GetReceiveOverflowCount(void);
 
 /**
  * @brief 处理接收到的数据
@@ -85,8 +100,6 @@ void BootProto_SendResponse(const char *msg);
  * @brief 发送格式化响应
  * @param fmt 格式字符串
  */
-void BootProto_SendResponsef(const char *fmt, ...);
-
 /**
  * @brief 发送 ACK
  * @param status 状态码
@@ -97,6 +110,16 @@ void BootProto_SendAck(BootStatus_t status);
  * @brief 发送 Bootloader 就绪消息
  */
 void BootProto_SendReady(void);
+
+/**
+ * @brief Notify the protocol that the CDC IN transfer completed.
+ */
+void BootProto_OnTransmitComplete(void);
+
+/**
+ * @brief Run non-ISR protocol work such as queued TX and deferred app jump.
+ */
+void BootProto_Service(void);
 
 /**
  * @brief 检查超时

@@ -14,11 +14,10 @@
 
 #include "motor.h"
 #include "bsp_dwt.h"
-#include "current_calib.h"
-#include "flux_calib.h"
-#include "led.h"
 #include "config.h"
 #include "control/control.h"
+#include "current_calib.h"
+#include "flux_calib.h"
 #include "hal_pwm.h" // For MHAL_PWM_Brake ( HAL)
 #include "param_access.h"
 #include "param_table.h"
@@ -42,6 +41,17 @@ extern MOTOR_DATA motor_data;
  * @brief calibrationstate
  * : current -> / -> fluxcalibration
  */
+static void MotorCalibrationFailSafe(MOTOR_DATA *motor, CalibResult result) {
+  MHAL_PWM_Disable();
+  (void)StateMachine_SetCalibrationPower(&g_ds402_state_machine, false);
+#if !defined(TEST_ENV)
+  CalibContext_Reset(&motor->calib_ctx);
+#endif
+  motor->last_calib_result = result;
+  motor->state.Sub_State = SUB_STATE_IDLE;
+  motor->state.Cs_State = CS_STATE_IDLE;
+  motor->state.State_Mode = STATE_MODE_GUARD;
+}
 static void MotorInitializeTask(MOTOR_DATA *motor) {
   CalibResult result;
   switch (motor->state.Sub_State) {
@@ -58,8 +68,7 @@ static void MotorInitializeTask(MOTOR_DATA *motor) {
         Init_Motor_Calib(motor); //  RSLS calibration
       }
     } else if (result != CALIB_IN_PROGRESS) {
-      motor->last_calib_result = result;
-      motor->state.State_Mode = STATE_MODE_GUARD;
+      MotorCalibrationFailSafe(motor, result);
     }
     break;
   case RSLS_CALIBRATING:
@@ -68,8 +77,7 @@ static void MotorInitializeTask(MOTOR_DATA *motor) {
       motor->last_calib_result = CALIB_SUCCESS;
       motor->state.Sub_State = FLUX_CALIBRATING;
     } else if (result != CALIB_IN_PROGRESS) {
-      motor->last_calib_result = result;
-      motor->state.State_Mode = STATE_MODE_GUARD;
+      MotorCalibrationFailSafe(motor, result);
     }
     break;
   case FLUX_CALIBRATING:
@@ -80,8 +88,7 @@ static void MotorInitializeTask(MOTOR_DATA *motor) {
       motor->state.State_Mode = STATE_MODE_RUNNING;
       Param_ScheduleSave(); // calibrationdone，（ISRsafety）
     } else if (result != CALIB_IN_PROGRESS) {
-      motor->last_calib_result = result;
-      motor->state.State_Mode = STATE_MODE_GUARD; // calibration
+      MotorCalibrationFailSafe(motor, result); // calibration
     }
     break;
   default:
@@ -123,27 +130,30 @@ void MotorStateTask(MOTOR_DATA *motor) {
       PID_clear(&motor->VelPID);
       PID_clear(&motor->PosPID);
       FOC_Algorithm_ResetState(&motor->algo_state);
-      MHAL_PWM_Brake();
+      /* IDLE/GUARD is a de-energized state.  Never use active low-side
+       * braking here because that can re-enable the power stage after a
+       * fault. */
+      MHAL_PWM_Disable();
     }
     last_state = fsm_state;
   }
   // 4.  (Do Action)
   switch (motor->state.State_Mode) {
   case STATE_MODE_RUNNING: // runningmode
-    MotorControl_Run(motor);
+    if (MotorControl_Run(motor) && !Safety_HasActiveFault() &&
+        !g_ds402_state_machine.operation_power_enabled) {
+      (void)StateMachine_SetOperationPower(&g_ds402_state_machine, true);
+    }
     break;
   case STATE_MODE_DETECTING: // calibration/mode
     MotorInitializeTask(motor);
-    if (motor->state.Sub_State == SUB_STATE_IDLE) {
+    if (motor->state.State_Mode == STATE_MODE_GUARD) {
+      // faultstate FSM
+      StateMachine_EnterFault(&g_ds402_state_machine, FAULT_STALL_OVERLOAD);
+    } else if (motor->state.Sub_State == SUB_STATE_IDLE) {
       // Exit to Switch On Disabled
       StateMachine_RequestState(&g_ds402_state_machine,
                                 STATE_SWITCH_ON_DISABLED);
-    }
-    // Check if calibration failed (Transitioned to GUARD by
-    // MotorInitializeTask)
-    else if (motor->state.State_Mode == STATE_MODE_GUARD) {
-      // faultstate FSM
-      StateMachine_EnterFault(&g_ds402_state_machine, FAULT_STALL_OVERLOAD);
     }
     break;
   case STATE_MODE_IDLE:
@@ -155,28 +165,18 @@ void MotorStateTask(MOTOR_DATA *motor) {
   }
 }
 /**
- * @brief safetyprotection (200Hz)
- * ////，driver LED
+ * @brief 安全监控任务（200Hz）
  */
 void MotorGuardTask(MOTOR_DATA *motor) {
-  // 1. runningsafety (200Hz)
+  // 1. 执行慢速安全检测（200Hz）
   Safety_Update_Slow(motor, &g_ds402_state_machine);
-  // 2. get
-  uint32_t fault_bits = Safety_GetActiveFaultBits();
-  // 3. LED state
-  if (motor->state.State_Mode == STATE_MODE_IDLE ||
-      motor->state.State_Mode == STATE_MODE_DETECTING) {
-    static uint32_t blink_cnt = 0;  /* 1 Hz blink: 100 × 5 ms = 500 ms half-period */
-    if (++blink_cnt >= 100u) { blink_cnt = 0u; }
-    RGB_DisplayColorById(blink_cnt < 50u ? 9u : 7u); /* 9=on, 7=off */
-  } else if (Safety_HasActiveFault()) {
-    // protectionstate
-    RGB_DisplayColorById(0); //  faultprotectionstate
-    // motorstate GUARD
+  // 2. 若有故障，更新 motor state 到 GUARD
+  if (Safety_HasActiveFault()) {
     if (motor->state.State_Mode != STATE_MODE_GUARD) {
       motor->state.State_Mode = STATE_MODE_GUARD;
-      // fault Fault_State（，）
-      // @deprecated  Safety_GetActiveFaultBits() getfault
+      uint32_t fault_bits = Safety_GetActiveFaultBits();
+      /* 更新已弃用的 Fault_State 字段（兼容旧代码，正式应用
+       * Safety_GetActiveFaultBits()） */
       if (fault_bits & FAULT_OVER_VOLTAGE)
         motor->state.Fault_State = FAULT_STATE_OVER_VOLTAGE;
       else if (fault_bits & FAULT_UNDER_VOLTAGE)
@@ -190,12 +190,5 @@ void MotorGuardTask(MOTOR_DATA *motor) {
       else if (fault_bits & FAULT_ENCODER_LOSS)
         motor->state.Fault_State = FAULT_STATE_ENCODER_LOSS;
     }
-  } else if (motor->state.State_Mode == STATE_MODE_RUNNING) {
-    RGB_DisplayColorById(3); //  normalrunning
-  } else {
-    /* GUARD without active fault — fast blink (100ms period) to signal issue */
-    static uint32_t guard_cnt = 0;
-    if (++guard_cnt >= 20u) { guard_cnt = 0u; }
-    RGB_DisplayColorById(guard_cnt < 10u ? 0u : 7u);
   }
 }

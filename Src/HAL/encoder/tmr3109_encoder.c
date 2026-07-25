@@ -51,11 +51,12 @@
 #ifndef BOARD_XSTAR   /* 仅 VectorFOC 板编译，X-STAR 不使用本驱动 */
 
 #include "tmr3109_encoder.h"
+#include "encoder_angle_math.h"
 #include "board_config.h"
 #include "common.h"
 #include "config.h"
-#include "error_manager.h"
-#include "error_types.h"
+#include "encoder_position_tracker.h"
+#include "encoder_spi_transfer.h"
 #include <math.h>
 #include <string.h>
 
@@ -70,8 +71,6 @@
 #define SQ(x) ((x) * (x))
 
 /* SPI 错误计数达到此值才上报，避免偶发噪声刷屏 */
-#define TMR3109_ERR_REPORT_THRESHOLD 100u
-
 /* ============================================================================
    全局实例
    ============================================================================ */
@@ -91,6 +90,7 @@ TMR3109_Handle_t tmr3109_encoder_data = {
     .chip_err_count= 0,
     .shadow_count  = 0,
     .count_in_cpr  = 0,
+    .position_initialized = false,
     .calib_valid   = false,
     .pos_estimate_counts_ = 0.0f,
     .vel_estimate_counts_ = 0.0f,
@@ -113,7 +113,6 @@ static inline void tmr3109_cs_low(TMR3109_Handle_t *enc);
 static inline void tmr3109_cs_high(TMR3109_Handle_t *enc);
 static bool        tmr3109_read_raw(TMR3109_Handle_t *enc);
 static bool        tmr3109_crc4_check(uint32_t angle23, uint8_t crc_rx);
-static float       tmr3109_normalize_angle(float angle);
 
 /* ============================================================================
    公共函数实现
@@ -142,6 +141,7 @@ void TMR3109_Init(TMR3109_Handle_t *enc,
     enc->chip_err_count= 0;
     enc->shadow_count  = 0;
     enc->count_in_cpr  = 0;
+    enc->position_initialized = false;
     enc->calib_valid   = false;
 
     memset(enc->offset_lut, 0, sizeof(enc->offset_lut));
@@ -183,6 +183,21 @@ void TMR3109_ResetCount(TMR3109_Handle_t *enc)
     enc->shadow_count         = 0;
     enc->pos_estimate_counts_ = 0.0f;
     enc->pos_estimate_        = 0.0f;
+}
+
+void TMR3109_RebaseTracking(TMR3109_Handle_t *enc)
+{
+    if (enc == NULL) return;
+    enc->position_initialized = false;
+    enc->shadow_count = 0;
+    enc->count_in_cpr = 0;
+    enc->pos_estimate_counts_ = 0.0f;
+    enc->vel_estimate_counts_ = 0.0f;
+    enc->pos_cpr_counts_ = 0.0f;
+    enc->interpolation_ = 0.5f;
+    enc->pos_estimate_ = 0.0f;
+    enc->vel_estimate_ = 0.0f;
+    enc->velocity_rad_s = 0.0f;
 }
 
 /* ============================================================================
@@ -240,18 +255,16 @@ void TMR3109_ProcessAngle(TMR3109_Handle_t *enc, float dt)
     }
 
     /* ── 步骤 3：增量计算（跨圈检测）──────────────────────────────────── */
-    int32_t old_cnt     = enc->count_in_cpr;
-    enc->count_in_cpr   = cnt;
-    int32_t delta_enc   = cnt - old_cnt;
-
-    /* 半圈阈值跨圈处理 */
-    if (delta_enc >  (int32_t)(TMR3109_CPR / 2u)) {
-        delta_enc -= (int32_t)TMR3109_CPR;
-    } else if (delta_enc < -(int32_t)(TMR3109_CPR / 2u)) {
-        delta_enc += (int32_t)TMR3109_CPR;
+    bool first_sample = !enc->position_initialized;
+    int32_t delta_enc =
+        EncoderPosition_Update(cnt, (int32_t)TMR3109_CPR,
+                               &enc->position_initialized,
+                               &enc->count_in_cpr, &enc->shadow_count);
+    if (first_sample) {
+        enc->pos_cpr_counts_ = (float)cnt;
+        enc->vel_estimate_counts_ = 0.0f;
+        enc->interpolation_ = 0.5f;
     }
-
-    enc->shadow_count += (int64_t)delta_enc;
 
     /* ── 步骤 4：PLL（单圈域） ──────────────────────────────────────────── */
     enc->pos_cpr_counts_ += dt * enc->vel_estimate_counts_;
@@ -288,17 +301,13 @@ void TMR3109_ProcessAngle(TMR3109_Handle_t *enc, float dt)
     enc->pos_cpr_      = enc->pos_cpr_counts_      / TMR3109_CPR_F;
 
     /* ── 步骤 7：电角度与机械角度 ──────────────────────────────────────── */
-    int32_t corrected = enc->count_in_cpr - enc->offset_counts;
-    while (corrected < 0)                    corrected += (int32_t)TMR3109_CPR;
-    while (corrected >= (int32_t)TMR3109_CPR) corrected -= (int32_t)TMR3109_CPR;
-
-    float interp_enc = (float)corrected + enc->interpolation_;
-
-    float elec_rad_per_enc = (float)enc->pole_pairs * M_2PI / TMR3109_CPR_F;
-
-    enc->phase_         = wrap_pm_pi(elec_rad_per_enc * interp_enc);
-    enc->elec_angle_rad = enc->phase_;
-    enc->mec_angle_rad  = tmr3109_normalize_angle(interp_enc * (M_2PI / TMR3109_CPR_F));
+    EncoderAngleResult_t angles;
+    EncoderAngleMath_Compute(enc->count_in_cpr, enc->interpolation_,
+                             enc->offset_counts, TMR3109_CPR,
+                             enc->pole_pairs, &angles);
+    enc->phase_         = angles.electrical_angle_rad;
+    enc->elec_angle_rad = angles.electrical_angle_rad;
+    enc->mec_angle_rad  = angles.mechanical_angle_rad;
 }
 
 /* ============================================================================
@@ -371,16 +380,12 @@ static bool tmr3109_read_raw(TMR3109_Handle_t *enc)
 
     tmr3109_cs_low(enc);
     HAL_StatusTypeDef hal_ret =
-        HAL_SPI_TransmitReceive(enc->hspi, tx, rx, 4, TMR3109_SPI_TIMEOUT_MS);
+        EncoderSPI_TransmitReceiveBounded(enc->hspi, tx, rx, 4U);
     tmr3109_cs_high(enc);
 
     /* ── 检查 1：SPI 通信 ──────────────────────────────────────────────── */
     if (hal_ret != HAL_OK) {
         if (enc->spi_err_count < 0xFFFFFFFFu) enc->spi_err_count++;
-        if (enc->spi_err_count == 1u ||
-            enc->spi_err_count % TMR3109_ERR_REPORT_THRESHOLD == 0u) {
-            ERROR_REPORT(ERROR_MOTOR_ENCODER_SPI, "TMR3109 SPI error");
-        }
         enc->last_status = TMR3109_ERR_SPI;
         return false;
     }
@@ -412,10 +417,6 @@ static bool tmr3109_read_raw(TMR3109_Handle_t *enc)
     /* ── 检查 2：CRC4 ──────────────────────────────────────────────────── */
     if (!tmr3109_crc4_check(angle23, crc4)) {
         if (enc->crc_err_count < 0xFFFFFFFFu) enc->crc_err_count++;
-        if (enc->crc_err_count == 1u ||
-            enc->crc_err_count % TMR3109_ERR_REPORT_THRESHOLD == 0u) {
-            ERROR_REPORT(ERROR_HW_ENCODER_SPI, "TMR3109 CRC4 error");
-        }
         enc->last_status = TMR3109_ERR_CRC;
         return false;
     }
@@ -424,9 +425,6 @@ static bool tmr3109_read_raw(TMR3109_Handle_t *enc)
     /* ── 检查 3：芯片内部错误标志 ──────────────────────────────────────── */
     if (err_bit != 0u) {
         if (enc->chip_err_count < 0xFFFFFFFFu) enc->chip_err_count++;
-        if (enc->chip_err_count % TMR3109_ERR_REPORT_THRESHOLD == 0u) {
-            ERROR_REPORT(ERROR_HW_ENCODER_LOSS, "TMR3109 internal error flag");
-        }
         enc->last_status = TMR3109_ERR_CHIP;
         /* 芯片错误时角度仍可能有效，视应用场景决定是否继续；
          * 保守处理：丢弃本帧 */
@@ -437,15 +435,6 @@ static bool tmr3109_read_raw(TMR3109_Handle_t *enc)
     enc->raw_angle   = angle23;
     enc->last_status = TMR3109_OK;
     return true;
-}
-
-/**
- * @brief 将角度归一化到 [0, 2π)
- */
-static float tmr3109_normalize_angle(float angle)
-{
-    float a = fmodf(angle, M_2PI);
-    return (a >= 0.0f) ? a : (a + M_2PI);
 }
 
 #endif /* HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109 */

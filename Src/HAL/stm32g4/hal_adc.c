@@ -1,84 +1,67 @@
 // Copyright 2024-2026 VectorFOC Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * @file hal_adc.c
- * @brief ADC ?
- * @note  HAL  motor_data.components.hal->adc
- *       motor_data 
- *       ㄦ?header €?(HAL_ADC_*)
+ * @brief Typed adapter from the legacy MHAL API to a replaceable motor ADC
+ * port.
  */
 #include "hal_adc.h"
-#include "motor.h"
-/* € ADC  */
-static Motor_HAL_SensorData_t s_adc_cache = {0};
-/**
- * @brief ㄥ ADC ュ (?
- * @note  HAL ュ?
- */
+
+#include <stddef.h>
+
+static const Motor_HAL_AdcInterface_t *s_adc;
+static Motor_HAL_SensorData_t s_adc_cache;
+
+int MHAL_ADC_Bind(const Motor_HAL_AdcInterface_t *interface) {
+  s_adc = interface;
+  return interface != NULL ? 0 : -1;
+}
+
 int MHAL_ADC_Register(const HAL_ADC_Interface_t *interface) {
-  (void)interface; // ?
-  return 0;        //
+  (void)interface;
+  return -1;
 }
-int MHAL_ADC_Init(void) {
-  // ADC  MX_ADC1_Init/MX_ADC2_Init ?main.c ?
+
+int MHAL_ADC_Init(void) { return s_adc != NULL ? 0 : -1; }
+int MHAL_ADC_Start(void) { return s_adc != NULL ? 0 : -1; }
+int MHAL_ADC_Stop(void) { return s_adc != NULL ? 0 : -1; }
+
+static int MHAL_ADC_Refresh(void) {
+  if (s_adc == NULL || s_adc->update == NULL) {
+    return -1;
+  }
+  s_adc->update(&s_adc_cache);
   return 0;
 }
-int MHAL_ADC_Start(void) {
-  // ADC ?adc_bsp_init()
-  return 0;
-}
-int MHAL_ADC_Stop(void) {
-  // ?
-  return 0;
-}
+
 int MHAL_ADC_GetCurrent(float *Ia, float *Ib, float *Ic) {
-  if (motor_data.components.hal == NULL ||
-      motor_data.components.hal->adc == NULL ||
-      motor_data.components.hal->adc->update == NULL)
+  if (MHAL_ADC_Refresh() != 0) {
     return -1;
-  //  ADC
-  motor_data.components.hal->adc->update(&s_adc_cache);
-  if (Ia)
+  }
+  if (Ia != NULL) {
     *Ia = s_adc_cache.i_a;
-  if (Ib)
+  }
+  if (Ib != NULL) {
     *Ib = s_adc_cache.i_b;
-  if (Ic)
+  }
+  if (Ic != NULL) {
     *Ic = s_adc_cache.i_c;
+  }
   return 0;
 }
+
 float MHAL_ADC_GetVbus(void) {
-  if (motor_data.components.hal == NULL ||
-      motor_data.components.hal->adc == NULL ||
-      motor_data.components.hal->adc->update == NULL)
-    return 0.0f;
-  motor_data.components.hal->adc->update(&s_adc_cache);
-  return s_adc_cache.v_bus;
+  return MHAL_ADC_Refresh() == 0 ? s_adc_cache.v_bus : 0.0f;
 }
+
 float MHAL_ADC_GetTemperature(void) {
-  if (motor_data.components.hal == NULL ||
-      motor_data.components.hal->adc == NULL ||
-      motor_data.components.hal->adc->update == NULL)
-    return 0.0f;
-  motor_data.components.hal->adc->update(&s_adc_cache);
-  return s_adc_cache.temp;
+  return MHAL_ADC_Refresh() == 0 ? s_adc_cache.temp : 0.0f;
 }
+
 int MHAL_ADC_CalibrateCurrent(void) {
-  if (motor_data.components.hal == NULL ||
-      motor_data.components.hal->adc == NULL ||
-      motor_data.components.hal->adc->calibrate_offsets == NULL)
+  if (s_adc == NULL || s_adc->calibrate_offsets == NULL) {
     return -1;
-  motor_data.components.hal->adc->calibrate_offsets();
-  return 0;
+  }
+  return s_adc->calibrate_offsets() ? 0 : -1;
 }

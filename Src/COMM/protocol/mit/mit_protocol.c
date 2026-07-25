@@ -35,7 +35,7 @@ static uint8_t s_motor_can_id = 1;
 /**
  * @brief initMIT
  */
-void ProtocolMIT_Init(void) { s_motor_can_id = 1; }
+void ProtocolMIT_Init(void) { s_motor_can_id = g_can_id; }
 /**
  * @brief MIT
  * MIT Cheetah (8):
@@ -62,6 +62,7 @@ static ParseResult ParseMITControl(const CAN_Frame *frame, MotorCommand *cmd) {
   uint16_t torque_raw = ((frame->data[6] & 0x0F) << 8) | frame->data[7];
   cmd->torque_ff = Uint12ToFloat(torque_raw, MIT_T_MIN, MIT_T_MAX);
   cmd->control_mode = CONTROL_MODE_MIT;
+  cmd->has_enable_command = true;
   cmd->enable_motor = true;
   return PARSE_OK;
 }
@@ -83,16 +84,18 @@ static ParseResult ParseMITSpecialCmd(const CAN_Frame *frame, MotorCommand *cmd)
   MITCmdType type = (MITCmdType)frame->data[1];
   switch (type) {
   case MIT_CMD_MOTOR_OFF:   /* 0x00 — disable motor */
+    cmd->has_enable_command = true;
     cmd->enable_motor = false;
     return PARSE_OK;
   case MIT_CMD_MOTOR_ON:    /* 0x01 — enable motor */
+    cmd->has_enable_command = true;
     cmd->enable_motor = true;
     return PARSE_OK;
   case MIT_CMD_SET_ZERO:    /* 0x02 — set current position as zero */
     cmd->set_zero = true;
     return PARSE_OK;
   case MIT_CMD_GET_STATE:   /* 0x04 — request status frame (handled by manager) */
-    /* No specific MotorCommand fields needed; manager sends feedback on PARSE_OK */
+    cmd->request_feedback = true;
     return PARSE_OK;
   default:
     return PARSE_ERR_UNSUPPORTED;
@@ -104,6 +107,12 @@ ParseResult ProtocolMIT_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
     return PARSE_ERR_INVALID_FRAME;
   }
   memset(cmd, 0, sizeof(MotorCommand));
+  if (frame->is_extended || frame->id != s_motor_can_id) {
+    return PARSE_UNKNOWN_ID;
+  }
+  if (frame->is_rtr) {
+    return PARSE_ERR_INVALID_FRAME;
+  }
 
   if (frame->dlc == 8) {
     /* Standard MIT impedance control frame */
@@ -111,9 +120,6 @@ ParseResult ProtocolMIT_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   } else if (frame->dlc == 2) {
     /* MIT special command frame: [0xFF][CmdType] */
     return ParseMITSpecialCmd(frame, cmd);
-  } else if (frame->dlc == 0 && frame->is_rtr) {
-    /* RTR: remote status request — manager handles feedback reply */
-    return PARSE_OK;
   }
 
   return PARSE_ERR_UNSUPPORTED;
@@ -127,6 +133,7 @@ bool ProtocolMIT_BuildFeedback(const MotorStatus *status, CAN_Frame *frame) {
   if (status == NULL || frame == NULL) {
     return false;
   }
+  memset(frame, 0, sizeof(*frame));
   frame->id = g_can_id;
   frame->dlc = 6;
   frame->is_extended = false;
@@ -154,6 +161,7 @@ bool ProtocolMIT_BuildFault(uint32_t fault_code, CAN_Frame *frame) {
   if (frame == NULL) {
     return false;
   }
+  memset(frame, 0, sizeof(*frame));
   frame->id = g_can_id;
   frame->dlc = 4;
   frame->is_extended = false;

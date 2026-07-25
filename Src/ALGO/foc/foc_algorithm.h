@@ -186,7 +186,7 @@ bool FOC_Algorithm_ValidateConfig(const FOC_AlgorithmConfig_t *config);
  * @param Kp        outputproportionalgain
  * @param Ki        outputintegralgain
  */
-void FOC_Algorithm_CalculateCurrentGains(float Rs, float Ls, float bandwidth,
+void FOC_Algorithm_CalculateCurrentGains(float Rs, float Ls, float bw_hertz,
                                          float *Kp, float *Ki);
 #ifdef __cplusplus
 }

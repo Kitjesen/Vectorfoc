@@ -1,5 +1,7 @@
 # VectorFOC 项目综合优化方向报告
 
+> **历史规划记录**：本文反映 2026-04-05 的审阅结论，不作为当前实现状态的唯一来源；当前能力、验证结果和安全边界以 `README.md` 与 `PROJECT_OVERVIEW.md` 为准。
+
 > **文档版本**: v2.0  
 > **日期**: 2026-04-05  
 > **基于**: 全量代码审阅（434 文件） + 已有审查报告交叉验证  
@@ -27,7 +29,7 @@
 
 ### 1.1 项目定位
 
-VectorFOC 是一个基于 STM32G431 的 FOC 电机控制固件，支持双硬件平台（VectorFOC G431 / X-STAR-S），具备完整的 DS402 状态机、三协议通信栈（Inovxio/CANopen/MIT）、USB OTA 升级和 FreeRTOS 多任务架构。目标应用为机器人关节驱动（如 Thunder 四足机器狗）。
+VectorFOC 是一个基于 STM32G431 的 FOC 电机控制固件，支持双硬件平台（VectorFOC G431 / X-STAR-S），具备完整的 DS402 状态机、三协议通信栈（Vector/CANopen/MIT）、USB OTA 升级和 FreeRTOS 多任务架构。目标应用为机器人关节驱动（如 Thunder 四足机器狗）。
 
 ### 1.2 现有亮点
 
@@ -556,7 +558,7 @@ void CommWatchdog_Check(CommWatchdog_t *wd) {
 ### 9.2 协议帧校验增强
 
 **建议**:
-- Inovxio 协议增加可选 CRC8 校验字段（当前仅靠 CAN 硬件 CRC）
+- Vector 协议增加可选 CRC8 校验字段（当前仅靠 CAN 硬件 CRC）
 - 增加帧序列号用于丢帧检测
 - SDO 协议增加分段传输超时
 

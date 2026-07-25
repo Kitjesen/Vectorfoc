@@ -35,8 +35,11 @@ static USARTInstance *log_usart_instance;
  */
 void LogInit(UART_HandleTypeDef *log_config)
 {
-  USART_Init_Config_s config;
-  config.usart_handle = log_config;
+  USART_Init_Config_s config = {
+      .recv_buff_size = USART_RXBUFF_LIMIT,
+      .usart_handle = log_config,
+      .module_callback = NULL,
+  };
   log_usart_instance = USARTRegister(&config);
 }
 /**
@@ -53,30 +56,65 @@ void LogInit(UART_HandleTypeDef *log_config)
 void LOG_PROTO(const char *fmt, LOG_LEVEL level, const char *file,
                int line, const char *func, ...)
 {
-  char tmp[LOG_BUFFER_SIZE];
   char buf[LOG_BUFFER_SIZE];
-  memset(tmp, 0, sizeof(tmp));
-  memset(buf, 0, sizeof(buf));
-  va_list args;
-  va_start(args, func);
-  vsnprintf(tmp, sizeof(tmp) - 1, fmt, args);
-  va_end(args);
-  switch (level)
-  {
+  if (fmt == NULL) {
+    return;
+  }
+
+  const char *level_name;
+  switch (level) {
   case LOG_DEBUG:
-    snprintf(buf, sizeof(buf), "[DEBUG] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
+    level_name = "DEBUG";
     break;
   case LOG_INFO:
-    snprintf(buf, sizeof(buf), "[INFO] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
+    level_name = "INFO";
     break;
   case LOG_WARNING:
-    snprintf(buf, sizeof(buf), "[WARN] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
+    level_name = "WARN";
     break;
   case LOG_ERROR:
-    snprintf(buf, sizeof(buf), "[ERROR] <%s> | <%d> | <%s>: %s\r\n", file, line, func, tmp);
+    level_name = "ERROR";
     break;
   default:
     return;
   }
-  USARTSend(log_usart_instance, (uint8_t *)buf, strlen(buf), USART_TRANSFER_BLOCKING);
+
+  if (file == NULL) {
+    file = "?";
+  }
+  if (func == NULL) {
+    func = "?";
+  }
+
+  int prefix_len =
+      snprintf(buf, sizeof(buf), "[%s] <%.48s> | <%d> | <%.32s>: ",
+               level_name, file, line, func);
+  if (prefix_len < 0) {
+    return;
+  }
+  size_t used = (size_t)prefix_len;
+  if (used >= sizeof(buf)) {
+    used = sizeof(buf) - 1U;
+  }
+
+  va_list args;
+  va_start(args, func);
+  (void)vsnprintf(buf + used, sizeof(buf) - used, fmt, args);
+  va_end(args);
+
+  size_t len = strlen(buf);
+  if (len + 2U < sizeof(buf)) {
+    buf[len++] = '\r';
+    buf[len++] = '\n';
+    buf[len] = '\0';
+  } else if (sizeof(buf) >= 3U) {
+    buf[sizeof(buf) - 3U] = '\r';
+    buf[sizeof(buf) - 2U] = '\n';
+    buf[sizeof(buf) - 1U] = '\0';
+  }
+
+  if (log_usart_instance != NULL) {
+    USARTSend(log_usart_instance, (uint8_t *)buf, (uint16_t)strlen(buf),
+              USART_TRANSFER_BLOCKING);
+  }
 }

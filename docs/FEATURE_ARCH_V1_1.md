@@ -1,5 +1,7 @@
 # VectorFOC v1.1 功能架构设计
 
+> **历史设计草案**：本文不覆盖当前 scheduled-save 运行时回滚、构建矩阵或安全验证状态；当前能力、验证结果和安全边界以 `README.md` 与 `PROJECT_OVERVIEW.md` 为准。
+
 > 状态：**草案（待评审）**
 > 作者：穹沛科技 · VectorFOC 团队
 > 版本：v1.1.0-draft
@@ -13,7 +15,7 @@ v1.0 发布后遗留两个非阻塞性缺口，本文档定义其 v1.1 的功能
 
 | 特性 | 文件影响范围 | 优先级 |
 |------|------------|--------|
-| **F1** CAN 总线扫描（多节点拓扑发现） | `bsp_can`, `inovxio_protocol`, `manager` | P1 — Thunder 多电机必要 |
+| **F1** CAN 总线扫描（多节点拓扑发现） | `bsp_can`, `vector_protocol`, `manager` | P1 — Thunder 多电机必要 |
 | **F2** Flash 参数原子写入 | `param_storage`, `bsp_flash` | P2 — 电源保护增强 |
 
 ---
@@ -55,7 +57,7 @@ DLC: 0
 
 ### 1.4 固件侧变更
 
-固件 **无需改动**。CMD 0 广播响应逻辑已在 `inovxio_protocol.c` 中实现：收到 Target=`0x7F` 的 CMD 0 时回复自身信息。
+固件 **无需改动**。CMD 0 广播响应逻辑已在 `vector_protocol.c` 中实现：收到 Target=`0x7F` 的 CMD 0 时回复自身信息。
 
 ### 1.5 主机侧（嵌入式 / PC）架构
 
@@ -187,11 +189,25 @@ Step 2: Erase Page2 → Write Page2
 - **写入原子性保证**：写失败（掉电）后，启动时始终能加载一份完整有效的参数集
 - **无额外 Flash 页占用**：在现有 Page62 + Page63（共 4 KB）内实现
 - **向后兼容**：旧固件烧录的参数格式（magic=`FOC1`, version）正常迁移
-- **不增加写入耗时**（仍为两次 erase+write，但顺序有意义）
+- **写入开销受控**：每次保存只擦除 standby 页，写 payload 后追加一次最终 commit doubleword
 
-### 2.3 核心方案：Generation Counter + Commit Flag
+### 2.3 当前实现：Generation Counter + Erased Commit Doubleword
 
-在 `FlashParamData` 头部引入 **Generation** 字段，写入逻辑改为"写新页 → 验证 → 标记旧页无效"。
+`FlashParamData` 现在是紧凑 RAM 结构，移除了原先只为填满 Flash 页而存在的 `reserved_data`。兼容性由固定逻辑镜像大小 `PARAM_FLASH_IMAGE_SIZE == FLASH_PARAM_PAGE_SIZE == 2048` 保证；事务字段仍位于 16 字节头之后：
+
+```c
+typedef struct {
+    uint32_t magic;           /* 0x464F4332 "FOC2" for current format */
+    uint32_t param_version;   /* must equal FLASH_PARAM_VERSION */
+    uint32_t crc32;           /* CRC32/IEEE over logical bytes [16, 2048) */
+    uint32_t reserved;
+    uint32_t generation;      /* monotonically increasing write counter */
+    uint32_t committed;       /* 0 = committed, 0xFFFFFFFF = pending/erased */
+    /* compact payload fields; flash bytes after sizeof(FlashParamData) are zero */
+} FlashParamData;
+```
+
+CRC semantics are CRC32/IEEE over the logical 2KB image. The CRC starts at offset 16, so it covers `generation`, `committed`, the compact payload bytes, and a zero-filled tail through `PARAM_FLASH_IMAGE_SIZE`; it skips only `magic`, `param_version`, `crc32`, and `reserved`. Load computes this CRC by streaming small chunks from Flash, and Save constructs it from the compact RAM struct plus a zero tail.
 
 #### 2.3.1 页角色动态交替（Ping-Pong）
 
@@ -201,182 +217,168 @@ Step 2: Erase Page2 → Write Page2
   - 当前 Standby Page = Page B
 
 步骤：
-  1. 构造新 FlashParamData，generation = N, committed = 0
-  2. Erase Page B
-  3. Write Page B（含 CRC32，committed = 0）
-  4. Verify Page B
-  5. 写入 committed = 1 到 Page B（单独一次 double-word 写，不需要 erase）
-  6. 逻辑上 Page B 成为 Active，Page A 成为 Standby
+  1. Load 当前有效页；若无有效页，则从 generation=0、Page1 active 状态开始
+  2. 构造 final image：magic=FOC2、version=FLASH_PARAM_VERSION、generation=N、committed=0
+  3. 将 crc32 清零后，按 offset 16 到 `PARAM_FLASH_IMAGE_SIZE` 计算 CRC32/IEEE（紧凑结构后补零），写入 final image 的 crc32
+  4. 构造 pending image：复制 final image，但 generation 和 committed 都保持擦除态 0xFFFFFFFF
+  5. Erase standby page
+  6. 写入除 offset 16 commit doubleword 之外的所有 doubleword，包括紧凑结构后的零 tail
+  7. 用小 doubleword/chunk buffer 验证 pending image：prefix、擦除态 commit doubleword、compact suffix 和零 tail；此时 Flash 上的 commit doubleword 仍应为 0xFFFFFFFFFFFFFFFF
+  8. 最后只写一次 commit doubleword：低 32 位为 generation=N，高 32 位为 committed=0
+  9. 重新按 FOC2 有效页规则验证新页，新页成为 Active
 ```
 
-**掉电恢复逻辑（Load）**：
+该顺序利用 STM32G4 Flash 擦除后为 1、编程只能将 bit 清 0 的特性：提交 doubleword 在最终提交前完全不写，掉电时会保持擦除态，Load 时不会被当作有效页。
+
+#### 2.3.2 掉电恢复逻辑（Load）
 
 ```
-读 Page A 和 Page B 的 header:
-  - magic 有效 + CRC 通过 + committed == 1 → 有效页
-  - 两页均有效 → 选 generation 较大的
-  - 只有一页有效 → 使用该页
-  - 均无效 → 返回 ERR_CORRUPT，使用默认参数
+读 Page62 和 Page63:
+  - FOC2 页：magic、version、committed、CRC 全部有效才接受
+  - FOC1 页：只接受明确支持的历史版本并迁移到内存中的 FOC2 形态
+  - 两页均有效：用 generation_is_newer() 处理 32-bit 回绕，选择较新的页
+  - 只有一页有效：使用该页
+  - 均无效：返回 FLASH_STORAGE_ERR_CORRUPT，调用方使用默认参数
 ```
 
-#### 2.3.2 FlashParamData 新头部布局
+FOC2 有效页条件：
 
 ```c
-typedef struct {
-    uint32_t magic;       /* 0x464F4332 "FOC2"（区分旧格式）*/
-    uint32_t version;     /* param schema version */
-    uint32_t generation;  /* 单调递增写入计数（新增）*/
-    uint32_t committed;   /* 0 = 写入中, 1 = 写入完成（新增）*/
-    uint32_t crc32;       /* CRC32（对 reserved_data 之前全部字段之后的数据）*/
-    uint32_t reserved;    /* 对齐 */
-    /* ... 其余参数字段不变 ... */
-} __attribute__((packed)) FlashParamData_v2;
+magic == FLASH_MAGIC_WORD_V2
+param_version == FLASH_PARAM_VERSION
+committed == 0
+crc32 == CRC32_IEEE(logical_bytes[16..PARAM_FLASH_IMAGE_SIZE))
 ```
 
-> **注意**：magic 从 `FOC1`(`0x464F4331`) 改为 `FOC2`(`0x464F4332`)，
-> Load 时同时识别两个 magic，`FOC1` 格式自动当作 generation=0 迁移。
+#### 2.3.3 Commit Doubleword 布局
 
-#### 2.3.3 committed 字段的写入方案
-
-STM32G4 Flash 最小写入单位为 64-bit double-word，一旦写 0 不可在不 erase 的情况下改回 1。
-利用这个特性：
-
-```
-Page B 写入顺序：
-  ① Erase Page B（全 0xFF）
-  ② 写整页数据，committed 字段位置填 0x00000000（表示"写入中"）
-  ③ 验证整页 CRC 通过后，将 committed 所在的 double-word 重新写为
-     0x0000000100000001（高 32 位为 1 表示 committed，低 32 位为 generation）
-     → 一次 HAL_FLASH_Program 调用，不需要 erase
-```
-
-**为什么不需要 erase**：
-Flash 写入只能将 bit 从 1 改为 0，`committed = 0x00000000` → `0x00000001` 是合法的单次写。
-若 ③ 步掉电：committed 仍为 0，Load 时该页被判定为无效，回退到 Page A（旧参数）。
-
-#### 2.3.4 CRC 覆盖范围
-
-```
-CRC32 = CRC(data[offsetof(reserved)+4 ... end of FlashParamData])
-      （跳过 magic / version / generation / committed / crc32 / reserved 共 24 字节）
-```
-
-与 v1.0 保持相同的 CRC 起点（`+16` 字节），加上新增的 8 字节（generation + committed），起点改为 `+24`。
-
-### 2.4 新的 Save 流程
+`generation` 与 `committed` 必须同处 offset 16 的 64-bit doubleword：
 
 ```c
-FlashStorageResult ParamStorage_Save_v2(const FlashParamData_v2 *data) {
-    // 1. 确定写哪页（轮换）
-    uint8_t active_page  = ParamStorage_GetActivePage();  // 0=Page1, 1=Page2
-    uint8_t standby_page = 1 - active_page;
-    uint32_t write_addr  = standby_page ? PAGE2_ADDR : PAGE1_ADDR;
+offsetof(FlashParamData, generation) == 16
+offsetof(FlashParamData, committed)  == 20
+```
 
-    // 2. 构造写入数据
-    FlashParamData_v2 wr = *data;
-    wr.magic      = FLASH_MAGIC_WORD_V2;
-    wr.version    = FLASH_PARAM_VERSION;
-    wr.generation = s_generation + 1;
-    wr.committed  = 0;  // 写入中标志
-    wr.crc32      = 0;
-    wr.crc32      = BSP_Flash_CalculateCRC32(crc_start(&wr), crc_len);
+保存时先跳过该 doubleword，使 Flash 中保持：
+
+```text
+0xFFFFFFFFFFFFFFFF  // pending / erased
+```
+
+最终提交只执行一次 doubleword program：
+
+```c
+uint64_t commit_dw = ((uint64_t)0u << 32) | (uint64_t)next_generation;
+BSP_Flash_WriteDoubleWord(write_addr + 16u, commit_dw);
+```
+
+因此任何发生在最终提交前的掉电，都只会留下 pending 页；发生在最终提交后的掉电，则该页必须通过 FOC2 严格版本和 CRC 校验后才会被选中。
+
+### 2.4 Save 流程（与当前 `param_storage.c` 对齐）
+
+```c
+static FlashStorageResult ParamStorage_Save_v2(FlashParamData *data) {
+    if (data == NULL) return FLASH_STORAGE_ERR_LOCKED;
+
+    PageInfo current;
+    uint8_t active_page;
+    if (select_best_page(&current, &active_page)) {
+        s_generation = current.generation;
+        s_active_page = active_page;
+    } else {
+        s_generation = 0;
+        s_active_page = 0;
+    }
+
+    uint8_t standby = 1u - s_active_page;
+    uint32_t write_addr = page_addr_from_index(standby);
+    uint32_t next_generation = s_generation + 1u;
+
+    /* Mutate caller image in place; no full-image stack copy. */
+    data->magic = FLASH_MAGIC_WORD_V2;
+    data->param_version = FLASH_PARAM_VERSION;
+    data->generation = next_generation;
+    data->committed = 0;
+    data->crc32 = 0;
+    data->crc32 = param_crc32(data);  // compact bytes + zero tail to 2048
 
     BSP_Flash_Unlock();
+    if (!BSP_Flash_ErasePage(write_addr)) fail_erase;
+    if (!flash_write_image_except_commit_dw(write_addr, data)) fail_write;
+    if (!verify_pending_image(write_addr, data)) fail_verify;
 
-    // 3. Erase standby page
-    if (!BSP_Flash_ErasePage(write_addr)) goto fail;
-
-    // 4. Write full page (committed = 0)
-    if (!Flash_Write(write_addr, (uint8_t*)&wr, sizeof(wr))) goto fail;
-
-    // 5. Verify CRC
-    if (!BSP_Flash_Verify(write_addr, (uint8_t*)&wr, sizeof(wr))) goto fail;
-
-    // 6. Write committed flag (single double-word, no erase needed)
-    uint32_t committed_offset = offsetof(FlashParamData_v2, committed);
-    uint64_t commit_dw = ((uint64_t)1 << 32) | (uint64_t)wr.generation;
-    if (!BSP_Flash_WriteDoubleWord(write_addr + committed_offset, commit_dw)) goto fail;
-
+    uint64_t commit_dw = ((uint64_t)0u << 32) | (uint64_t)next_generation;
+    if (!BSP_Flash_WriteDoubleWord(write_addr + 16u, commit_dw)) fail_write;
     BSP_Flash_Lock();
-    s_generation++;
-    s_active_page = standby_page;
+
+    PageInfo verify;
+    if (!inspect_page(write_addr, &verify) || verify.generation != next_generation) {
+        return FLASH_STORAGE_ERR_VERIFY;
+    }
+
+    s_generation = next_generation;
+    s_active_page = standby;
+    s_last_crc = verify.crc32;
+    s_write_count++;
     return FLASH_STORAGE_OK;
-
-fail:
-    BSP_Flash_Lock();
-    return FLASH_STORAGE_ERR_WRITE;
 }
 ```
-
-### 2.5 新的 Load 流程
+### 2.5 Load 流程（与当前 `param_storage.c` 对齐）
 
 ```c
-FlashStorageResult ParamStorage_Load_v2(FlashParamData_v2 *data) {
-    FlashParamData_v2 p1, p2;
-    bool p1_valid = page_is_valid(PAGE1_ADDR, &p1);
-    bool p2_valid = page_is_valid(PAGE2_ADDR, &p2);
+static FlashStorageResult ParamStorage_Load_v2(FlashParamData *data) {
+    if (data == NULL) return FLASH_STORAGE_ERR_LOCKED;
 
-    if (!p1_valid && !p2_valid) return FLASH_STORAGE_ERR_CRC;
+    PageInfo best;
+    uint8_t active_page;
+    if (!select_best_page(&best, &active_page)) {
+        return FLASH_STORAGE_ERR_CORRUPT;
+    }
 
-    FlashParamData_v2 *best;
-    if      (p1_valid && !p2_valid) best = &p1;
-    else if (!p1_valid && p2_valid) best = &p2;
-    else    best = (p1.generation >= p2.generation) ? &p1 : &p2;
+    /* Only the chosen page is loaded into the caller's compact struct. */
+    if (!load_page(best.address, data)) {
+        return FLASH_STORAGE_ERR_CORRUPT;
+    }
 
-    *data = *best;
-    s_generation = best->generation;
-    s_active_page = (best == &p1) ? 0 : 1;
+    s_generation = data->generation;
+    s_active_page = active_page;
+    s_last_crc = data->crc32;
     return FLASH_STORAGE_OK;
 }
-
-static bool page_is_valid(uint32_t addr, FlashParamData_v2 *out) {
-    BSP_Flash_Read(addr, (uint8_t*)out, sizeof(FlashParamData_v2));
-    if (out->magic != FLASH_MAGIC_WORD_V2) {
-        /* 向后兼容：尝试 FOC1 格式 */
-        return try_migrate_v1(addr, out);
-    }
-    if (out->committed != 1) return false;  /* 写入中断 */
-    /* CRC 验证 */
-    uint32_t stored = out->crc32;
-    out->crc32 = 0;
-    bool ok = (BSP_Flash_CalculateCRC32(crc_start(out), crc_len) == stored);
-    out->crc32 = stored;
-    return ok;
-}
 ```
-
 ### 2.6 向后兼容迁移
 
+`inspect_page()` / `load_page()` 对 `FOC1` 只接受两个明确的历史布局：
+
+| 版本 | 布局 | 迁移规则 |
+|------|------|----------|
+| `0x00010001` | 16B header，无 transaction doubleword | 先按 offset 16 CRC 校验旧 payload；校验通过后将 payload 前移到当前 24B header 后，丢弃末尾 8B legacy reserved |
+| `0x00010000` | transitional 24B header，`generation=0` 且 `committed=0` | 按当前 offset 16 CRC 校验；校验通过后直接规范化为 FOC2 |
+
+迁移只在内存中规范化读取结果：
+
 ```c
-static bool try_migrate_v1(uint32_t addr, FlashParamData_v2 *out) {
-    FlashParamData v1;
-    BSP_Flash_Read(addr, (uint8_t*)&v1, sizeof(v1));
-    if (v1.magic != FLASH_MAGIC_WORD_V1) return false;
-    /* CRC 校验（v1 方式）*/
-    if (!v1_crc_ok(&v1)) return false;
-    /* 迁移：把 v1 字段复制到 v2 结构 */
-    memset(out, 0, sizeof(*out));
-    out->magic      = FLASH_MAGIC_WORD_V2;
-    out->version    = v1.version;
-    out->generation = 0;
-    out->committed  = 1;  /* 迁移视为已提交 */
-    /* 复制参数字段（偏移相同，reserved_data 截断无妨）*/
-    memcpy(&out->motor_rs, &v1.motor_rs,
-           sizeof(FlashParamData) - 16);
-    return true;
-}
+out->magic = FLASH_MAGIC_WORD_V2;
+out->param_version = FLASH_PARAM_VERSION;
+out->generation = 0;
+out->committed = 0;
+out->crc32 = 0;
+out->crc32 = param_crc32(out);
 ```
+
+其他 `FOC1` 版本、FOC2 版本不匹配、CRC 不匹配、或 pending commit doubleword 未提交的页面均视为无效。
 
 ### 2.7 Flash 布局（无变化）
 
 ```
-0x0801F000  Page 62 (2KB)  — 未使用（保留给 OTA Bootloader）
-0x0801F800  Page 63 上半 (2KB) = FLASH_PARAM_PAGE1  ← 角色动态交替
-0x0801FC00  Page 63 下半 (2KB) = FLASH_PARAM_PAGE2  ← 角色动态交替
+STM32G431CB 128KB Flash:
+0x08000000 - 0x08003FFF  Bootloader (16KB, 8 pages)
+0x08004000 - 0x0801EFFF  Application (108KB, 54 pages)
+0x0801F000 - 0x0801F7FF  FLASH_PARAM_PAGE1 (2KB, Page 62) ← 角色动态交替
+0x0801F800 - 0x0801FFFF  FLASH_PARAM_PAGE2 (2KB, Page 63) ← 角色动态交替
 ```
 
-> `FlashParamData_v2` 大小 = `FlashParamData` 大小 + 8 字节（generation + committed）
-> 调整 `reserved_data` 长度 -8 以保持结构体总大小不变（≤ 2048 字节）。
+> 当前 `FlashParamData` 为紧凑 RAM 结构；Flash 兼容性由 `PARAM_FLASH_IMAGE_SIZE` 固定为 2KB，并要求结构体大小严格小于该镜像大小。紧凑结构后的 Flash tail 必须写成 0，并参与 CRC。
 
 ---
 
@@ -386,7 +388,7 @@ static bool try_migrate_v1(uint32_t addr, FlashParamData_v2 *out) {
 
 | 步骤 | 位置 | 工作量 |
 |------|------|--------|
-| 1. 固件侧：确认 CMD 0 广播响应已覆盖所有协议模式 | `inovxio_protocol.c`, `canopen_protocol.c` | 0.5h |
+| 1. 固件侧：确认 CMD 0 广播响应已覆盖所有协议模式 | `vector_protocol.c`, `canopen_protocol.c` | 0.5h |
 | 2. 主机侧：实现 `scan_bus()` API | Brainstem `can_manager.dart` 或独立 C 库 | 2h |
 | 3. 主机侧：NodeTable 数据结构 + 去重 + ID 碰撞检测 | 同上 | 1h |
 | 4. OpenClaw Console：拓扑发现 UI | Flutter | 2h |
@@ -396,14 +398,13 @@ static bool try_migrate_v1(uint32_t addr, FlashParamData_v2 *out) {
 
 | 步骤 | 位置 | 工作量 |
 |------|------|--------|
-| 1. `param_storage.h`：FlashParamData_v2 结构定义 | `param_storage.h` | 1h |
-| 2. `param_storage.c`：Save_v2 / Load_v2 / migrate_v1 | `param_storage.c` | 3h |
-| 3. `bsp_flash.c`：确认 WriteDoubleWord 可在已擦除页上追加写 committed | `bsp_flash.c` | 0.5h |
-| 4. 单元测试：掉电场景模拟（RAM 模拟 Flash） | `tests/test_param_storage.c` | 2h |
-| **合计** | | **~6.5h** |
+| 1. `param_storage.h`：固定 `FlashParamData` 头部、transaction doubleword 和 2KB 上限断言 | `param_storage.h` | 已实现 |
+| 2. `param_storage.c`：Save_v2 / Load_v2 / FOC1 迁移与 generation 回绕选择 | `param_storage.c` | 已实现 |
+| 3. `bsp_flash.c`：doubleword 对齐/范围保护和 CRC32/IEEE 软件语义 | `bsp_flash.c` | 已实现 |
+| 4. 单元测试：pending 页、最终提交、CRC/迁移和损坏回退场景 | `test/test_param_storage.c`, `test/test_bsp_flash.c` | 已覆盖/补充 |
+| **状态** | | **实现已落地，持续由测试矩阵回归** |
 
-**总工作量估算：~12h（1.5 个工作日）**
-不阻断 v1.0 发布，可在 v1.0 tag 之后立即开始。
+**当前状态**：F2 固件实现已落地；本文档记录当前行为与后续验证口径。
 
 ---
 
@@ -424,11 +425,13 @@ static bool try_migrate_v1(uint32_t addr, FlashParamData_v2 *out) {
 | 场景 | 期望结果 |
 |------|---------|
 | 正常保存 + 重启 | 加载成功，参数一致 |
-| 掉电在 Step 4（write）完成前 | Load 回退到旧页，参数为掉电前旧值 |
-| 掉电在 Step 5（verify）完成前，数据损坏 | CRC 失败 → 回退旧页 |
-| 掉电在 Step 6（committed 写）完成前 | committed=0 → 回退旧页 |
-| 两页均损坏 | 返回 ERR_CORRUPT，使用编译期默认参数 |
-| 旧固件 FOC1 格式页 + 新固件启动 | 自动迁移，generation=0，正常工作 |
+| 写 payload 过程中掉电 | 新页 commit doubleword 仍为擦除态，Load 回退旧页 |
+| pending image verify 前数据损坏 | verify 失败，返回写入错误；旧页保持有效 |
+| 最终 commit doubleword 写入前掉电 | 新页保持 pending/erased 状态，Load 回退旧页 |
+| 最终 commit doubleword 写入后掉电 | 新页需通过 FOC2 版本和 CRC 校验，通过后按 generation 选中 |
+| 两页均损坏或均为 pending | 返回 ERR_CORRUPT，使用编译期默认参数 |
+| FOC1 `0x00010001` 16B header 页 | 校验旧 payload 后迁移到内存中的 FOC2/generation 0 形态 |
+| FOC1 `0x00010000` transitional 24B header 页 | 校验当前布局后迁移到内存中的 FOC2/generation 0 形态 |
 
 ---
 
@@ -438,6 +441,6 @@ static bool try_migrate_v1(uint32_t addr, FlashParamData_v2 *out) {
 |------|------|
 | `Src/HAL/bsp/bsp_flash.h/.c` | Flash 底层 BSP（WriteDoubleWord, CRC32）|
 | `Src/UI/parameter/param_storage.h/.c` | 参数存储层（F2 主要修改点）|
-| `Src/COMM/protocol/inovxio/inovxio_protocol.h/.c` | CMD 0 广播响应（F1 验证点）|
+| `Src/COMM/protocol/vector/vector_protocol.h/.c` | CMD 0 广播响应（F1 验证点）|
 | `Src/APP/device_id.h` | STM32 96-bit UID（F1 节点唯一标识）|
-| `Src/COMM/protocol/inovxio/PROTOCOL_CN.md` | 协议文档（参考 CMD 0 格式）|
+| `Src/COMM/protocol/vector/PROTOCOL_CN.md` | 协议文档（参考 CMD 0 格式）|

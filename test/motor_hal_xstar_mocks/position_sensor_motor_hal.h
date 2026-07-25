@@ -1,0 +1,8 @@
+#ifndef MOTOR_HAL_XSTAR_MOCK_POSITION_SENSOR_MOTOR_HAL_H
+#define MOTOR_HAL_XSTAR_MOCK_POSITION_SENSOR_MOTOR_HAL_H
+
+#include "motor_hal_api.h"
+
+extern const Motor_HAL_EncoderInterface_t g_position_sensor_motor_hal_interface;
+
+#endif

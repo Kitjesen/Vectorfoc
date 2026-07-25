@@ -7,6 +7,7 @@
  */
 
 #include "tim.h"
+#include "board_config.h"
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim3;
@@ -14,7 +15,7 @@ DMA_HandleTypeDef hdma_tim3_ch2;
 
 /**
  * @brief  TIM1 init - center-aligned PWM for 3-phase motor drive.
- *         Period=4200 => 168MHz / (2*4200) = 20kHz
+ *         Period and ADC sample point come from the selected board contract.
  *         CH1/CH2/CH3: motor phases, CH4: ADC trigger
  */
 void MX_TIM1_Init(void) {
@@ -25,7 +26,7 @@ void MX_TIM1_Init(void) {
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
   htim1.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
-  htim1.Init.Period = 4200;
+  htim1.Init.Period = HW_PWM_PERIOD_TICKS;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = MCPWM_RCR;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -33,7 +34,8 @@ void MX_TIM1_Init(void) {
     Error_Handler();
   }
 
-  /* Master: OC4REF triggers ADC injected conversion */
+  /* Preserve OC4REF as the timer master signal.  The injected ADC conversion
+   * itself selects the TIM1_CC4 rising edge in the ADC configuration. */
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC4REF;
   sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
@@ -59,8 +61,10 @@ void MX_TIM1_Init(void) {
     Error_Handler();
   }
 
-  /* CH4: ADC trigger pulse near counter peak (4190/4200) */
-  sConfigOC.Pulse = 4190;
+  /* CH4: sample close to the center-aligned counter peak.  The margin is a
+   * board property because gate timing and the analogue front-end can change
+   * independently of the MCU. */
+  sConfigOC.Pulse = HW_PWM_PERIOD_TICKS - HW_PWM_ADC_TRIGGER_OFFSET_TICKS;
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_4) != HAL_OK) {
     Error_Handler();
   }
@@ -69,14 +73,16 @@ void MX_TIM1_Init(void) {
   sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
   sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
   sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = MCPWM_DEADTIME_CLOCKS;
-  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
-  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-  sBreakDeadTimeConfig.BreakFilter = 0;
+  sBreakDeadTimeConfig.DeadTime = HW_PWM_DEADTIME_CLKS;
+  sBreakDeadTimeConfig.BreakState =
+      HW_PWM_BREAK_ENABLED ? TIM_BREAK_ENABLE : TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = HW_PWM_BREAK_POLARITY;
+  sBreakDeadTimeConfig.BreakFilter = HW_PWM_BREAK_FILTER;
   sBreakDeadTimeConfig.BreakAFMode = TIM_BREAK_AFMODE_INPUT;
-  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
-  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
-  sBreakDeadTimeConfig.Break2Filter = 0;
+  sBreakDeadTimeConfig.Break2State =
+      HW_PWM_BREAK2_ENABLED ? TIM_BREAK2_ENABLE : TIM_BREAK2_DISABLE;
+  sBreakDeadTimeConfig.Break2Polarity = HW_PWM_BREAK2_POLARITY;
+  sBreakDeadTimeConfig.Break2Filter = HW_PWM_BREAK2_FILTER;
   sBreakDeadTimeConfig.Break2AFMode = TIM_BREAK_AFMODE_INPUT;
   sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
   if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK) {

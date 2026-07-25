@@ -25,6 +25,8 @@
 #include "bsp_adc.h"
 #include "common.h"
 #include "main.h"
+#include <stdbool.h>
+#include <stdint.h>
 /**
  * @brief Initialize the ADC driver with a specific hardware handle.
  * @param hadc Pointer to the ADC handle (e.g. &hadc1).
@@ -44,6 +46,37 @@ typedef struct {
   float current_offset_sum_c; /**< [LSB*samples] Accumulator for offset C */
 } CURRENT_DATA;
 extern CURRENT_DATA current_data;
+
+/** One fresh, simultaneous three-phase ADC sample in raw converter counts. */
+typedef struct {
+  uint16_t phase_a;
+  uint16_t phase_b;
+  uint16_t phase_c;
+} MotorAdcCurrentSample;
+
+/** Validated current zero offsets in raw converter counts. */
+typedef struct {
+  float phase_a;
+  float phase_b;
+  float phase_c;
+} MotorAdcCurrentOffsets;
+
+/** Hardware adapter that waits for and returns exactly one new conversion. */
+typedef bool (*MotorAdcSampleReader)(void *context,
+                                     MotorAdcCurrentSample *sample);
+
+/**
+ * Average a bounded sequence of fresh samples without exposing ADC registers.
+ * The result is written only when every sample was acquired and all three
+ * averages lie strictly inside the supplied valid range.
+ */
+bool MotorAdc_CalibrateOffsets(MotorAdcSampleReader read_next,
+                               void *context,
+                               uint32_t sample_count,
+                               uint16_t valid_min,
+                               uint16_t valid_max,
+                               MotorAdcCurrentOffsets *result);
+
 /**
  * @brief setcurrentsample (LSB)，calibrationdone
  * @param Ia Phase A  [LSB]
@@ -73,7 +106,7 @@ typedef enum {
  */
 void GetTempNtc(uint16_t value_adc, float *value_temp);
 /**
- * @brief  Apply median filter to ADC1 channel (in-place sort).
+ * @brief  Apply median filter to an ADC1 DMA snapshot.
  * @param  channel ADC1 channel index.
  * @return Filtered value [LSB].
  */
@@ -85,7 +118,7 @@ uint16_t adc1_median_filter(uint8_t channel);
  */
 uint16_t adc1_avg_filter(uint8_t channel);
 /**
- * @brief  Apply median filter to ADC2 channel (in-place sort).
+ * @brief  Apply median filter to an ADC2 DMA snapshot.
  * @param  channel ADC2 channel index.
  * @return Filtered value [LSB].
  */

@@ -37,7 +37,8 @@ typedef struct {
 
     /* 角度 */
     float    elec_angle_rad;    /* 电角度 [rad]，扇区中心值，范围 [0, 2π) */
-    float    mec_angle_rad;     /* 机械角度（累积，多圈）[rad] */
+    float    mec_angle_rad;     /* 当前扇区对应的单圈机械角 [rad] */
+    float    position_rad;      /* 相对上电零点的累计多圈机械位置 [rad] */
     float    offset_rad;        /* 电角度零偏 [rad] */
 
     /* 速度 */
@@ -71,6 +72,7 @@ void Hall_UpdateFromISR(void);
  * @brief 设置极对数（影响电角度和电速度换算）
  */
 void Hall_SetPolePairs(uint8_t pp);
+bool Hall_IsSignalValid(void);
 
 /* ==========================================================================
    全局数据（供 motor_hal_xstar.c 访问）

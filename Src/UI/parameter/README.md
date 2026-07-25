@@ -1,212 +1,252 @@
 # Parameter Module (参数管理模块)
 
-**Status**: ✅ Production Ready
+**Status**: Active — host-tested; hardware Flash fault-injection pending
 
 ## 概述
 
-Parameter 模块是 VectorFOC 固件的核心组件之一，负责管理电机控制系统的所有配置参数。它提供了一个统一的接口，用于参数的**定义**、**运行时访问**（读/写）、**范围验证**以及**非易失性存储**（Flash 持久化）。
+Parameter 模块集中管理 VectorFOC 固件的运行参数。它负责：
 
-## 核心架构
+- 参数表初始化、默认值加载和元数据查询；
+- 类型安全读写、范围校验、读写权限校验；
+- 将通信链路上的 `float` 表示转换为参数表中的实际类型；
+- 双页事务化 Flash 持久化和旧版数据迁移。
 
-该模块采用**表驱动**架构，主要由以下三部分组成：
+参数写入后的运行时生效由 APP 的 `RuntimeSettings` adapter 负责。参数
+模块只在成功写入 RAM 后发布参数索引；它不直接控制 PID、协议、CAN timeout
+或编码器 offset HAL。
 
-1. **ParamAccess** (`param_access.h`): 面向应用层的顶层 API，提供类型安全的读写接口和事务逻辑（如校验、保存）。应用层**只应该**与此层交互。
-2. **ParamTable** (`param_table.h`): 数据定义层，维护参数注册表、元数据（最小值、最大值、默认值）和物理变量指针。
-3. **ParamStorage** (`param_storage.h`): 硬件抽象层，负责 Flash 扇区的擦除、写入、CRC 校验和双页备份管理。
+Encoder calibration 的 Flash 快照由 `param_encoder_calibration` module 管理。
+它只认识 portable 的 `valid + offset_lut` snapshot；具体的 Hall、ABZ、MT6816
+和 TMR3109 状态由 APP 的 adapter 管理，避免参数层依赖板级 encoder headers。
 
----
+参数表本身只保存不可变的协议元数据（index、type、范围、属性和名称）。APP 的
+`ParameterBindingsSettings` adapter 在启动期提供具体 RAM target 与默认值，因此
+`param_table.c` 不依赖 `motor.h`、`fault_detection.h`、`config.h` 或板级 headers。
 
-## API 详解 (Reference)
+应用层优先使用 `param_access.h` 中的接口。`param_table.h` 和 `param_storage.h` 主要供参数模块内部、测试代码或低层维护逻辑使用。
 
-### 1. 参数访问层 (`param_access.h`)
+## 模块分层
 
-这是应用程序调用的主要接口。
+| 层 | 文件 | 职责 |
+| --- | --- | --- |
+| Access | `param_access.h/.c` | 公开读写 interface、范围校验、保存/恢复、运行时变更通知 |
+| Table | `param_table.h/.c` | 不可变参数索引、类型、上下限和 binding adapter contract |
+| Storage | `param_storage.h/.c` | 双页 Flash 镜像、CRC、generation、commit 标记、旧格式迁移 |
+| Calibration snapshot | `param_encoder_calibration.h/.c` | portable snapshot、Flash 字段映射、镜像校验与 adapter seam |
+| Runtime adapter | `Src/APP/settings/runtime_settings.h/.c` | 在 motor、encoder、protocol 就绪后，把变更应用到运行时对象 |
+| Calibration adapter | `Src/APP/settings/encoder_calibration_settings.h/.c` | 在参数加载前捕获、恢复或清空具体 encoder 的校准状态 |
+| Target binding adapter | `Src/APP/settings/parameter_bindings_settings.h/.c` | 在参数加载前解析具体 RAM target 与默认值，保留参数层的板级无关性 |
 
-#### 基础读写
+## 初始化流程
+
+应用启动时调用一次：
 
 ```c
-/**
- * @brief 通用参数读取
- * @param index 参数索引 (如 PARAM_MOTOR_RS)
- * @param data [OUT] 接收数据的缓冲区指针
- * @param type [OUT] 返回该参数的数据类型 (可选，传 NULL 忽略)
- * @return 0=成功, 非0=错误码
- */
-ParamResult Param_Read(uint16_t index, void *data, ParamType *type);
-
-/**
- * @brief 通用参数写入
- * @param index 参数索引
- * @param data [IN] 包含待写入数据的缓冲区指针
- * @note 此函数会自动检查数据类型匹配、边界限制 (min/max) 和读写权限 (RO/RW)。
- * @return 0=成功, 非0=错误码
- */
-ParamResult Param_Write(uint16_t index, const void *data);
+ParameterBindingsSettings_Install();
+EncoderCalibrationSettings_InstallAdapter();
+ParamResult result = Param_SystemInitOnce();
+if (result != PARAM_OK) {
+    /* Flash 中没有有效参数或恢复失败时，系统继续使用表中默认值。 */
+}
 ```
 
-#### 类型安全便捷接口
+`ParameterBindingsSettings_Install()` 必须在 `Detection_Init()` 后、
+`Param_SystemInitOnce()` 前调用；它只验证完整 binding，不会触发 PID、CAN 或协议副作用。
+`EncoderCalibrationSettings_InstallAdapter()` 也必须先于 `Param_SystemInitOnce()` 调用，
+以保留现有的早期 encoder calibration 恢复时序。`Param_SystemInitOnce()` 会先执行
+`ParamTable_Init()`，再尝试 `Param_LoadFromFlash()`，且具备一次性保护。随后 APP 会在
+encoder、protocol 和 motor runtime 都就绪后安装 `RuntimeSettings` adapter，并调用
+`Param_ApplyRuntimeState()` 统一重放。
 
-推荐在已知参数类型时使用，比通用接口更安全且无需 `void*` 转换。
+如果需要恢复出厂值：
 
 ```c
-// Float 类型参数
+ParamResult result = Param_RestoreDefaults();
+if (result == PARAM_OK) {
+    (void)Param_SaveToFlash();
+}
+```
+
+`Param_RestoreDefaults()` 会先校验所有可写参数的默认值，再批量写入内存参数，并在批量结束后统一应用运行时状态。
+
+## 公开访问 API
+
+### 强类型读写
+
+当调用方知道参数的实际类型时，直接使用强类型接口：
+
+```c
+float current_limit = 0.0f;
+ParamResult read_result = Param_ReadFloat(PARAM_LIMIT_CURRENT, &current_limit);
+
+ParamResult write_result = Param_WriteFloat(PARAM_LIMIT_CURRENT, 20.0f);
+```
+
+当前公开的强类型接口包括：
+
+```c
 ParamResult Param_ReadFloat(uint16_t index, float *value);
 ParamResult Param_WriteFloat(uint16_t index, float value);
 
-// Uint8 类型参数
 ParamResult Param_ReadUint8(uint16_t index, uint8_t *value);
 ParamResult Param_WriteUint8(uint16_t index, uint8_t value);
+
+ParamResult Param_ReadUint16(uint16_t index, uint16_t *value);
+ParamResult Param_WriteUint16(uint16_t index, uint16_t value);
+
+ParamResult Param_ReadUint32(uint16_t index, uint32_t *value);
+ParamResult Param_WriteUint32(uint16_t index, uint32_t value);
+
+ParamResult Param_ReadInt32(uint16_t index, int32_t *value);
+ParamResult Param_WriteInt32(uint16_t index, int32_t value);
 ```
 
-#### 持久化与管理
+### Runtime adapter seam
+
+`Param_SetRuntimeApplyCallback()` 为 APP 提供一个小 interface。成功的单次
+写入通知对应参数索引；从 Flash 批量恢复、恢复默认值或 APP 显式重放时，只
+通知一次 `PARAM_RUNTIME_APPLY_ALL`。callback 在参数 critical section 之外
+执行，且不得递归写参数。
+
+### Encoder calibration seam
+
+`ParamEncoderCalibration_SetAdapter()` 的 interface 只传递
+`ParamEncoderCalibrationSnapshot`。保存时 adapter 填充 snapshot，合法镜像加载时
+adapter 恢复 snapshot；scheduled-save 回退到默认值时 adapter 清空校准状态。无效的
+`encoder_calib_valid` 或 reserved bytes 会在调用 adapter 前被拒绝。
+
+这些接口会检查：
+
+- 参数索引是否存在；
+- 目标类型是否与参数表声明一致；
+- 指针是否为空；
+- 写入权限；
+- 写入值是否有限且落在 `[min, max]` 内。
+
+### 通信链路 float 转换 API
+
+VOFA 和 CAN executor 等通信链路使用 `float` 作为线协议表示。它们应调用：
 
 ```c
-/**
- * @brief 保存所有参数到 Flash
- * @details 遍历参数表，将所有标记为 PARAM_ATTR_PERSISTENT 的参数序列化并写入 Flash。
- *          使用双页备份机制：通常写入 Page1，若失败则写入 Page2。
- * @return 0=成功, 非0=错误码
- */
+float wire_value = 0.0f;
+ParamResult read_result = Param_ReadAsFloat(PARAM_CAN_TIMEOUT, &wire_value);
+
+ParamResult write_result = Param_WriteFromFloat(PARAM_CAN_TIMEOUT, 1000.0f);
+```
+
+`Param_WriteFromFloat()` 会根据参数表中的 `ParamType` 转换实际类型。整数目标必须满足：
+
+- 输入为有限值；
+- 输入为整数值，不能有小数部分；
+- 输入落在目标整数类型范围和参数表范围内。
+
+因此 `7.5f` 写入 `PARAM_CAN_ID` 会返回 `PARAM_ERR_OUT_OF_RANGE`，不会截断为 `7`。
+
+### Raw 读写边界
+
+`Param_ReadRaw()` 和 `Param_WriteRaw()` 当前是 `param_access.c` 内部 `static` 函数，不是公开 API。外部代码不要声明或调用它们；新增调用点应使用强类型接口或 `Param_ReadAsFloat()` / `Param_WriteFromFloat()`。
+
+## 持久化 API
+
+```c
 ParamResult Param_SaveToFlash(void);
-
-/**
- * @brief 从 Flash 加载参数
- * @details 尝试从 Page1 加载，若校验失败则尝试 Page2。
- *          若均无效，则保持默认值或调用 RestoreDefaults。
- * @return 0=成功, 非0=错误码 (无效数据)
- */
 ParamResult Param_LoadFromFlash(void);
-
-/**
- * @brief 恢复出厂设置
- * @details 将所有参数重置为 param_table 中定义的 default_val。
- *          注意：此操作仅在内存中生效，调用 SaveToFlash() 后才持久化。
- */
-ParamResult Param_RestoreDefaults(void);
-
-/**
- * @brief 获取参数元数据
- * @details 获取参数的属性（如 Min, Max, Default, Name）。常用于通信协议返回参数描述。
- */
-ParamResult Param_GetInfo(uint16_t index, const ParamEntry **entry);
+void Param_ScheduleSave(void);
+bool Param_ProcessScheduledSave(void);
+ParamResult Param_RollbackScheduledSave(void);
 ```
 
----
+- `Param_SaveToFlash()` 从当前参数表收集 `FlashParamData`，先进行完整校验，再调用 `ParamStorage_Save()`。
+- `Param_LoadFromFlash()` 从存储层读取有效镜像，完整校验后一次性恢复到运行时参数。
+- `Param_ScheduleSave()` 只设置待保存标志，可用于不适合立即擦写 Flash 的路径。
+- `Param_ProcessScheduledSave()` 在任务上下文中处理挂起保存；保存失败时会重新置位，后续继续重试。
+- 命令服务对同一保存代际最多重试三次；终态失败时会丢弃该代际，再调用 `Param_RollbackScheduledSave()`。
+- `Param_RollbackScheduledSave()` 重新加载当前双页存储中最新的有效提交镜像；若没有可加载镜像，则恢复默认参数并清除编码器校准有效状态。它不是完整的 RAM 快照回滚。直接标定路径调用的 `Param_ScheduleSave()` 也使用这条终态回滚路径。
 
-### 2. 参数表层 (`param_table.h`)
-
-主要用于内部查找，通常不直接由应用层调用。
-
-```c
-void ParamTable_Init(void);  /* @brief 初始化参数表 */
-
-/**
- * @brief 查找参数条目
- * @param index 索引
- * @return 指向 ParamEntry 的指针，若未找到返回 NULL。
- */
-const ParamEntry *ParamTable_Find(uint16_t index);
-
-/**
- * @brief 获取整个参数表
- * @details 用于遍历整个表（例如 Flash 存储模块需要遍历保存）。
- */
-const ParamEntry *ParamTable_GetTable(void);
-
-/**
- * @brief 获取参数总数
- */
-uint32_t ParamTable_GetCount(void);
-```
-
----
-
-### 3. 存储层 (`param_storage.h`)
-
-Flash 驱动抽象。除非你需要直接操作 Flash，否则应使用 `Param_SaveToFlash`。
+存储层当前签名为：
 
 ```c
-/**
- * @brief 初始化存储模块
- * @details 检查 Flash 魔术字，验证两个分区的数据完整性。
- */
-void ParamStorage_Init(void);
-
-/**
- * @brief 写入参数数据包
- * @param data 准备好的数据结构体
- * @return 写入结果 (OK / EraseErr / WriteErr)
- */
-FlashStorageResult ParamStorage_Save(const FlashParamData *data);
-
-/**
- * @brief 读取参数数据包
- * @param data [OUT] 接收结构体
- * @return 加载结果 (OK / CrcErr / MagicErr)
- */
+FlashStorageResult ParamStorage_Save(FlashParamData *data);
 FlashStorageResult ParamStorage_Load(FlashParamData *data);
-
-/**
- * @brief 擦除参数区
- * @details 擦除主页和备份页。
- */
-FlashStorageResult ParamStorage_Erase(void);
-
-/**
- * @brief 检查 Flash 是否包含有效数据
- * @return true = 有效且 CRC 通过
- */
-bool ParamStorage_HasValidData(void);
 ```
 
----
+注意：`ParamStorage_Save()` 会写入镜像头字段（magic、version、generation、committed、crc32），因此参数是 `FlashParamData *`，不是 `const FlashParamData *`。
 
-## 错误代码对照表 (ParamResult)
+## 事务化 Flash 存储
 
-| 错误枚举                    | 值 | 含义                         |
-| :-------------------------- | :- | :--------------------------- |
-| `PARAM_OK`                | 0  | 操作成功                     |
-| `PARAM_ERR_INVALID_INDEX` | 1  | 索引不存在                   |
-| `PARAM_ERR_INVALID_TYPE`  | 2  | 读写的数据类型不匹配         |
-| `PARAM_ERR_READONLY`      | 3  | 试图写入只读 (RO) 参数       |
-| `PARAM_ERR_OUT_OF_RANGE`  | 4  | 写入值超出了 [Min, Max] 范围 |
-| `PARAM_ERR_NULL_PTR`      | 5  | 传入的指针为空               |
+`param_storage.c` 使用两个物理 Flash 页：
 
----
+- `FLASH_PARAM_PAGE1_ADDR`：Page 62；
+- `FLASH_PARAM_PAGE2_ADDR`：Page 63。
 
-## 最佳实践示例
+保存流程：
 
-### 初始化流程
+1. 选择当前有效页，计算下一代 `generation`；
+2. 写入备用页；
+3. 写入除 commit doubleword 外的镜像内容；
+4. 校验 pending 镜像；
+5. 最后写入 commit doubleword；
+6. 重新检查新页，确认 CRC、commit 标记和 generation 有效。
+
+加载流程会检查两个页，选择 generation 更新的有效页。有效性条件包括 magic、版本、commit 标记、CRC，以及镜像尾部填零状态。
+
+存储层还能迁移旧版 `FLASH_MAGIC_WORD` 镜像：加载旧格式后会补齐 CAN 波特率、LADRC、编码器校准等新增字段，并归一化为当前 `FLASH_MAGIC_WORD_V2` 镜像。
+
+## 运行时副作用
+
+参数写入成功后，`param_access.c` 会根据参数索引同步运行时状态。当前副作用包括：
+
+| 参数 | 副作用 |
+| --- | --- |
+| `PARAM_MOTOR_RS`、`PARAM_MOTOR_LS`、`PARAM_MOTOR_FLUX`、`PARAM_MOTOR_POLE_PAIRS` | 标记 `motor_data.params_updated` |
+| `PARAM_CUR_KP`、`PARAM_CUR_KI`、`PARAM_LIMIT_CURRENT`、`PARAM_LIMIT_SPEED` | 重新应用电流环配置 |
+| `PARAM_SPD_KP`、`PARAM_SPD_KI` | 清空速度 PID 状态 |
+| `PARAM_POS_KP` | 清空位置 PID 状态 |
+| `PARAM_ADD_OFFSET` | 调用编码器 offset 应用逻辑 |
+| `PARAM_CAN_TIMEOUT` | 更新 CAN timeout 检测阈值 |
+| `PARAM_LADRC_ENABLE`、`PARAM_LADRC_OMEGA_O`、`PARAM_LADRC_OMEGA_C`、`PARAM_LADRC_B0`、`PARAM_LADRC_MAX_OUT` | 重新初始化 LADRC 配置 |
+| `PARAM_RUN_MODE` | 映射并更新 `motor_data.state.Control_Mode` |
+| `PARAM_PROTOCOL_TYPE` | 调用 `Protocol_SetType()` |
+
+Flash 加载和恢复默认值会延迟单项副作用，在批量写入结束后统一调用运行时状态应用逻辑，避免中间态被控制环读取。
+
+## 错误码
+
+| 枚举 | 含义 |
+| --- | --- |
+| `PARAM_OK` | 成功 |
+| `PARAM_ERR_INVALID_INDEX` | 参数索引不存在 |
+| `PARAM_ERR_INVALID_TYPE` | 参数类型不匹配或不支持 |
+| `PARAM_ERR_READONLY` | 试图写入只读参数 |
+| `PARAM_ERR_OUT_OF_RANGE` | 写入值非法、非有限值、整数转换不精确或超出范围 |
+| `PARAM_ERR_NULL_PTR` | 传入空指针 |
+| `PARAM_ERR_STORAGE` | 非易失性存储读写、擦除、校验或镜像选择失败 |
+
+## 元数据查询
+
+通信协议或调试 UI 需要参数名称、范围、默认值时使用：
 
 ```c
-void System_Init(void) {
-    // 1. 初始化表 (内存赋默认值)
-    ParamTable_Init();
-  
-    // 2. 尝试从 Flash 加载
-    if (Param_LoadFromFlash() != PARAM_OK) {
-        // 若 Flash 无效 (如首台烧录)，可选：显式保存一次默认值
-        // Param_SaveToFlash(); 
-        printf("Using default parameters.\n");
-    } else {
-        printf("Parameters loaded.\n");
+const ParamEntry *entry = NULL;
+if (Param_GetInfo(PARAM_LIMIT_CURRENT, &entry) == PARAM_OK) {
+    ParamTargetBinding binding;
+    if (ParamTable_GetBinding(entry, &binding) == PARAM_OK) {
+        /* entry->name, entry->min, entry->max, binding.default_val */
     }
 }
 ```
 
-### 运行时修改参数
+遍历参数表时使用 `ParamTable_GetTable()` 和 `ParamTable_GetCount()`。普通应用逻辑不要依赖
+`ParamEntry::ptr` 或 `ParamEntry::default_val` 的内部存储；需要低层 binding 信息时使用
+`ParamTable_GetBinding()`，实际写入仍应通过 Access 层完成，以保证校验和副作用生效。
 
-```c
-void Update_Current_Limit(float new_limit) {
-    // 尝试写入，模块会自动检查 new_limit 是否在 [min, max] 内
-    ParamResult res = Param_WriteFloat(PARAM_LIMIT_CURRENT, new_limit);
-  
-    if (res == PARAM_OK) {
-        printf("Success\n");
-    } else if (res == PARAM_ERR_OUT_OF_RANGE) {
-        printf("Error: Value out of range!\n");
-    } else {
-        printf("Error: %d\n", res);
-    }
-}
-```
+## 已验证测试
+
+参数模块当前由主机侧测试覆盖关键行为：
+
+- `test_runner_param_typed_access`：强类型访问、float/整数转换、非有限值拒绝、保存重试、运行时副作用、已提交镜像回滚和默认值回退；
+- `test_runner_param_table_bindings`：未绑定保护、完整 binding 验证、无效 rebind 原子拒绝和默认值初始化；
+- `test_runner_parameter_bindings_settings`：生产 APP binding 覆盖 40 个参数，并保留 RAM target 与既有默认值；
+- `test_runner_param_storage`：双页事务写入、CRC、commit、generation、旧格式迁移；
+- `test_runner_cmd_service_persistent_rollback`：命令保存与直接标定式保存的三次失败终态、代际清理和运行时回滚；
+- `test_runner_comm_executor` 和 `test_runner_vofa_commands`：通信链路通过 `Param_ReadAsFloat()` / `Param_WriteFromFloat()` 访问参数。

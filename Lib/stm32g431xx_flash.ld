@@ -4,14 +4,17 @@ ENTRY(Reset_Handler)
 /* Highest address of the user mode stack */
 _estack = ORIGIN(RAM) + LENGTH(RAM);    /* end of RAM */
 /* Generate a link error if heap and stack don't fit into RAM */
-_Min_Heap_Size = 0x200;      /* required amount of heap  */
+_Min_Heap_Size = 0;          /* FreeRTOS tasks use static allocation */
 _Min_Stack_Size = 0x400;     /* required amount of stack */
 
 /* Specify the memory areas */
 MEMORY
 {
-RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 32K
-FLASH (rx)     : ORIGIN = 0x08000000, LENGTH = 128K
+RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 0x57F0
+BOOTFLAG (rw)  : ORIGIN = 0x200057F0, LENGTH = 0x10
+CCMRAM (xrw)   : ORIGIN = 0x10000000, LENGTH = 10K
+/* Reserve pages 62 and 63 (last 4 KiB) for transactional parameters. */
+FLASH (rx)     : ORIGIN = 0x08000000, LENGTH = 124K
 }
 
 /* Define output sections */
@@ -58,14 +61,14 @@ SECTIONS
     __exidx_end = .;
   } >FLASH
 
-  .preinit_array     :
+  .preinit_array (READONLY) :
   {
     PROVIDE_HIDDEN (__preinit_array_start = .);
     KEEP (*(.preinit_array*))
     PROVIDE_HIDDEN (__preinit_array_end = .);
   } >FLASH
 
-  .init_array :
+  .init_array (READONLY) :
   {
     PROVIDE_HIDDEN (__init_array_start = .);
     KEEP (*(SORT(.init_array.*)))
@@ -73,7 +76,7 @@ SECTIONS
     PROVIDE_HIDDEN (__init_array_end = .);
   } >FLASH
 
-  .fini_array :
+  .fini_array (READONLY) :
   {
     PROVIDE_HIDDEN (__fini_array_start = .);
     KEEP (*(SORT(.fini_array.*)))
@@ -95,6 +98,16 @@ SECTIONS
     _edata = .;        /* define a global symbol at data end */
   } >RAM AT> FLASH
 
+  .ccm_bss (NOLOAD) :
+  {
+    . = ALIGN(8);
+    _sccm_bss = .;
+    *(.ccm_bss)
+    *(.ccm_bss*)
+    . = ALIGN(8);
+    _eccm_bss = .;
+  } >CCMRAM
+
   /* Uninitialized data section */
   . = ALIGN(4);
   .bss :
@@ -110,6 +123,13 @@ SECTIONS
     _ebss = .;         /* define a global symbol at bss end */
     __bss_end__ = _ebss;
   } >RAM
+
+  .boot_flag (NOLOAD) :
+  {
+    . = ALIGN(4);
+    KEEP(*(.boot_flag))
+    . = ALIGN(4);
+  } >BOOTFLAG
 
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_heap_stack :
@@ -131,4 +151,8 @@ SECTIONS
   }
 
   .ARM.attributes 0 : { *(.ARM.attributes) }
+
+  ASSERT(SIZEOF(.boot_flag) <= LENGTH(BOOTFLAG), "boot flag exceeds reserved RAM")
+  ASSERT(ADDR(.boot_flag) == ORIGIN(BOOTFLAG), "boot flag address mismatch")
+  ASSERT(SIZEOF(.ccm_bss) <= LENGTH(CCMRAM), "CCM RAM overflow")
 }

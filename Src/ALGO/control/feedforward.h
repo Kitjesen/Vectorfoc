@@ -25,6 +25,9 @@ typedef struct {
 } Feedforward_Params_t;
 
 void Feedforward_Init(Feedforward_Params_t *params);
+void Feedforward_Reset(void);
 void Feedforward_Update(MOTOR_DATA *motor, const Feedforward_Params_t *params);
+float Feedforward_GetTorque(void);
+float Feedforward_GetCurrent(const MOTOR_DATA *motor);
 
 #endif // FEEDFORWARD_H

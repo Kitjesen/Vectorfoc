@@ -52,7 +52,9 @@
    1. 时钟
    ========================================================================== */
 #define SYS_CLOCK_MHZ           170
+#ifndef SYS_CLOCK_HZ
 #define SYS_CLOCK_HZ            (SYS_CLOCK_MHZ * 1000000UL)
+#endif
 
 /* ==========================================================================
    2. 电机 PWM — TIM1（中心对齐，死区互补）
@@ -60,12 +62,32 @@
 #define HW_PWM_TIMER            htim1
 #define HW_PWM_TIM_INSTANCE     TIM1
 #define HW_PWM_FREQ_HZ          20000
+#define HW_PWM_PERIOD_TICKS     4250U
+#define HW_PWM_ADC_TRIGGER_OFFSET_TICKS 10U
 #define HW_PWM_DEADTIME_CLKS    20
 
 #define HW_PWM_CH_U             TIM_CHANNEL_1   /* PA8  */
 #define HW_PWM_CH_V             TIM_CHANNEL_2   /* PA9  */
 #define HW_PWM_CH_W             TIM_CHANNEL_3   /* PA10 */
 #define HW_PWM_CH_TRIG          TIM_CHANNEL_4   /* ADC 注入触发 */
+
+/* X-STAR uses direct electrical-to-board phase mapping. */
+#define HW_PWM_CH_PHASE_A       HW_PWM_CH_U
+#define HW_PWM_CH_PHASE_B       HW_PWM_CH_V
+#define HW_PWM_CH_PHASE_C       HW_PWM_CH_W
+
+#if HW_PWM_ADC_TRIGGER_OFFSET_TICKS == 0U || \
+    HW_PWM_ADC_TRIGGER_OFFSET_TICKS >= HW_PWM_PERIOD_TICKS
+#error "ADC trigger offset must be non-zero and smaller than the PWM period"
+#endif
+
+/* This board definition currently has no verified BKIN/BKIN2 connection. */
+#define HW_PWM_BREAK_ENABLED    0u
+#define HW_PWM_BREAK_POLARITY   TIM_BREAKPOLARITY_HIGH
+#define HW_PWM_BREAK_FILTER     0u
+#define HW_PWM_BREAK2_ENABLED   0u
+#define HW_PWM_BREAK2_POLARITY  TIM_BREAK2POLARITY_HIGH
+#define HW_PWM_BREAK2_FILTER    0u
 
 /* 上桥（与 VectorFOC 相同） */
 #define HW_PWM_U_H_PIN          GPIO_PIN_8      /* PA8  TIM1_CH1  */

@@ -27,12 +27,6 @@
 #include "motor_hal_api.h"
 #include "control/ladrc.h"
 #include "pid.h"
-#include "board_config.h"
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
-#include "mt6816_encoder.h"
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-#include "tmr3109_encoder.h"
-#endif
 #include <math.h>
 /**
  * @brief  CAN ID
@@ -61,6 +55,41 @@ typedef enum {
   CONTROL_MODE_POSITION_RAMP = 5, /**< positionmode */
   CONTROL_MODE_MIT = 6,           /**< MITmode */
 } CONTROL_MODE;
+
+/**
+ * @brief Translate the persisted run-mode value into the control-core mode.
+ * @param run_mode Persisted PARAM_RUN_MODE value (0..5).
+ * @param control_mode Receives the matching control mode.
+ * @return true when run_mode is valid.
+ */
+static inline bool Motor_RunModeToControlMode(uint8_t run_mode,
+                                               CONTROL_MODE *control_mode) {
+  if (control_mode == NULL) {
+    return false;
+  }
+  switch (run_mode) {
+  case 0U:
+    *control_mode = CONTROL_MODE_MIT;
+    return true;
+  case 1U:
+    *control_mode = CONTROL_MODE_POSITION_RAMP;
+    return true;
+  case 2U:
+    *control_mode = CONTROL_MODE_VELOCITY;
+    return true;
+  case 3U:
+    *control_mode = CONTROL_MODE_TORQUE;
+    return true;
+  case 4U:
+    *control_mode = CONTROL_MODE_VELOCITY_RAMP;
+    return true;
+  case 5U:
+    *control_mode = CONTROL_MODE_POSITION;
+    return true;
+  default:
+    return false;
+  }
+}
 /**
  * @brief calibrationstate
  *
@@ -119,21 +148,11 @@ typedef enum {
   FAULT_STATE_ENCODER_LOSS,
 } FAULT_STATE;
 /**
- * @brief motor：HAL encoder
+ * @brief Motor hardware dependencies exposed through the generic HAL boundary.
  */
 typedef struct {
-  const Motor_HAL_Handle_t *hal; /**<  */
-  void *encoder;                 /**< encoder (calibration) */
+  const Motor_HAL_Handle_t *hal;
 } MOTOR_COMPONENTS;
-/**
- * @brief 访问具体编码器句柄（标定代码使用）
- * @note  仅在 HW_POSITION_SENSOR_MODE 为 MT6816 或 TMR3109 时有效
- */
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-#define ENC(m) ((TMR3109_Handle_t *)((m)->components.encoder))
-#else
-#define ENC(m) ((MT6816_Handle_t *)((m)->components.encoder))
-#endif
 /**
  * @brief motorparam
  */
@@ -192,7 +211,7 @@ typedef struct {
  * @brief motorfeedback
  */
 typedef struct {
-  float position;          /**< 机械位置 [turn] — 圈数，0~1 per rev；控制层用时乘 2π 得 [rad] */
+  float position;          /**< 多圈机械位置 [turn]；控制层用时乘 2π 得 [rad] */
   float velocity;          /**< 机械速度 [turn/s] — 圈/秒；控制层用时乘 2π 得 [rad/s] */
   float phase_angle;       /**< 电角度 [rad]，范围 (-π, π] */
   float temperature;       /**< 温度 [degC] */
@@ -203,7 +222,11 @@ typedef struct {
  * @brief motor
  * 、state、param、、feedbackPID。
  */
-typedef struct MOTOR_DATA_s {
+#ifndef VECTORFOC_MOTOR_DATA_TYPEDEF
+#define VECTORFOC_MOTOR_DATA_TYPEDEF
+typedef struct MOTOR_DATA_s MOTOR_DATA;
+#endif
+struct MOTOR_DATA_s {
   MOTOR_COMPONENTS components; /**<  */
   MOTOR_STATE state;           /**< runningstate */
   MOTOR_PARAMETERS parameters; /**< motorparam */
@@ -241,7 +264,7 @@ typedef struct MOTOR_DATA_s {
   /* 外环速度反馈滤波状态（迁入此处以支持多电机实例，原在 outer.c 静态变量） */
   float vel_feedback_filtered;       /**< 低通滤波后的速度反馈 [turn/s] */
   bool vel_filter_initialized;       /**< 滤波器是否已完成首次初始化 */
-} MOTOR_DATA;
+};
 extern MOTOR_DATA motor_data;
 /**
  * @brief calibrationmotorinit
@@ -273,7 +296,7 @@ void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type);
  * @brief motorfaultstate
  * @param motor motor
  */
-void Motor_ClearFaults(MOTOR_DATA *motor);
+bool Motor_ClearFaults(MOTOR_DATA *motor);
 /**
  * @brief  Abort any ongoing calibration and return motor to IDLE
  * @param motor motor instance

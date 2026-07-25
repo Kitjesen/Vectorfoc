@@ -30,6 +30,10 @@
 #define __STM32G431xx_H
 #define CMSIS_COMPILER_H
 
+void Emergency_DisableBridgeOutputs(void);
+void Emergency_Shutdown(void);
+void Error_Handler(void);
+
 #else
 /* Real hardware build */
 #include "stm32g4xx_hal.h"

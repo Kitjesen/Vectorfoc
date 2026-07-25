@@ -30,6 +30,7 @@ typedef struct MT6816_Handle_t {
     uint32_t check_err_count;
     int64_t  shadow_count;
     int32_t  count_in_cpr;
+    bool     position_initialized;
     int16_t  offset_lut[MT6816_LUT_SIZE];
     bool     calib_valid;
     float    pos_estimate_counts_;
@@ -57,6 +58,7 @@ static inline MT6816_Status_t MT6816_Update(MT6816_Handle_t *e, float dt) {
     (void)e; (void)dt; return MT6816_OK;
 }
 static inline void MT6816_ResetCount(MT6816_Handle_t *e) { (void)e; }
+static inline void MT6816_RebaseTracking(MT6816_Handle_t *e) { (void)e; }
 static inline void GetMotor_Angle(ENCODER_DATA *e, float dt) { (void)e; (void)dt; }
 static inline float normalize_angle(float a) { return a; }
 

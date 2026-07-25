@@ -16,7 +16,7 @@
  * @file    manager.h
  * @brief   Communication protocol manager - multi-protocol router.
  * @details
- * - Supported protocols: Inovxio (MinerU), CANopen DS402, MIT Cheetah.
+ * - Supported protocols: Vector private protocol, CANopen DS402, MIT Cheetah.
  * - Context: Routes CAN frames to appropriate protocol handler.
  * - Thread safety: Rx can be queued from ISR; heavy processing should run in a
  *   task context via Protocol_ProcessQueuedFrames().
@@ -29,22 +29,27 @@
  * - Protocol_QueueRxFrame(): Queue CAN frame from ISR
  * - Protocol_ProcessQueuedFrames(): Drain queued frames in task context
  *
- * :
- *    TransportInterface ， BSP_CAN_SendFrame。
- *    Protocol_RegisterTransport() 。
+ * Transport ownership:
+ *    A valid CAN TransportInterface must be bound before communication starts.
  */
 #ifndef COMM_MANAGER_H
 #define COMM_MANAGER_H
 #include "protocol_types.h"
 #include "transport.h"
 // Forward declaration to avoid circular dependency
+#ifndef VECTORFOC_MOTOR_DATA_TYPEDEF
+#define VECTORFOC_MOTOR_DATA_TYPEDEF
 typedef struct MOTOR_DATA_s MOTOR_DATA;
+#endif
 /**
- * @brief
- * @param  transport
- * @note    Protocol_Init()
+ * @brief Bind the CAN transport adapter used by the protocol manager.
+ * @param transport Non-NULL, complete CAN transport interface.
+ * @return true only after receive-callback registration succeeds.
+ * @note Every call first clears the previous binding. NULL, a non-CAN
+ *       transport, an incomplete interface, or callback rejection leaves
+ *       communication unbound and returns false.
  */
-void Protocol_RegisterTransport(const TransportInterface *transport);
+bool Protocol_RegisterTransport(const TransportInterface *transport);
 /**
  * @brief  Initialize protocol manager.
  * @param  default_protocol Default protocol type.
@@ -104,6 +109,33 @@ bool Protocol_BuildCalibStatus(const MotorStatus *status, CAN_Frame *frame);
  */
 bool Protocol_SendFrame(const CAN_Frame *frame);
 /**
+ * @brief Send CAN frame and return a ticket for physical Tx completion.
+ *
+ * @param frame  CAN frame.
+ * @param ticket [out] Completion ticket, valid only
+ * when true is returned.
+ * @return true when a tracking-capable CAN transport
+ * accepted the frame.
+ * @note This API is fail-safe: unsupported/unknown
+ * transports return false.
+ *       Only one tracked request may be pending;
+ * use Protocol_TxTicketIsComplete
+ *       to consume completion or
+ * Protocol_CancelTrackedSend on timeout/abort.
+ */
+bool Protocol_SendTrackedFrame(const CAN_Frame *frame,
+                               TransportTxTicket *ticket);
+/**
+ * @brief Check and consume completion for a tracked Tx ticket.
+ * @return
+ * true exactly once when the matching frame has completed transmission.
+ */
+bool Protocol_TxTicketIsComplete(const TransportTxTicket *ticket);
+/**
+ * @brief Cancel a tracked Tx ticket after timeout/abort.
+ */
+void Protocol_CancelTrackedSend(const TransportTxTicket *ticket);
+/**
  * @brief  Process received CAN frame (integrated application logic).
  * @param  frame Received CAN frame.
  * @note   Call from task context; ISR should only call Protocol_QueueRxFrame().
@@ -137,15 +169,15 @@ void Protocol_PeriodicUpdate(uint32_t now_ms, const MotorStatus *status);
  * @brief Communication statistics structure.
  */
 typedef struct {
-  uint32_t rx_frames_total;     ///< Total received frames
-  uint32_t rx_frames_dropped;   ///< Frames dropped due to queue overflow
-  uint32_t rx_queue_depth;      ///< Current queue depth
-  uint32_t rx_queue_peak;       ///< Peak queue depth
-  uint32_t rx_overflow_events;  ///< Number of overflow events
-  uint32_t tx_frames_total;     ///< Total transmitted frames
-  uint32_t tx_frames_failed;    ///< Failed transmissions
-  uint32_t parse_errors;        ///< Parse errors
-  uint32_t exec_time_max_us;    ///< Max frame processing time (microseconds)
+  uint32_t rx_frames_total;    ///< Total received frames
+  uint32_t rx_frames_dropped;  ///< Frames dropped due to queue overflow
+  uint32_t rx_queue_depth;     ///< Current queue depth
+  uint32_t rx_queue_peak;      ///< Peak queue depth
+  uint32_t rx_overflow_events; ///< Number of overflow events
+  uint32_t tx_frames_total;    ///< Total transmitted frames
+  uint32_t tx_frames_failed;   ///< Failed transmissions
+  uint32_t parse_errors;       ///< Parse errors
+  uint32_t exec_time_max_us;   ///< Max frame processing time (microseconds)
 } CommStats_t;
 /**
  * @brief  Get communication statistics.

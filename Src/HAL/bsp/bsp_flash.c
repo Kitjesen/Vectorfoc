@@ -22,6 +22,16 @@
 /* ============================================================================
  * Flash
  * ============================================================================ */
+static bool BSP_Flash_IsRangeValid(uint32_t address, uint32_t length)
+{
+    if (length == 0u || address < BSP_FLASH_BASE || address >= BSP_FLASH_END) {
+        return false;
+    }
+
+    uint32_t offset = address - BSP_FLASH_BASE;
+    return length <= (BSP_FLASH_SIZE - offset);
+}
+
 void BSP_Flash_Unlock(void)
 {
     HAL_FLASH_Unlock();
@@ -32,11 +42,16 @@ void BSP_Flash_Lock(void)
 }
 bool BSP_Flash_ErasePage(uint32_t page_addr)
 {
-    FLASH_EraseInitTypeDef erase_init;
-    uint32_t page_error;
-    // calc
+    if (((page_addr % BSP_FLASH_PAGE_SIZE) != 0u) ||
+        !BSP_Flash_IsRangeValid(page_addr, BSP_FLASH_PAGE_SIZE)) {
+        return false;
+    }
+
+    FLASH_EraseInitTypeDef erase_init = {0};
+    uint32_t page_error = 0xFFFFFFFFu;
     uint32_t page_num = (page_addr - BSP_FLASH_BASE) / BSP_FLASH_PAGE_SIZE;
     erase_init.TypeErase = FLASH_TYPEERASE_PAGES;
+    erase_init.Banks = FLASH_BANK_1;
     erase_init.Page = page_num;
     erase_init.NbPages = 1;
     if (HAL_FLASHEx_Erase(&erase_init, &page_error) != HAL_OK) {
@@ -46,6 +61,11 @@ bool BSP_Flash_ErasePage(uint32_t page_addr)
 }
 bool BSP_Flash_WriteDoubleWord(uint32_t address, uint64_t data)
 {
+    if (((address % BSP_FLASH_DOUBLEWORD_SIZE) != 0u) ||
+        !BSP_Flash_IsRangeValid(address, BSP_FLASH_DOUBLEWORD_SIZE)) {
+        return false;
+    }
+
     if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, address, data) != HAL_OK) {
         return false;
     }
@@ -53,45 +73,38 @@ bool BSP_Flash_WriteDoubleWord(uint32_t address, uint64_t data)
 }
 void BSP_Flash_Read(uint32_t address, uint8_t *data, uint32_t length)
 {
-    if (data == NULL || length == 0) {
+    if (data == NULL || !BSP_Flash_IsRangeValid(address, length)) {
         return;
     }
-    memcpy(data, (void*)address, length);
+    memcpy(data, (const void*)(uintptr_t)address, length);
 }
 bool BSP_Flash_Verify(uint32_t address, const uint8_t *data, uint32_t length)
 {
-    if (data == NULL || length == 0) {
+    if (data == NULL || !BSP_Flash_IsRangeValid(address, length)) {
         return false;
     }
-    return (memcmp((void*)address, data, length) == 0);
+    return (memcmp((const void*)(uintptr_t)address, data, length) == 0);
 }
 /* ============================================================================
  * CRC32calc
  * ============================================================================ */
 uint32_t BSP_Flash_CalculateCRC32(const uint8_t *data, uint32_t length)
 {
-    if (data == NULL || length == 0) {
+    if (data == NULL || length == 0u) {
         return 0;
     }
-#ifdef USE_HAL_CRC
-    // STM32CRC
-    extern CRC_HandleTypeDef hcrc;
-    uint32_t word_count = length / 4;
-    uint32_t crc = HAL_CRC_Calculate(&hcrc, (uint32_t*)data, word_count);
-    return crc;
-#else
-    // CRC32 (CRC32-IEEE 802.3)
-    uint32_t crc = 0xFFFFFFFF;
+
+    /* CRC32/IEEE 802.3: init=0xFFFFFFFF, refin/refout=true, xorout=0xFFFFFFFF. */
+    uint32_t crc = 0xFFFFFFFFu;
     for (uint32_t i = 0; i < length; i++) {
         crc ^= data[i];
         for (uint8_t j = 0; j < 8; j++) {
-            if (crc & 1) {
-                crc = (crc >> 1) ^ 0xEDB88320;
+            if ((crc & 1u) != 0u) {
+                crc = (crc >> 1) ^ 0xEDB88320u;
             } else {
                 crc >>= 1;
             }
         }
     }
     return ~crc;
-#endif
 }

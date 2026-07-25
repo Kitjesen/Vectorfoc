@@ -12,11 +12,7 @@
 #define STM32G4xx_HAL_CONF_H
 #define STM32G431xx_H
 
-/* FDCAN / UART 仅在此占位（mock_hal_types.h 已有 SPI/TIM/ADC） */
-typedef struct { void *Instance; } FDCAN_HandleTypeDef;
-#ifndef UART_HandleTypeDef
-typedef struct { void *Instance; } UART_HandleTypeDef;
-#endif
+/* FDCAN / UART / DMA / PCD 占位类型由 mock_hal_types.h 提供 */
 
 /* 常用 HAL 宏 */
 #define __HAL_TIM_GET_AUTORELOAD(h)         (0u)
@@ -28,16 +24,35 @@ typedef struct { void *Instance; } UART_HandleTypeDef;
 #define HAL_TIM_PWM_Start_DMA(h,ch,buf,len) HAL_OK
 #define HAL_TIM_PWM_Stop_DMA(h, ch)         ((void)0)
 #define HAL_SPI_TransmitReceive(h,t,r,s,to) HAL_OK
+#define __HAL_ADC_GET_FLAG(h, flag)         (((h)->Flags & (flag)) != 0u)
 #define HAL_RCC_DeInit()                    ((void)0)
 #define HAL_DeInit()                        ((void)0)
+#if defined(MOCK_HAL_RESET_OBSERVABLE)
+void Test_HAL_NVIC_SystemReset(void);
+#define HAL_NVIC_SystemReset()              Test_HAL_NVIC_SystemReset()
+#else
 #define HAL_NVIC_SystemReset()              ((void)0)
+#endif
+#ifndef TEST_USE_REAL_SYSTEM_TICK
 #define HAL_GetSystemTick()                 (0u)
+#endif
 
 /* TIM channel aliases */
 #define TIM_CHANNEL_1  0u
 #define TIM_CHANNEL_2  1u
 #define TIM_CHANNEL_3  2u
 #define TIM_CHANNEL_4  3u
+
+/* ADC flags and errors used by ISR tests */
+#ifndef ADC_FLAG_JEOS
+#define ADC_FLAG_JEOS           (1u << 0)
+#endif
+#ifndef ADC_FLAG_OVR
+#define ADC_FLAG_OVR            (1u << 1)
+#endif
+#define HAL_ADC_ERROR_OVR       (1u << 0)
+#define HAL_ADC_ERROR_JQOVF     (1u << 1)
+#define HAL_ADC_ERROR_INTERNAL  (1u << 2)
 
 /* SysTick / NVIC stubs */
 typedef struct { uint32_t CTRL; uint32_t LOAD; uint32_t VAL; } SysTick_Type;

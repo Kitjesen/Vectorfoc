@@ -18,12 +18,12 @@
 #include "motor.h"
 // Mode Implementations
 void ControlImpl_Open(MOTOR_DATA *motor);
-void ControlImpl_Torque(MOTOR_DATA *motor, MotorControlCtx *ctx);
+bool ControlImpl_Torque(MOTOR_DATA *motor, MotorControlCtx *ctx);
 void ControlImpl_Velocity(MOTOR_DATA *motor);
 void ControlImpl_Position(MOTOR_DATA *motor);
 void ControlImpl_VelocityRamp(MOTOR_DATA *motor);
 void ControlImpl_PositionRamp(MOTOR_DATA *motor, MotorControlCtx *ctx);
-void ControlImpl_MIT(MOTOR_DATA *motor);
+bool ControlImpl_MIT(MOTOR_DATA *motor, MotorControlCtx *ctx);
 // Helpers
 void ControlImpl_SetThetaFromEncoder(MOTOR_DATA *motor);
 void ControlImpl_SetPidLimits(MOTOR_DATA *motor);

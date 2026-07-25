@@ -13,8 +13,12 @@
 // limitations under the License.
 
 #include "vector_protocol.h"
+#include "../../../BOOT/bootloader.h"
 #include "calibration_context.h"
+#include "error_manager.h"
+#include "error_types.h"
 #include "fault_def.h"
+#include "main.h"
 #include "manager.h" // For Protocol_SendFrame
 #include "motor.h"
 #include "param_access.h"
@@ -25,6 +29,7 @@
 #include "stm32g4xx_hal.h"
 #include "version.h"           // FW_VERSION_MAJOR / FW_VERSION_MINOR
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 // ==========  ==========
@@ -32,33 +37,77 @@
 #define GET_CMD_TYPE(id) (((id) >> 24) & 0x1F)
 #define GET_TARGET_ID(id) ((id) & 0xFF)
 #define GET_ID_DATA(id) (((id) >> 8) & 0xFFFF)
-#define BOOTLOADER_ADDR 0x1FFF0000U
-static void JumpToBootloader(void) {
-  uint32_t sp = *(__IO uint32_t *)(BOOTLOADER_ADDR);
-  uint32_t reset = *(__IO uint32_t *)(BOOTLOADER_ADDR + 4U);
-  if (sp < 0x20000000U) {
-    return;
-  }
-  __disable_irq();
-  HAL_RCC_DeInit();
-  HAL_DeInit();
-  SysTick->CTRL = 0;
-  SysTick->LOAD = 0;
-  SysTick->VAL = 0;
-  for (uint32_t i = 0; i < 8; i++) {
-    NVIC->ICER[i] = 0xFFFFFFFF;
-    NVIC->ICPR[i] = 0xFFFFFFFF;
-  }
-  __set_MSP(sp);
-  __DSB();
-  __ISB();
-  ((void (*)(void))reset)();
-}
+#define VECTOR_BROADCAST_ID 0x7Fu
+#define VECTOR_ACK_STATUS_QUEUED 0u
+#define VECTOR_ACK_STATUS_BUSY 1u
+#define VECTOR_ACK_STATUS_UNSUPPORTED 2u
+#define VECTOR_POWER_ACTION_ACK_TIMEOUT_MS 100u
+
 /* 量化工具函数由 protocol_utils.h 提供，本地名称别名保持向后兼容 */
 #define Uint16ToFloat  Proto_Uint16ToFloat
 #define FloatToUint16  Proto_FloatToUint16
 #define BufToUint16    Proto_BufToUint16
 #define Uint16ToBuf    Proto_Uint16ToBuf
+
+typedef enum {
+  VECTOR_POWER_ACTION_NONE = 0,
+  VECTOR_POWER_ACTION_RESET,
+  VECTOR_POWER_ACTION_BOOTLOADER,
+} VectorPowerAction;
+
+static VectorPowerAction s_pending_power_action;
+static uint32_t s_power_action_deadline;
+static TransportTxTicket s_power_action_ticket;
+
+static void ProtocolVector_BuildCommandAck(VectorCmdType cmd, uint8_t status,
+                                           CAN_Frame *rsp) {
+  memset(rsp, 0, sizeof(*rsp));
+  rsp->id = ((uint32_t)cmd << 24) | ((uint32_t)g_can_id << 8) | 0xFDu;
+  rsp->is_extended = true;
+  rsp->dlc = 2;
+  rsp->data[0] = (uint8_t)cmd;
+  rsp->data[1] = status;
+}
+
+static bool ProtocolVector_SendCommandAck(VectorCmdType cmd, uint8_t status) {
+  CAN_Frame rsp = {0};
+  ProtocolVector_BuildCommandAck(cmd, status, &rsp);
+  return Protocol_SendFrame(&rsp);
+}
+
+static bool ProtocolVector_BootUnsupportedOnThisBoard(void) {
+#if defined(BOARD_XSTAR)
+  return true;
+#else
+  return false;
+#endif
+}
+
+static ParseResult ProtocolVector_RequestPowerAction(VectorCmdType cmd,
+                                                      VectorPowerAction action) {
+  if (s_pending_power_action != VECTOR_POWER_ACTION_NONE) {
+    (void)ProtocolVector_SendCommandAck(cmd, VECTOR_ACK_STATUS_BUSY);
+    return PARSE_OK;
+  }
+
+  CAN_Frame rsp = {0};
+  TransportTxTicket ticket = {0};
+  ProtocolVector_BuildCommandAck(cmd, VECTOR_ACK_STATUS_QUEUED, &rsp);
+  if (!Protocol_SendTrackedFrame(&rsp, &ticket)) {
+    return PARSE_ERR_INVALID_FRAME;
+  }
+
+  /* The ACK completion and timeout both depend on interrupts and HAL tick.
+   * De-energize the bridge now, but reserve the full IRQ-disabling emergency
+   * shutdown for the instant immediately before reset / Bootloader handoff. */
+  Emergency_DisableBridgeOutputs();
+  (void)StateMachine_RequestState(&g_ds402_state_machine,
+                                  STATE_SWITCH_ON_DISABLED);
+  s_pending_power_action = action;
+  s_power_action_ticket = ticket;
+  s_power_action_deadline = HAL_GetTick() + VECTOR_POWER_ACTION_ACK_TIMEOUT_MS;
+  return PARSE_OK;
+}
 /**
  * @brief mode ( 1)
  * @details ID Data:  (0~65535 -> -120~120Nm)
@@ -81,6 +130,7 @@ static ParseResult ParseMotorCtrl(const CAN_Frame *frame, MotorCommand *cmd) {
   cmd->kp = Uint16ToFloat(kp_raw, 0.0f, 500.0f); // Kp: 0~500 ()
   cmd->kd = Uint16ToFloat(kd_raw, 0.0f, 100.0f); // Kd: 0~100
   cmd->control_mode = CONTROL_MODE_MIT;
+  cmd->has_enable_command = true;
   cmd->enable_motor = true;
   return PARSE_OK;
 }
@@ -112,13 +162,22 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   if (!frame || !cmd)
     return PARSE_ERR_INVALID_FRAME;
   // 1. check
-  if (!frame->is_extended)
+  if (!frame->is_extended || frame->is_rtr)
     return PARSE_ERR_INVALID_FRAME;
   memset(cmd, 0, sizeof(MotorCommand));
   VectorCmdType type = (VectorCmdType)GET_CMD_TYPE(frame->id);
+  uint8_t target_id = (uint8_t)GET_TARGET_ID(frame->id);
+  if (target_id != g_can_id && target_id != VECTOR_BROADCAST_ID) {
+    return PARSE_UNKNOWN_ID;
+  }
+  if (target_id == VECTOR_BROADCAST_ID &&
+      type != VECTOR_CMD_MOTOR_STOP &&
+      type != VECTOR_CMD_CLEAR_FAULT) {
+    return PARSE_UNKNOWN_ID;
+  }
   switch (type) {
   case VECTOR_CMD_GET_ID: { // 0 — query device CAN ID
-    CAN_Frame rsp;
+    CAN_Frame rsp = {0};
     rsp.id = (0x00u << 24) | ((uint32_t)g_can_id << 8) | 0xFDu;
     rsp.is_extended = true;
     rsp.dlc = 4;
@@ -132,9 +191,11 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   case VECTOR_CMD_MOTOR_CTRL: // 1
     return ParseMotorCtrl(frame, cmd);
   case VECTOR_CMD_MOTOR_ENABLE: // 3
+    cmd->has_enable_command = true;
     cmd->enable_motor = true;
     return PARSE_OK;
   case VECTOR_CMD_MOTOR_STOP: // 4
+    cmd->has_enable_command = true;
     cmd->enable_motor = false;
     return PARSE_OK;
   case VECTOR_CMD_SET_ZERO: // 6
@@ -157,7 +218,7 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
         motor_data.state.Sub_State, motor_data.state.Cs_State,
         &motor_data.calib_ctx);
     s.calib_result = motor_data.last_calib_result;
-    CAN_Frame rsp;
+    CAN_Frame rsp = {0};
     if (ProtocolVector_BuildCalibStatus(&s, &rsp))
       Protocol_SendFrame(&rsp);
     return PARSE_OK;
@@ -171,7 +232,7 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
       s.calib_sub_stage = motor_data.state.Cs_State;
       s.calib_progress = 0;
       s.calib_result = motor_data.last_calib_result;
-      CAN_Frame rsp;
+      CAN_Frame rsp = {0};
       if (ProtocolVector_BuildCalibStatus(&s, &rsp))
         Protocol_SendFrame(&rsp);
     }
@@ -179,7 +240,7 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   case VECTOR_CMD_CALIB_VALIDATE: { // 14 — pre-calibration check
     uint8_t fail_mask = 0;
     uint8_t pass_mask = Motor_PreCalibCheck(&motor_data, &fail_mask);
-    CAN_Frame rsp;
+    CAN_Frame rsp = {0};
     if (ProtocolVector_BuildCalibValidate(
             pass_mask, fail_mask, motor_data.algo_input.Vbus,
             motor_data.feedback.temperature, &rsp))
@@ -187,15 +248,16 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
     return PARSE_OK;
   }
   case VECTOR_CMD_SET_ID: // 7
-    //  Param API  ID
     if (frame->dlc >= 4) { // Assumed layout: [NewID][0][0][0]
-      // ID?
-      //  MasterID 1?
-      // : Byte0 = NewID
-      float new_id = (float)frame->data[0];
-      Param_WriteFloat(PARAM_CAN_ID, new_id);
-      Param_ScheduleSave(); // （ISRsafety）
-      return PARSE_OK;
+      uint8_t new_id = frame->data[0];
+      if (!CmdService_BeginScheduledSave()) {
+        return PARSE_ERR_INVALID_FRAME;
+      }
+      if (Param_WriteUint8(PARAM_CAN_ID, new_id) == PARAM_OK) {
+        CmdService_CommitScheduledSave();
+        return PARSE_OK;
+      }
+      CmdService_CancelScheduledSave();
     }
     return PARSE_ERR_INVALID_FRAME;
   case VECTOR_CMD_PARAM_READ: // 17
@@ -203,20 +265,24 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
   case VECTOR_CMD_PARAM_WRITE: // 18
     return ParseParamCommand(frame, cmd, true);
   case VECTOR_CMD_SAVE: // 22
-    Param_ScheduleSave();
+    if (CmdService_RequestScheduledSave()) {
+      ProtocolVector_SendCommandAck(VECTOR_CMD_SAVE, VECTOR_ACK_STATUS_QUEUED);
+    } else {
+      ProtocolVector_SendCommandAck(VECTOR_CMD_SAVE, VECTOR_ACK_STATUS_BUSY);
+    }
     return PARSE_OK;
   case VECTOR_CMD_GET_VERSION: // 26
     //
     // : [Major][Minor][Patch][0][BuiltYear][Month][Day][0]
     // : 1.0.0
     {
-      CAN_Frame tx_frame;
+      CAN_Frame tx_frame = {0};
       tx_frame.id = (0x1A << 24) | (g_can_id << 8) | 0xFD;
       tx_frame.is_extended = true;
       tx_frame.dlc = 8;
-      tx_frame.data[0] = 1; // Major
-      tx_frame.data[1] = 0; // Minor
-      tx_frame.data[2] = 0; // Patch
+      tx_frame.data[0] = FW_VERSION_MAJOR;
+      tx_frame.data[1] = FW_VERSION_MINOR;
+      tx_frame.data[2] = FW_VERSION_PATCH;
       tx_frame.data[3] = 0;
       Protocol_SendFrame(&tx_frame);
     }
@@ -225,14 +291,19 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
     cmd->is_fault_query = true;
     return PARSE_OK;
   case VECTOR_CMD_RESET: // 11
-    HAL_NVIC_SystemReset();
-    return PARSE_OK;
+    return ProtocolVector_RequestPowerAction(VECTOR_CMD_RESET,
+                                             VECTOR_POWER_ACTION_RESET);
   case VECTOR_CMD_CLEAR_FAULT: // 12
-    Motor_ClearFaults(&motor_data);
+    cmd->clear_fault = true;
     return PARSE_OK;
   case VECTOR_CMD_BOOTLOADER: // 13 - Bootloader
-    JumpToBootloader();
-    return PARSE_OK;
+    if (ProtocolVector_BootUnsupportedOnThisBoard()) {
+      (void)ProtocolVector_SendCommandAck(VECTOR_CMD_BOOTLOADER,
+                                          VECTOR_ACK_STATUS_UNSUPPORTED);
+      return PARSE_OK;
+    }
+    return ProtocolVector_RequestPowerAction(
+        VECTOR_CMD_BOOTLOADER, VECTOR_POWER_ACTION_BOOTLOADER);
     // ， OK
   case VECTOR_CMD_REPORT: // 24
     if (frame->dlc >= 1) {
@@ -243,17 +314,22 @@ ParseResult ProtocolVector_Parse(const CAN_Frame *frame, MotorCommand *cmd) {
     return PARSE_ERR_INVALID_FRAME;
   case VECTOR_CMD_SET_BAUDRATE: // 23 — configure CAN baudrate (saved to Flash)
     if (frame->dlc >= 1) {
-      uint8_t baud_id = frame->data[0]; /* 0=250k, 1=500k, 2=1M */
-      Param_WriteUint8(PARAM_CAN_BAUDRATE, baud_id);
-      Param_ScheduleSave();
-      /* Acknowledge: echo back new baudrate ID */
-      CAN_Frame rsp;
-      rsp.id = (0x17u << 24) | ((uint32_t)g_can_id << 8) | 0xFDu;
-      rsp.is_extended = true;
-      rsp.dlc = 1;
-      rsp.data[0] = baud_id;
-      Protocol_SendFrame(&rsp);
-      return PARSE_OK;
+      uint8_t baud_id = frame->data[0]; /* 0=1M, 1=500k, 2=250k */
+      if (!CmdService_BeginScheduledSave()) {
+        return PARSE_ERR_INVALID_FRAME;
+      }
+      if (Param_WriteUint8(PARAM_CAN_BAUDRATE, baud_id) == PARAM_OK) {
+        CmdService_CommitScheduledSave();
+        /* Acknowledge on the current bitrate; the new rate applies after reboot. */
+        CAN_Frame rsp = {0};
+        rsp.id = (0x17u << 24) | ((uint32_t)g_can_id << 8) | 0xFDu;
+        rsp.is_extended = true;
+        rsp.dlc = 1;
+        rsp.data[0] = baud_id;
+        Protocol_SendFrame(&rsp);
+        return PARSE_OK;
+      }
+      CmdService_CancelScheduledSave();
     }
     return PARSE_ERR_INVALID_FRAME;
   case VECTOR_CMD_SET_PROTOCOL: // 25 — switch active protocol
@@ -275,8 +351,9 @@ bool ProtocolVector_BuildFeedback(const MotorStatus *status,
                                    CAN_Frame *frame) {
   if (!status || !frame)
     return false;
+  memset(frame, 0, sizeof(*frame));
   // ID (Bit 23-8)
-  // MinerU MD:
+  // Vector feedback ID layout:
   // Bit 23-22: Mode (0:Reset, 1:Cali, 2:Motor)
   // Bit 21-16: Fault bits (6 bits)
   // Bit 15-8:  Master ID (0xFD)
@@ -330,6 +407,7 @@ bool ProtocolVector_BuildFault(uint32_t fault_code, uint32_t warning_code,
                                 CAN_Frame *frame) {
   if (!frame)
     return false;
+  memset(frame, 0, sizeof(*frame));
   //  21: fault
   frame->id = (0x15 << 24) | (g_can_id << 8) | 0xFD;
   frame->is_extended = true;
@@ -339,13 +417,60 @@ bool ProtocolVector_BuildFault(uint32_t fault_code, uint32_t warning_code,
   frame->data[1] = (fault_code >> 16) & 0xFF;
   frame->data[2] = (fault_code >> 8) & 0xFF;
   frame->data[3] = fault_code & 0xFF;
+  frame->data[4] = (warning_code >> 24) & 0xFF;
+  frame->data[5] = (warning_code >> 16) & 0xFF;
+  frame->data[6] = (warning_code >> 8) & 0xFF;
+  frame->data[7] = warning_code & 0xFF;
   return true;
 }
 /**
- * @brief init Inovxio
+ * @brief Initialize the Vector private protocol.
  */
 void ProtocolVector_Init(void) {
-  // init
+  if (s_power_action_ticket.marker != 0U) {
+    Protocol_CancelTrackedSend(&s_power_action_ticket);
+  }
+  s_pending_power_action = VECTOR_POWER_ACTION_NONE;
+  memset(&s_power_action_ticket, 0, sizeof(s_power_action_ticket));
+  s_power_action_deadline = 0u;
+}
+
+void ProtocolVector_Service(void) {
+  VectorPowerAction action = s_pending_power_action;
+  if (action == VECTOR_POWER_ACTION_NONE) {
+    return;
+  }
+
+  bool ack_complete = Protocol_TxTicketIsComplete(&s_power_action_ticket);
+  if (!ack_complete) {
+    if ((int32_t)(HAL_GetTick() - s_power_action_deadline) >= 0) {
+      ack_complete = Protocol_TxTicketIsComplete(&s_power_action_ticket);
+      if (!ack_complete) {
+        Protocol_CancelTrackedSend(&s_power_action_ticket);
+        s_pending_power_action = VECTOR_POWER_ACTION_NONE;
+        memset(&s_power_action_ticket, 0, sizeof(s_power_action_ticket));
+        /* The first bridge disable is already effective.  Repeat it so this
+         * remains fail-closed if another path briefly touched the timer while
+         * the ACK was waiting. */
+        Emergency_DisableBridgeOutputs();
+        (void)StateMachine_RequestState(&g_ds402_state_machine,
+                                        STATE_SWITCH_ON_DISABLED);
+        ErrorManager_Report(ERROR_COMM_TIMEOUT, "Power action ACK timeout");
+      }
+    }
+  }
+  if (!ack_complete) {
+    return;
+  }
+
+  s_pending_power_action = VECTOR_POWER_ACTION_NONE;
+  memset(&s_power_action_ticket, 0, sizeof(s_power_action_ticket));
+  Emergency_Shutdown();
+  if (action == VECTOR_POWER_ACTION_BOOTLOADER) {
+    Boot_RequestUpgrade();
+  } else {
+    HAL_NVIC_SystemReset();
+  }
 }
 /**
  * @brief param ( 18 )
@@ -354,6 +479,7 @@ bool ProtocolVector_BuildParamResponse(uint16_t param_index, float value,
                                         CAN_Frame *frame) {
   if (!frame)
     return false;
+  memset(frame, 0, sizeof(*frame));
   //  18 : param
   frame->id = (0x12 << 24) | (g_can_id << 8) | 0xFD;
   frame->is_extended = true;
@@ -377,6 +503,7 @@ bool ProtocolVector_BuildFaultDetail(const MotorStatus *status,
                                       CAN_Frame *frame) {
   if (!status || !frame)
     return false;
+  memset(frame, 0, sizeof(*frame));
   // CMD 30: [CMD 30][SourceID][TargetID]
   frame->id = (0x1E << 24) | (status->can_id << 8) | 0xFD;
   frame->is_extended = true;
@@ -412,6 +539,7 @@ bool ProtocolVector_BuildCalibStatus(const MotorStatus *status,
                                       CAN_Frame *frame) {
   if (!status || !frame)
     return false;
+  memset(frame, 0, sizeof(*frame));
   frame->id = (0x09u << 24) | ((uint32_t)status->can_id << 8) | 0xFDu;
   frame->is_extended = true;
   frame->dlc = 8;
@@ -445,6 +573,7 @@ bool ProtocolVector_BuildCalibValidate(uint8_t pass_mask, uint8_t fail_mask,
                                         CAN_Frame *frame) {
   if (!frame)
     return false;
+  memset(frame, 0, sizeof(*frame));
   frame->id = (0x0Eu << 24) | ((uint32_t)g_can_id << 8) | 0xFDu;
   frame->is_extended = true;
   frame->dlc = 8;

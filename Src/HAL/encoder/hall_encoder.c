@@ -31,7 +31,10 @@
  *       无需修改本文件其余逻辑。
  */
 #include "hall_encoder.h"
-#include "board_config_xstar.h"
+
+#ifdef BOARD_XSTAR
+
+#include "board_config.h"
 #include "hal_abstraction.h"  /* HAL_GetMicroseconds() */
 #include <math.h>
 #include <string.h>
@@ -49,6 +52,47 @@
 
 /* 速度超时：超过此时间无跳变，判定为静止 [µs] */
 #define HALL_TIMEOUT_US     100000UL    /* 100ms */
+
+typedef struct {
+    float raw_position_rad;
+    float velocity_rad_s;
+    uint32_t last_capture_us;
+    uint8_t hall_state;
+    uint8_t sector;
+    bool signal_valid;
+} Hall_Snapshot_t;
+
+static Hall_Snapshot_t s_snapshots[2];
+static volatile uint8_t s_active_snapshot = 0u;
+static volatile uint8_t s_requested_pole_pairs = 1u;
+static volatile float s_position_zero_rad = 0.0f;
+
+static float Hall_NormalizeAngle(float angle) {
+    while (angle >= HALL_2PI) angle -= HALL_2PI;
+    while (angle < 0.0f) angle += HALL_2PI;
+    return angle;
+}
+
+static void Hall_PublishSnapshot(void) {
+    uint8_t next = (uint8_t)(s_active_snapshot ^ 1u);
+    s_snapshots[next].raw_position_rad = hall_data.position_rad;
+    s_snapshots[next].velocity_rad_s = hall_data.velocity_rad_s;
+    s_snapshots[next].last_capture_us = hall_data.last_capture_us;
+    s_snapshots[next].hall_state = hall_data.hall_state;
+    s_snapshots[next].sector = hall_data.sector;
+    s_snapshots[next].signal_valid = hall_data.signal_valid;
+    __DMB();
+    s_active_snapshot = next;
+}
+
+static Hall_Snapshot_t Hall_ReadSnapshot(void) {
+    Hall_Snapshot_t snapshot;
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    snapshot = s_snapshots[s_active_snapshot];
+    __set_PRIMASK(primask);
+    return snapshot;
+}
 
 /* ==========================================================================
    霍尔状态 → 扇区映射表
@@ -96,6 +140,7 @@ Hall_Handle_t hall_data = {
     .sector            = 0,
     .elec_angle_rad    = 0.0f,
     .mec_angle_rad     = 0.0f,
+    .position_rad      = 0.0f,
     .offset_rad        = 0.0f,
     .velocity_rad_s    = 0.0f,
     .last_capture_us   = 0,
@@ -130,14 +175,20 @@ void Hall_Init(void) {
     hall_data.offset_rad = saved_offset;
     hall_data.pole_pairs = saved_pole_pairs;
     hall_data.calib_valid = saved_calib_valid;
+    s_requested_pole_pairs = saved_pole_pairs;
+    s_position_zero_rad = 0.0f;
     /* 读取初始状态 */
     hall_data.hall_state = Hall_ReadState();
     hall_data.sector     = s_state_to_sector[hall_data.hall_state];
     hall_data.signal_valid = (hall_data.sector >= 1u && hall_data.sector <= 6u);
     if (hall_data.sector >= 1 && hall_data.sector <= 6) {
-        hall_data.elec_angle_rad = s_sector_angle[hall_data.sector] + hall_data.offset_rad;
+        float raw_angle =
+            s_sector_angle[hall_data.sector] - hall_data.offset_rad;
+        hall_data.elec_angle_rad = Hall_NormalizeAngle(raw_angle);
+        hall_data.mec_angle_rad = 0.0f;
     }
     hall_data.last_capture_us = HAL_GetMicroseconds();
+    Hall_PublishSnapshot();
     /* 启动 TIM3 Hall 传感器模式（CubeMX 已配置，此处仅启动捕获） */
     HAL_TIMEx_HallSensor_Start_IT(&HW_HALL_TIMER);
 }
@@ -149,38 +200,68 @@ void Hall_UpdateFromISR(void) {
 
     /* 无效状态（000 或 111）：忽略 */
     if (new_state == 0 || new_state == 7) {
+        hall_data.hall_state = new_state;
         hall_data.signal_valid = false;
+        Hall_PublishSnapshot();
         return;
     }
 
     uint8_t new_sector = s_state_to_sector[new_state];
-    hall_data.signal_valid = (new_sector >= 1u && new_sector <= 6u);
+    if (new_sector < 1u || new_sector > 6u) {
+        hall_data.hall_state = new_state;
+        hall_data.signal_valid = false;
+        Hall_PublishSnapshot();
+        return;
+    }
 
-    /* 方向判断：正转扇区递增（1→2→3→4→5→6→1），反转递减 */
-    if (hall_data.sector != 0) {
-        uint8_t expected_next = (hall_data.sector % 6) + 1;  /* 1→2→...→6→1 */
-        hall_data.direction   = (new_sector == expected_next);
+    if (new_sector == hall_data.sector) {
+        hall_data.signal_valid = true;
+        Hall_PublishSnapshot();
+        return;
+    }
+
+    /* Only adjacent Hall transitions are physically valid. Reject skipped or
+     * noisy transitions instead of silently interpreting them as reverse. */
+    if (hall_data.sector != 0u) {
+        uint8_t expected_next = (hall_data.sector % 6u) + 1u;
+        uint8_t expected_previous =
+            hall_data.sector == 1u ? 6u : (uint8_t)(hall_data.sector - 1u);
+        if (new_sector != expected_next && new_sector != expected_previous) {
+            hall_data.hall_state = new_state;
+            hall_data.signal_valid = false;
+            hall_data.velocity_rad_s = 0.0f;
+            Hall_PublishSnapshot();
+            return;
+        }
+
+        hall_data.direction = (new_sector == expected_next);
+        uint8_t pole_pairs = s_requested_pole_pairs;
+        if (pole_pairs == 0u) pole_pairs = 1u;
+        float step_rad = HALL_SECTOR_ANGLE / (float)pole_pairs;
+        hall_data.position_rad +=
+            hall_data.direction ? step_rad : -step_rad;
     }
 
     /* 更新状态 */
+    hall_data.signal_valid = true;
     hall_data.hall_state = new_state;
     hall_data.sector     = new_sector;
 
     /* 电角度：扇区中心 + 零偏 */
-    float raw_angle = s_sector_angle[new_sector] + hall_data.offset_rad;
+    float raw_angle = s_sector_angle[new_sector] - hall_data.offset_rad;
     /* 归一化到 [0, 2π) */
-    while (raw_angle >= HALL_2PI) raw_angle -= HALL_2PI;
-    while (raw_angle <  0.0f)    raw_angle += HALL_2PI;
-    hall_data.elec_angle_rad = raw_angle;
+    hall_data.elec_angle_rad = Hall_NormalizeAngle(raw_angle);
 
     /* 机械角度：电角度 / 极对数，累积（简化：仅跟踪电角度换算） */
-    hall_data.mec_angle_rad = hall_data.elec_angle_rad / (float)hall_data.pole_pairs;
+    hall_data.mec_angle_rad = Hall_NormalizeAngle(hall_data.position_rad);
 
     /* 速度计算：机械角速度 = 电角步长 / 时间 / 极对数 */
     if (elapsed > 0 && elapsed < HALL_TIMEOUT_US) {
         float period_s    = (float)elapsed * 1e-6f;
         /* 每步电角度 = 60° = π/3 */
-        float raw_vel     = HALL_SECTOR_ANGLE / period_s / (float)hall_data.pole_pairs;
+        uint8_t pole_pairs = s_requested_pole_pairs;
+        if (pole_pairs == 0u) pole_pairs = 1u;
+        float raw_vel = HALL_SECTOR_ANGLE / period_s / (float)pole_pairs;
         float signed_vel  = hall_data.direction ? raw_vel : -raw_vel;
         /* 低通滤波 */
         hall_data.velocity_rad_s = hall_data.velocity_rad_s
@@ -189,39 +270,75 @@ void Hall_UpdateFromISR(void) {
     }
 
     hall_data.last_capture_us = now_us;
+    hall_data.pole_pairs = s_requested_pole_pairs;
+    Hall_PublishSnapshot();
 }
 
 void Hall_SetPolePairs(uint8_t pp) {
     if (pp > 0) {
+        s_requested_pole_pairs = pp;
         hall_data.pole_pairs = pp;
     }
+}
+
+bool Hall_IsSignalValid(void) {
+    return Hall_ReadSnapshot().signal_valid;
 }
 
 /* ==========================================================================
    Motor_HAL_EncoderInterface_t 实现（对接 HAL 抽象层）
    ========================================================================== */
 
-static void Hall_HAL_Update(void) {
+static bool Hall_HAL_Update(void) {
     /* 速度超时检测：长时间无跳变则置零 */
-    uint32_t elapsed = HAL_GetMicroseconds() - hall_data.last_capture_us;
-    if (elapsed > HALL_TIMEOUT_US) {
-        hall_data.velocity_rad_s = 0.0f;
-    }
+    /* Timeout is applied to the immutable snapshot returned below. */
+    return Hall_IsSignalValid();
 }
 
 static void Hall_HAL_GetData(Motor_HAL_EncoderData_t *data) {
-    data->angle_rad    = hall_data.mec_angle_rad;
-    data->velocity_rad = hall_data.velocity_rad_s;
-    data->elec_angle   = hall_data.elec_angle_rad;
-    data->raw_value    = (int32_t)hall_data.hall_state;
+    Hall_Snapshot_t snapshot = Hall_ReadSnapshot();
+    float position = snapshot.raw_position_rad - s_position_zero_rad;
+    float velocity = snapshot.velocity_rad_s;
+    if (HAL_GetMicroseconds() - snapshot.last_capture_us > HALL_TIMEOUT_US) {
+        velocity = 0.0f;
+    }
+    data->position_rad = position;
+    data->angle_rad = Hall_NormalizeAngle(snapshot.raw_position_rad);
+    data->velocity_rad = velocity;
+    if (snapshot.sector >= 1u && snapshot.sector <= 6u) {
+        data->elec_angle =
+            Hall_NormalizeAngle(s_sector_angle[snapshot.sector] -
+                                hall_data.offset_rad);
+    } else {
+        data->elec_angle = hall_data.elec_angle_rad;
+    }
+    data->raw_value = (int32_t)snapshot.hall_state;
+}
+
+static void Hall_HAL_ZeroPosition(void) {
+    Hall_Snapshot_t snapshot = Hall_ReadSnapshot();
+    s_position_zero_rad = snapshot.raw_position_rad;
 }
 
 static void Hall_HAL_SetOffset(float offset) {
     hall_data.offset_rad = offset;
+    if (hall_data.sector >= 1u && hall_data.sector <= 6u) {
+        hall_data.elec_angle_rad =
+            Hall_NormalizeAngle(s_sector_angle[hall_data.sector] - offset);
+    }
+}
+
+static float Hall_HAL_GetOffset(void) {
+    return hall_data.offset_rad;
 }
 
 const Motor_HAL_EncoderInterface_t g_hall_encoder_interface = {
     .update     = Hall_HAL_Update,
     .get_data   = Hall_HAL_GetData,
+    .set_pole_pairs = Hall_SetPolePairs,
+    .zero_position = Hall_HAL_ZeroPosition,
     .set_offset = Hall_HAL_SetOffset,
+    .get_offset = Hall_HAL_GetOffset,
 };
+
+#endif /* BOARD_XSTAR */

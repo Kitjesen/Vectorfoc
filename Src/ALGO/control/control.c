@@ -13,7 +13,10 @@
 // limitations under the License.
 
 #include "control.h"
+#include "command_limiter.h"
 #include "context.h"
+#include "feedforward.h"
+#include "field_weakening.h"
 #include "inner.h"
 #include "outer.h"
 #include "impl.h"
@@ -22,32 +25,52 @@
 #include "trajectory/rate_limiter.h"
 #include "error_manager.h"
 #include "error_types.h"
+#include "hal_pwm.h"
+#include "safety_control.h"
 // Static Context
 static MotorControlCtx s_ctx;
-// Rate Limiters
-static RateLimiterTypeDef s_vel_limiter;    // Velocity Rate Limiter
-static RateLimiterTypeDef s_torque_limiter; // Torque Rate Limiter
 static bool s_limiters_initialized = false;
+
+static void Control_HandleModeTransition(MOTOR_DATA *motor) {
+  if (motor->state.Control_Mode == s_ctx.last_mode)
+    return;
+
+  Feedforward_Reset();
+  FieldWeakening_Reset();
+  ControlCommandLimiter_Reset(&s_ctx, motor);
+  PID_clear(&motor->VelPID);
+  PID_clear(&motor->PosPID);
+  LADRC_Reset(&motor->ladrc_state);
+  s_ctx.loop_count = 0;
+  motor->vel_filter_initialized = false;
+  motor->Controller.torque_setpoint = 0.0f;
+
+  if (motor->state.Control_Mode == CONTROL_MODE_VELOCITY_RAMP ||
+      motor->state.Control_Mode == CONTROL_MODE_POSITION_RAMP) {
+    motor->Controller.vel_setpoint = motor->feedback.velocity;
+    motor->Controller.pos_setpoint = motor->feedback.position;
+  }
+
+  s_ctx.last_mode = motor->state.Control_Mode;
+}
+
 void Control_Init(MOTOR_DATA *motor) {
+  if (motor == NULL)
+    return;
   if (s_limiters_initialized) {
     return;
   }
-  // speed/velocity: speed/velocity = vel_limit * VELOCITY_ACCEL_MULTIPLIER
-  RateLimiter_Init(&s_vel_limiter,
-                   motor->Controller.vel_limit * VELOCITY_ACCEL_MULTIPLIER);
-  // : config
-  RateLimiter_Init(&s_torque_limiter, motor->Controller.torque_ramp_rate);
+  ControlCommandLimiter_Init(&s_ctx, motor);
+  s_ctx.last_mode = motor->state.Control_Mode;
   // initFOCstate ( MOTOR_DATA )
   FOC_Algorithm_InitState(&motor->algo_state);
   s_limiters_initialized = true;
 }
-void MotorControl_Run(MOTOR_DATA *motor) {
-  //
-  motor->Controller.input_velocity = RateLimiter_Apply(
-      &s_vel_limiter, motor->Controller.input_velocity, CURRENT_MEASURE_PERIOD);
-  motor->Controller.input_torque =
-      RateLimiter_Apply(&s_torque_limiter, motor->Controller.input_torque,
-                        CURRENT_MEASURE_PERIOD);
+bool MotorControl_Run(MOTOR_DATA *motor) {
+  if (motor == NULL)
+    return false;
+  Control_HandleModeTransition(motor);
+  ControlCommandLimiter_Update(&s_ctx, motor, CURRENT_MEASURE_PERIOD);
   // mode: limit, ,
   ControlImpl_SetPidLimits(motor);
   switch (motor->state.Control_Mode) {
@@ -57,7 +80,8 @@ void MotorControl_Run(MOTOR_DATA *motor) {
     break;
   //
   case CONTROL_MODE_TORQUE:
-    ControlImpl_Torque(motor, &s_ctx);
+    if (!ControlImpl_Torque(motor, &s_ctx))
+      return false;
     break;
   // speed/velocity
   case CONTROL_MODE_VELOCITY:
@@ -77,21 +101,25 @@ void MotorControl_Run(MOTOR_DATA *motor) {
     break;
   // MIT : kp * (error) + kd * (error_rate)
   case CONTROL_MODE_MIT:
-    ControlImpl_MIT(motor);
+    if (!ControlImpl_MIT(motor, &s_ctx))
+      return false;
     break;
   default:
     /* 未知控制模式：关闭 PWM 输出，防止悬空状态导致硬件损坏。
      * 正常运行时不应进入此分支；若出现，说明 Control_Mode 被意外写入无效值。 */
-    if (motor->components.hal && motor->components.hal->pwm) {
-      motor->components.hal->pwm->brake();
-    }
-    ERROR_REPORT(ERROR_MOTOR_ENCODER_LOSS, "Unknown control mode — PWM braked");
-    break;
+    motor->algo_input.Id_ref = 0.0f;
+    motor->algo_input.Iq_ref = 0.0f;
+    motor->algo_input.enabled = false;
+    FOC_Algorithm_ResetState(&motor->algo_state);
+    MHAL_PWM_Disable();
+    Safety_TriggerFault(FAULT_CONTROL_INVALID, motor,
+                        &g_ds402_state_machine);
+    return false;
   }
   //
   // open loopmodeFOCinner loop
   if (motor->state.Control_Mode <= CONTROL_MODE_OPEN) {
-    return;
+    return true;
   }
   // runningouter loop(speed/velocity/position)
   if (Control_ShouldRunOuterLoops(motor)) {
@@ -99,6 +127,7 @@ void MotorControl_Run(MOTOR_DATA *motor) {
   }
   // runninginner loop(currentFOC)
   Control_InnerCurrentLoop(motor, &s_ctx);
+  return true;
 }
 /**
  * @brief set PID
@@ -123,17 +152,49 @@ void SetPIDLimit(MOTOR_DATA *motor, float current_max_out,
   motor->PosPID.max_out = pos_limit;
   motor->PosPID.max_iout = pos_limit;
 }
+
+static void CurrentLoop_ApplyLimits(MOTOR_DATA *motor) {
+  float v_limit = motor->Controller.voltage_limit;
+  motor->IdPID.max_out = v_limit;
+  motor->IdPID.max_iout = v_limit;
+  motor->IqPID.max_out = v_limit;
+  motor->IqPID.max_iout = v_limit;
+  motor->VelPID.max_out = motor->Controller.current_limit;
+  motor->VelPID.max_iout = motor->Controller.current_limit;
+  motor->PosPID.max_out = motor->Controller.vel_limit;
+  motor->PosPID.max_iout = motor->Controller.vel_limit;
+}
+
+void CurrentLoop_ApplyConfiguredGains(MOTOR_DATA *motor) {
+  if (motor == NULL)
+    return;
+
+  motor->IdPID.Kp = motor->Controller.current_ctrl_p_gain;
+  motor->IdPID.Ki = motor->Controller.current_ctrl_i_gain;
+  motor->IqPID.Kp = motor->Controller.current_ctrl_p_gain;
+  motor->IqPID.Ki = motor->Controller.current_ctrl_i_gain;
+  CurrentLoop_ApplyLimits(motor);
+  PID_clear(&motor->IdPID);
+  PID_clear(&motor->IqPID);
+  FOC_Algorithm_ResetState(&motor->algo_state);
+  motor->params_updated = true;
+}
 /**
  * @brief updatecurrentparam (gain)
  */
 #define CURRENT_AUTO_CALIBRATION 1 // current
 void CurrentLoop_UpdateGain(MOTOR_DATA *motor) {
+  if (motor == NULL)
+    return;
+
   // 1. calcgain
 #if CURRENT_AUTO_CALIBRATION
-  // calc (BW ≈ vel_limit * pole_pairs * 2pi)
-  // : calc，actual
-  float bandwidth =
-      motor->Controller.vel_limit * motor->parameters.pole_pairs * M_2PI;
+  float bandwidth = (float)motor->Controller.current_ctrl_bandwidth;
+  if (bandwidth <= 0.0f) {
+    /* Legacy fallback for callers that have not configured bandwidth yet. */
+    bandwidth =
+        motor->Controller.vel_limit * motor->parameters.pole_pairs * M_2PI;
+  }
   motor->Controller.current_ctrl_p_gain = motor->parameters.Ls * bandwidth;
   motor->Controller.current_ctrl_i_gain = motor->parameters.Rs * bandwidth;
 #else
@@ -143,21 +204,5 @@ void CurrentLoop_UpdateGain(MOTOR_DATA *motor) {
   motor->Controller.current_ctrl_i_gain =
       motor->parameters.Rs * motor->Controller.current_ctrl_bandwidth;
 #endif
-  // 2. gain
-  motor->IdPID.Kp = motor->Controller.current_ctrl_p_gain;
-  motor->IdPID.Ki = motor->Controller.current_ctrl_i_gain;
-  motor->IqPID.Kp = motor->Controller.current_ctrl_p_gain;
-  motor->IqPID.Ki = motor->Controller.current_ctrl_i_gain;
-  // 3.  (0output)
-  // D/Qaxisvoltage = voltage_limit
-  float v_limit = motor->Controller.voltage_limit;
-  motor->IdPID.max_out = v_limit;
-  motor->IdPID.max_iout = v_limit;
-  motor->IqPID.max_out = v_limit;
-  motor->IqPID.max_iout = v_limit;
-  // speed/velocity/positionupdatemode
-  motor->VelPID.max_out = motor->Controller.current_limit;
-  motor->VelPID.max_iout = motor->Controller.current_limit;
-  motor->PosPID.max_out = motor->Controller.vel_limit;
-  motor->PosPID.max_iout = motor->Controller.vel_limit;
+  CurrentLoop_ApplyConfiguredGains(motor);
 }

@@ -52,6 +52,15 @@ extern "C" {
 
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
+/**
+ * @brief Immediately force TIM1 bridge outputs inactive without changing the
+ *        global interrupt state.
+ *
+ * Use this while an acknowledgement still depends on peripheral interrupts.
+ * Fatal paths must use Emergency_Shutdown() instead.
+ */
+void Emergency_DisableBridgeOutputs(void);
+void Emergency_Shutdown(void);
 
 /* USER CODE BEGIN EFP */
 
@@ -59,8 +68,10 @@ void Error_Handler(void);
 
 /* Private defines -----------------------------------------------------------*/
 #define MCPWM_CLOCK_HZ 168000000
+#ifndef MCPWM_DEADTIME_CLOCKS
 #define MCPWM_DEADTIME_CLOCKS 20
-#define MCPWM_TGRO_TIME MCPWM_PERIOD_CLOCKS-10
+#endif
+#define MCPWM_TGRO_TIME (MCPWM_PERIOD_CLOCKS - 100U)
 #define MCPWM_RCR 0
 #define MCPWM_FREQ 20000
 #define MCPWM_PERIOD_CLOCKS MCPWM_CLOCK_HZ/2/MCPWM_FREQ

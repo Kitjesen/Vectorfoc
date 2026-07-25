@@ -17,8 +17,8 @@
 #include "board_config.h"
 #include "main.h"
 /* ADC temperature reading */
-#include "motor_adc.h"
 #include "bsp_adc.h"
+#include "motor_adc.h"
 #endif
 /**
  * @brief get
@@ -42,84 +42,6 @@ uint32_t HAL_GetMicroseconds(void) {
 #else
   /*  */
   return HAL_GetSystemTick() * 1000;
-#endif
-}
-/**
- * @brief CAN
- */
-bool HAL_CAN_Transmit(const CAN_Frame *frame) {
-  if (frame == NULL) {
-    return false;
-  }
-#ifdef USE_HAL_DRIVER
-  FDCAN_TxHeaderTypeDef tx_header;
-  /* configCAN ID */
-  tx_header.Identifier = frame->id;
-  if (frame->is_extended) {
-    tx_header.IdType = FDCAN_EXTENDED_ID;
-  } else {
-    tx_header.IdType = FDCAN_STANDARD_ID;
-  }
-  /* configRTR */
-  tx_header.TxFrameType = frame->is_rtr ? FDCAN_REMOTE_FRAME : FDCAN_DATA_FRAME;
-  /*  */
-  // Map uint8_t DLC to FDCAN_DLC_BYTES_x
-  switch (frame->dlc) {
-  case 0:
-    tx_header.DataLength = FDCAN_DLC_BYTES_0;
-    break;
-  case 1:
-    tx_header.DataLength = FDCAN_DLC_BYTES_1;
-    break;
-  case 2:
-    tx_header.DataLength = FDCAN_DLC_BYTES_2;
-    break;
-  case 3:
-    tx_header.DataLength = FDCAN_DLC_BYTES_3;
-    break;
-  case 4:
-    tx_header.DataLength = FDCAN_DLC_BYTES_4;
-    break;
-  case 5:
-    tx_header.DataLength = FDCAN_DLC_BYTES_5;
-    break;
-  case 6:
-    tx_header.DataLength = FDCAN_DLC_BYTES_6;
-    break;
-  case 7:
-    tx_header.DataLength = FDCAN_DLC_BYTES_7;
-    break;
-  case 8:
-    tx_header.DataLength = FDCAN_DLC_BYTES_8;
-    break;
-  default:
-    tx_header.DataLength = FDCAN_DLC_BYTES_8;
-    break;
-  }
-  /*  */
-  tx_header.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-  tx_header.BitRateSwitch = FDCAN_BRS_OFF;
-  tx_header.FDFormat = FDCAN_CLASSIC_CAN;
-  tx_header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-  tx_header.MessageMarker = 0;
-  /* CAN */
-  HAL_StatusTypeDef status = HAL_FDCAN_AddMessageToTxFifoQ(
-      &HW_CAN, &tx_header, (uint8_t *)frame->data);
-  return (status == HAL_OK);
-#else
-  /* mode： */
-  (void)frame;
-  return true;
-#endif
-}
-/**
- * @brief checkCAN
- */
-bool HAL_CAN_IsTxMailboxAvailable(void) {
-#ifdef USE_HAL_DRIVER
-  return (HAL_FDCAN_GetTxFifoFreeLevel(&HW_CAN) > 0);
-#else
-  return true;
 #endif
 }
 /**

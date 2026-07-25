@@ -14,54 +14,71 @@
 
 #include "feedforward.h"
 #include "config.h"
+#include "torque_utils.h"
+
+static float s_last_velocity_ref = 0.0f;
+static float s_torque_ff = 0.0f;
+static bool s_has_last = false;
 
 void Feedforward_Init(Feedforward_Params_t *params) {
-  if (!params)
+  if (params == NULL)
     return;
-  params->inertia = 0.0f; // Default values, should be loaded from config
+  params->inertia = 0.0f;
   params->friction_coeff = 0.0f;
 }
 
+void Feedforward_Reset(void) {
+  s_last_velocity_ref = 0.0f;
+  s_torque_ff = 0.0f;
+  s_has_last = false;
+}
+
 void Feedforward_Update(MOTOR_DATA *motor, const Feedforward_Params_t *params) {
-  if (!motor || !params)
+  if (motor == NULL || params == NULL)
     return;
 
-  /*
-   * 2. Friction (Velocity Torque)
-   * torque_ff += friction_coeff * velocity
-   */
-  // Friction Compensation (Coulomb + Viscous)
-  // Using Setpoint for pure feedforward. Using Feedback would be
-  // "Feed-linearization"
-  float velocity_ref = motor->Controller.vel_setpoint;
-
-  float dt = 1.0f / (float)ADV_CONTROL_HZ;
-  // [FIX] 静态变量在多电机实例下会有问题，但当前只有单电机
-  // 更好的做法是将 last_velocity_ref 存储在 motor 结构体中
-  static float last_velocity_ref = 0.0f;
-  static bool has_last = false;
-
-  float accel = 0.0f;
-  // [FIX] 添加 dt 有效性检查，避免除零
-  if (has_last && dt > 1e-6f) {
-    accel = (velocity_ref - last_velocity_ref) / dt;
+  CONTROL_MODE mode = motor->state.Control_Mode;
+  bool closed_loop_motion =
+      mode == CONTROL_MODE_VELOCITY || mode == CONTROL_MODE_POSITION ||
+      mode == CONTROL_MODE_VELOCITY_RAMP ||
+      mode == CONTROL_MODE_POSITION_RAMP;
+  if (!closed_loop_motion) {
+    s_torque_ff = 0.0f;
+    s_has_last = false;
+    return;
   }
-  last_velocity_ref = velocity_ref;
-  has_last = true;
 
-  // Inertia: T = J * dw/dt
-  float inertia = params->inertia * accel;
+  float velocity_ref = motor->Controller.vel_setpoint;
+  float dt = 1.0f / (float)ADV_CONTROL_HZ;
+  float acceleration_ref = 0.0f;
+  if (s_has_last && dt > 0.0f) {
+    acceleration_ref = (velocity_ref - s_last_velocity_ref) / dt;
+  }
+  s_last_velocity_ref = velocity_ref;
+  s_has_last = true;
 
-  // Viscous: T = B * w
-  float viscous = params->friction_coeff * velocity_ref;
+  /* Ramp modes already provide trajectory inertia torque_setpoint. */
+  bool trajectory_supplies_inertia =
+      mode == CONTROL_MODE_VELOCITY_RAMP ||
+      mode == CONTROL_MODE_POSITION_RAMP;
+  float inertia_torque =
+      trajectory_supplies_inertia
+          ? 0.0f
+          : Control_InertiaTorque(params->inertia, acceleration_ref);
+  float viscous_torque = params->friction_coeff * velocity_ref;
 
-  // Total FF
-  float total_ff = inertia + viscous;
+  /* Store an independent compensation. Never rewrite the user command. */
+  s_torque_ff = inertia_torque + viscous_torque;
+}
 
-  // Inject into Torque Setpoint
-  // WARNING: Ensuring this is additive relies on Control Loop behavior
-  // If Control Loop resets torque_setpoint, this must be handled inside the
-  // loop or summing junction. For now, we assume input_torque is the summing
-  // junction for User + FF
-  motor->Controller.input_torque += total_ff;
+float Feedforward_GetTorque(void) { return s_torque_ff; }
+
+float Feedforward_GetCurrent(const MOTOR_DATA *motor) {
+  if (motor == NULL) {
+    return 0.0f;
+  }
+  float current = 0.0f;
+  (void)Control_TorqueToCurrent(s_torque_ff, motor->Controller.torque_const,
+                                &current);
+  return current;
 }

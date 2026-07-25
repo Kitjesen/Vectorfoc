@@ -13,14 +13,12 @@ build_app() {
     echo "Building Application..."
     echo "=========================================="
     
-    mkdir -p "$PROJECT_DIR/build"
-    cd "$PROJECT_DIR/build"
-    
-    cmake -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
+    cmake -S "$PROJECT_DIR" -B "$PROJECT_DIR/build" \
+          -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
           -DCMAKE_BUILD_TYPE=Release \
-          "$PROJECT_DIR"
-    
-    make -j$(nproc)
+          -DBOOTLOADER_BUILD=OFF
+
+    cmake --build "$PROJECT_DIR/build" --parallel "$(nproc)"
     
     echo ""
     echo "Application built: build/VectorFoc.bin"
@@ -31,18 +29,12 @@ build_bootloader() {
     echo "Building Bootloader..."
     echo "=========================================="
     
-    mkdir -p "$PROJECT_DIR/build_boot"
-    cd "$PROJECT_DIR/build_boot"
-    
-    # Copy bootloader CMakeLists
-    cp "$PROJECT_DIR/CMakeLists_Bootloader.txt" "$PROJECT_DIR/CMakeLists_Boot_Temp.txt"
-    
-    cmake -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
+    cmake -S "$PROJECT_DIR" -B "$PROJECT_DIR/build_boot" \
+          -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
           -DCMAKE_BUILD_TYPE=Release \
-          -C "$PROJECT_DIR/CMakeLists_Bootloader.txt" \
-          "$PROJECT_DIR"
-    
-    make -j$(nproc)
+          -DBOOTLOADER_BUILD=ON
+
+    cmake --build "$PROJECT_DIR/build_boot" --parallel "$(nproc)"
     
     echo ""
     echo "Bootloader built: build_boot/VectorFoc_Bootloader.bin"

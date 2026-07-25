@@ -31,8 +31,12 @@ typedef unsigned char bool_t;
 #ifndef M_PI
 #define M_PI (3.14159265358979323846f)
 #endif
+#ifndef M_2PI
 #define M_2PI (6.28318530717958647692f)
+#endif
+#ifndef M_3PI_2
 #define M_3PI_2 (4.71238898038469f)
+#endif
 
 #define SQ(x) ((x) * (x))
 #define NORM2_f(x, y) (sqrtf(SQ(x) + SQ(y)))

@@ -24,7 +24,7 @@
 
 #ifdef BOARD_XSTAR
 
-#include "board_config_xstar.h"
+#include "board_config.h"
 
 /* ------------------------------------------------------------------
    外设句柄声明（定义于 xstar_bsp.c / xstar_tim.c）

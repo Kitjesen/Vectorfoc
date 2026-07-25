@@ -1,0 +1,6 @@
+#ifndef TEST_ENCODER_INIT_ABZ_ENCODER_H
+#define TEST_ENCODER_INIT_ABZ_ENCODER_H
+
+void Abz_Init(void);
+
+#endif /* TEST_ENCODER_INIT_ABZ_ENCODER_H */

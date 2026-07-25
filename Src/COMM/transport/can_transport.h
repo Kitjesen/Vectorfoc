@@ -13,13 +13,27 @@
 // limitations under the License.
 
 /**
- * @file    board_config_xstar.h
- * @deprecated 此文件已迁移至 boards/board_xstar.h
- *
- * 保留此文件仅为向后兼容过渡期。
- * 请将所有直接 #include "board_config_xstar.h" 改为 #include "board_config.h"。
+ * @file can_transport.h
+ * @brief CAN
+ * @note  TransportInterface， CAN BSP
  */
-#ifndef BOARD_CONFIG_XSTAR_H
-#define BOARD_CONFIG_XSTAR_H
-#include "boards/board_xstar.h"
-#endif /* BOARD_CONFIG_XSTAR_H */
+#ifndef CAN_TRANSPORT_H
+#define CAN_TRANSPORT_H
+#include "transport.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+/**
+ * @brief get CAN
+ * @return TransportInterface
+ */
+const TransportInterface *CAN_Transport_GetInterface(void);
+/**
+ * @brief init CAN
+ * @note  BSP_CAN_Init()
+ */
+bool CAN_Transport_Init(void);
+#ifdef __cplusplus
+}
+#endif
+#endif /* CAN_TRANSPORT_H */

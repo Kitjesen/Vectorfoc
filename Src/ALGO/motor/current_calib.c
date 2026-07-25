@@ -13,7 +13,8 @@
 // limitations under the License.
 
 #include "current_calib.h"
-#include "config.h"       // 间接包含 board_config.h，提供 HW_ADC_Ix_HANDLE/JDR 宏
+#include "board_config.h" // Provides the selected board's ADC handle/JDR map.
+#include "config.h"
 #include "motor_adc.h"
 #include "hal_pwm.h"
 #include "error_manager.h"

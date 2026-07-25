@@ -75,9 +75,6 @@ extern "C" {
 /** LUT 大小（与 MT6816 保持一致，片上校准后通常不需要） */
 #define TMR3109_LUT_SIZE 128
 
-/** SPI 超时 [ms] */
-#define TMR3109_SPI_TIMEOUT_MS  10
-
 /** 默认 PLL 带宽 [Hz]（与 MT6816 驱动相同） */
 #define TMR3109_PLL_BW_DEFAULT  2000.0f
 
@@ -151,6 +148,7 @@ typedef struct {
     /* ── 多圈累加器 ──────────────────────────────────── */
     int64_t  shadow_count;   /**< 64-bit 多圈计数（防溢出）       */
     int32_t  count_in_cpr;   /**< 单圈计数 [0, CPR)               */
+    bool     position_initialized; /**< 首帧已建立上电相对零点 */
 
     /* ── 可选软件 LUT（片上校准后通常全零） ─────────── */
     int16_t offset_lut[TMR3109_LUT_SIZE]; /**< 非线性补偿 LUT       */
@@ -211,6 +209,7 @@ TMR3109_Status_t TMR3109_Update(TMR3109_Handle_t *enc, float dt);
  * @brief  复位多圈计数器和 PLL 位置积分器。
  */
 void TMR3109_ResetCount(TMR3109_Handle_t *enc);
+void TMR3109_RebaseTracking(TMR3109_Handle_t *enc);
 
 /**
  * @brief  核心角度与速度处理（PLL、插值、SI 输出）。

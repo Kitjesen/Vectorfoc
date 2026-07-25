@@ -27,6 +27,7 @@ void SystemClock_Config(void);
 #endif /* BOARD_XSTAR */
 
 void MX_FREERTOS_Init(void);
+void MX_IWDG_Init(void);
 
 /**
  * @brief  Application entry point.
@@ -60,9 +61,9 @@ int main(void) {
   MX_USART1_UART_Init();
   MX_CRC_Init();
   MX_RNG_Init();
-  void MX_IWDG_Init(void);
-  MX_IWDG_Init();
 #endif /* BOARD_XSTAR */
+
+  MX_IWDG_Init();
 
   /* Application-level initialization (motor, comm, safety, etc.) */
   App_Init();
@@ -78,13 +79,13 @@ int main(void) {
 
 /**
  * @brief  IWDG initialization (register-based, no HAL).
- *         Prescaler=32, Reload=20 => ~20ms timeout at 32kHz LSI.
+ *         Prescaler=32, Reload=100 => ~100ms timeout at 32kHz LSI.
  */
 void MX_IWDG_Init(void) {
   IWDG->KR = 0xCCCC;  /* Enable IWDG */
   IWDG->KR = 0x5555;  /* Enable write access */
   IWDG->PR = 0x03;    /* Prescaler /32 */
-  IWDG->RLR = 20;     /* Reload value for ~20ms */
+  IWDG->RLR = 100;    /* Reload value for ~100ms */
   while (IWDG->SR != 0)
     ;                  /* Wait for register update */
   IWDG->KR = 0xAAAA;  /* Reload counter */
@@ -92,7 +93,7 @@ void MX_IWDG_Init(void) {
 
 /**
  * @brief  System clock configuration.
- *         HSE 24MHz -> PLL -> 168MHz SYSCLK
+ *         HSE 8MHz -> PLL -> 168MHz SYSCLK
  */
 void SystemClock_Config(void) {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -139,9 +140,37 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 }
 
 /**
- * @brief  Global error handler. Disables IRQ and waits for watchdog reset.
+ * @brief  Immediately force all TIM1 bridge outputs inactive.
+ * @note   This deliberately bypasses the motor HAL so it remains usable while
+ *         application state is transitioning.  It intentionally leaves IRQs
+ *         enabled; callers waiting for a CAN Tx event must still receive it.
+ */
+void Emergency_DisableBridgeOutputs(void) {
+  TIM1->BDTR &= ~TIM_BDTR_MOE;
+  TIM1->CCER &= ~(TIM_CCER_CC1E | TIM_CCER_CC1NE |
+                  TIM_CCER_CC2E | TIM_CCER_CC2NE |
+                  TIM_CCER_CC3E | TIM_CCER_CC3NE);
+
+  __DSB();
+  __ISB();
+}
+
+/**
+ * @brief  Put the bridge in its fatal shutdown state.
+ * @note   Fatal paths intentionally freeze all interrupts after outputs are
+ *         inactive.  Do not use this while awaiting peripheral completion.
+ */
+void Emergency_Shutdown(void) {
+  __disable_irq();
+  Emergency_DisableBridgeOutputs();
+}
+
+/**
+ * @brief  Global error handler. Disables bridge outputs and waits for reset.
  */
 void Error_Handler(void) {
+  Emergency_Shutdown();
+
   #include "error_config.h"
   #ifdef USE_ERROR_MANAGER
     #include "error_manager.h"
@@ -149,7 +178,6 @@ void Error_Handler(void) {
     ERROR_REPORT(ERROR_SYSTEM_FATAL, "Error_Handler called");
   #endif
 
-  __disable_irq();
   while (1) {
     /* Wait for watchdog reset */
   }

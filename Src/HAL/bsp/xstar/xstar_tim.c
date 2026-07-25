@@ -27,14 +27,9 @@
 #ifdef BOARD_XSTAR
 
 #include "xstar_bsp.h"
-#include "board_config_xstar.h"
+#include "board_config.h"
 #include "hall_encoder.h"
 #include "main.h"
-
-/* TIM1 ARR for 20kHz center-aligned: 170MHz / 2 / 20000 = 4250 */
-#define XSTAR_TIM1_ARR       4250U
-/* ADC 触发脉冲：靠近计数峰值以对齐电流采样（ARR - 10） */
-#define XSTAR_TIM1_TRIG_PULSE (XSTAR_TIM1_ARR - 10U)
 
 void HAL_TIM_MspPostInit(TIM_HandleTypeDef *timHandle);
 
@@ -49,13 +44,13 @@ void XStar_TIM1_Init(void) {
     htim1.Instance               = TIM1;
     htim1.Init.Prescaler         = 0;
     htim1.Init.CounterMode       = TIM_COUNTERMODE_CENTERALIGNED1;
-    htim1.Init.Period            = XSTAR_TIM1_ARR;
+    htim1.Init.Period            = HW_PWM_PERIOD_TICKS;
     htim1.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
     htim1.Init.RepetitionCounter = 0;   /* 每个 PWM 周期产生一次更新事件 */
     htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
     if (HAL_TIM_PWM_Init(&htim1) != HAL_OK) { Error_Handler(); }
 
-    /* CH4 的 OC4REF 作为 ADC 注入组触发源（TRGO） */
+    /* 保留 OC4REF 作为主触发输出；ADC 注入组直接选择 TIM1_CC4 上升沿。 */
     sMasterConfig.MasterOutputTrigger  = TIM_TRGO_OC4REF;
     sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
     sMasterConfig.MasterSlaveMode      = TIM_MASTERSLAVEMODE_DISABLE;
@@ -82,7 +77,8 @@ void XStar_TIM1_Init(void) {
     }
 
     /* CH4：ADC 触发脉冲，靠近峰值（电流采样在 PWM 中点电流纹波最小） */
-    sConfigOC.Pulse = XSTAR_TIM1_TRIG_PULSE;
+    sConfigOC.Pulse =
+        HW_PWM_PERIOD_TICKS - HW_PWM_ADC_TRIGGER_OFFSET_TICKS;
     if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, HW_PWM_CH_TRIG) != HAL_OK) {
         Error_Handler();
     }
@@ -92,13 +88,15 @@ void XStar_TIM1_Init(void) {
     sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
     sBreakDeadTimeConfig.LockLevel        = TIM_LOCKLEVEL_OFF;
     sBreakDeadTimeConfig.DeadTime         = HW_PWM_DEADTIME_CLKS; /* 20 clks ≈ 118ns */
-    sBreakDeadTimeConfig.BreakState       = TIM_BREAK_DISABLE;
-    sBreakDeadTimeConfig.BreakPolarity    = TIM_BREAKPOLARITY_HIGH;
-    sBreakDeadTimeConfig.BreakFilter      = 0;
+    sBreakDeadTimeConfig.BreakState       =
+        HW_PWM_BREAK_ENABLED ? TIM_BREAK_ENABLE : TIM_BREAK_DISABLE;
+    sBreakDeadTimeConfig.BreakPolarity    = HW_PWM_BREAK_POLARITY;
+    sBreakDeadTimeConfig.BreakFilter      = HW_PWM_BREAK_FILTER;
     sBreakDeadTimeConfig.BreakAFMode      = TIM_BREAK_AFMODE_INPUT;
-    sBreakDeadTimeConfig.Break2State      = TIM_BREAK2_DISABLE;
-    sBreakDeadTimeConfig.Break2Polarity   = TIM_BREAK2POLARITY_HIGH;
-    sBreakDeadTimeConfig.Break2Filter     = 0;
+    sBreakDeadTimeConfig.Break2State      =
+        HW_PWM_BREAK2_ENABLED ? TIM_BREAK2_ENABLE : TIM_BREAK2_DISABLE;
+    sBreakDeadTimeConfig.Break2Polarity   = HW_PWM_BREAK2_POLARITY;
+    sBreakDeadTimeConfig.Break2Filter     = HW_PWM_BREAK2_FILTER;
     sBreakDeadTimeConfig.Break2AFMode     = TIM_BREAK_AFMODE_INPUT;
     sBreakDeadTimeConfig.AutomaticOutput  = TIM_AUTOMATICOUTPUT_DISABLE;
     if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK) {
@@ -243,9 +241,9 @@ void HAL_TIM_PWM_MspDeInit(TIM_HandleTypeDef *tim_pwmHandle) {
    HAL_TIMEx_HallSensor_Init() 内部调用 HAL_TIMEx_HallSensor_MspInit()
    ========================================================================== */
 void HAL_TIMEx_HallSensor_MspInit(TIM_HandleTypeDef *htim) {
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
     GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
     if (htim->Instance == TIM3) {
         __HAL_RCC_TIM3_CLK_ENABLE();
         __HAL_RCC_GPIOC_CLK_ENABLE();

@@ -1,0 +1,40 @@
+// Copyright 2024-2026 VectorFOC Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+#ifndef TEST_MOTOR_HAL_G431_BOARD_CONFIG_H
+#define TEST_MOTOR_HAL_G431_BOARD_CONFIG_H
+
+#include "stm32g4xx_hal.h"
+
+#define HW_PWM_TIMER htim1
+#define HW_PWM_CH_PHASE_A TIM_CHANNEL_1
+#define HW_PWM_CH_PHASE_B TIM_CHANNEL_2
+#define HW_PWM_CH_PHASE_C TIM_CHANNEL_3
+#define HW_PWM_CH_TRIG TIM_CHANNEL_4
+
+#define HW_ADC_CURRENT hadc1
+#define HW_ADC_JDR_IC JDR1
+#define HW_ADC_JDR_IB JDR2
+#define HW_ADC_JDR_IA JDR3
+#define HW_ADC_JDR_VBUS JDR4
+
+#define HW_SHUNT_RESISTANCE 0.02f
+#define HW_OPAMP_GAIN 50.0f
+#define HW_ADC_VREF 3.3f
+#define HW_ADC_RESOLUTION 4095
+#define HW_FAC_CURRENT \
+  (HW_ADC_VREF / (HW_ADC_RESOLUTION * HW_SHUNT_RESISTANCE * HW_OPAMP_GAIN))
+#define HW_VBUS_R_HIGH 10000.0f
+#define HW_VBUS_R_LOW 1000.0f
+#define HW_VOLTAGE_FACTOR \
+  (((HW_VBUS_R_HIGH + HW_VBUS_R_LOW) / HW_VBUS_R_LOW) * \
+   (HW_ADC_VREF / HW_ADC_RESOLUTION))
+
+#define HW_NTC_R25 10000.0f
+#define HW_NTC_B_VALUE 3950.0f
+#define HW_NTC_PULLUP 10000.0f
+
+extern TIM_HandleTypeDef htim1;
+extern ADC_HandleTypeDef hadc1;
+
+#endif

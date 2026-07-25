@@ -25,10 +25,10 @@ echo ==========================================
 if not exist "%PROJECT_DIR%\build" mkdir "%PROJECT_DIR%\build"
 cd /d "%PROJECT_DIR%\build"
 
-cmake -G "MinGW Makefiles" -DCMAKE_TOOLCHAIN_FILE="%TOOLCHAIN_FILE%" -DCMAKE_BUILD_TYPE=Release "%PROJECT_DIR%"
+cmake -S "%PROJECT_DIR%" -B "%PROJECT_DIR%\build" -G "MinGW Makefiles" -DCMAKE_TOOLCHAIN_FILE="%TOOLCHAIN_FILE%" -DCMAKE_BUILD_TYPE=Release -DBOOTLOADER_BUILD=OFF
 if errorlevel 1 goto error
 
-mingw32-make -j4
+cmake --build "%PROJECT_DIR%\build" --parallel 4
 if errorlevel 1 goto error
 
 echo.
@@ -40,16 +40,10 @@ echo ==========================================
 echo Building Bootloader...
 echo ==========================================
 
-if not exist "%PROJECT_DIR%\build_boot" mkdir "%PROJECT_DIR%\build_boot"
-cd /d "%PROJECT_DIR%\build_boot"
-
-REM Use bootloader CMakeLists
-copy /Y "%PROJECT_DIR%\CMakeLists_Bootloader.txt" "%PROJECT_DIR%\CMakeLists.txt.bak" >nul
-
-cmake -G "MinGW Makefiles" -DCMAKE_TOOLCHAIN_FILE="%TOOLCHAIN_FILE%" -DCMAKE_BUILD_TYPE=Release -DBOOTLOADER_BUILD=ON "%PROJECT_DIR%"
+cmake -S "%PROJECT_DIR%" -B "%PROJECT_DIR%\build_boot" -G "MinGW Makefiles" -DCMAKE_TOOLCHAIN_FILE="%TOOLCHAIN_FILE%" -DCMAKE_BUILD_TYPE=Release -DBOOTLOADER_BUILD=ON
 if errorlevel 1 goto error
 
-mingw32-make -j4
+cmake --build "%PROJECT_DIR%\build_boot" --parallel 4
 if errorlevel 1 goto error
 
 echo.

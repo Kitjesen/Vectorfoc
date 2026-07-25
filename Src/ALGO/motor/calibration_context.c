@@ -13,7 +13,7 @@
 // limitations under the License.
 
 #include "calibration_context.h"
-#include "config.h"
+#include "position_sensor_build_config.h"
 #include "rsls_calib.h"
 #include <string.h>
 
@@ -21,6 +21,40 @@
  * @file calibration_context.c
  * @brief Calibration context management implementation
  */
+
+#if !defined(TEST_ENV) && POSITION_SENSOR_BUILD_HAS_LINEARITY_CALIBRATION
+/*
+ * Encoder linearity calibration is never concurrent across motors on the
+ * single-axis target. Keep its large, CPU-only workspace out of MOTOR_DATA and
+ * in CCM SRAM so the DMA-capable SRAM remains available to peripherals/RTOS.
+ */
+static int s_encoder_error_workspace[SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS]
+    __attribute__((section(".ccm_bss"), aligned(8)));
+static int16_t
+    s_encoder_offset_lut_workspace[POSITION_SENSOR_CALIBRATION_LUT_SIZE]
+        __attribute__((section(".ccm_bss"), aligned(8)));
+#endif
+
+static void CalibContext_AssignEncoderWorkspace(CalibrationContext *ctx) {
+#if defined(TEST_ENV)
+  ctx->encoder.error_array = ctx->encoder.error_array_storage;
+  ctx->encoder.error_array_size =
+      SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS;
+  ctx->encoder.offset_lut = ctx->encoder.offset_lut_storage;
+  ctx->encoder.offset_lut_size = POSITION_SENSOR_CALIBRATION_LUT_SIZE;
+#elif POSITION_SENSOR_BUILD_HAS_LINEARITY_CALIBRATION
+  ctx->encoder.error_array = s_encoder_error_workspace;
+  ctx->encoder.error_array_size =
+      SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS;
+  ctx->encoder.offset_lut = s_encoder_offset_lut_workspace;
+  ctx->encoder.offset_lut_size = POSITION_SENSOR_CALIBRATION_LUT_SIZE;
+#else
+  ctx->encoder.error_array = NULL;
+  ctx->encoder.error_array_size = 0;
+  ctx->encoder.offset_lut = NULL;
+  ctx->encoder.offset_lut_size = 0;
+#endif
+}
 
 /**
  * @brief Initialize calibration context
@@ -35,8 +69,7 @@ void CalibContext_Init(CalibrationContext *ctx) {
   // Initialize constants
   ctx->resistance.kI = 2.0f;
 
-  ctx->encoder.error_array = ctx->encoder.error_array_storage;
-  ctx->encoder.error_array_size = SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS;
+  CalibContext_AssignEncoderWorkspace(ctx);
 
   // Set initialization flag
   ctx->current.is_initialized = true;
@@ -49,8 +82,7 @@ void CalibContext_Release(CalibrationContext *ctx) {
   if (ctx == NULL)
     return;
 
-  ctx->encoder.error_array = ctx->encoder.error_array_storage;
-  ctx->encoder.error_array_size = SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS;
+  CalibContext_AssignEncoderWorkspace(ctx);
 }
 
 /**

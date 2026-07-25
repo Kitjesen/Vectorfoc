@@ -29,224 +29,243 @@
 #include "usbd_cdc_if.h"
 #include <string.h>
 
+/* USB Device */
+extern void MX_USB_Device_Init(void);
+
 /* ============================================================================
  * 升级标志 (位于 RAM 末尾，复位不清除)
- * ============================================================================ */
+ * ============================================================================
+ */
 /* 使用 __attribute__((section)) 将标志放在特定位置 */
-static volatile BootFlag_t __attribute__((section(".noinit"))) s_boot_flag;
+static volatile BootFlag_t
+    __attribute__((section(".boot_flag"), used, aligned(4))) s_boot_flag;
+
+static bool Boot_IsValidStackPointer(uint32_t stack_pointer) {
+  bool in_sram =
+      stack_pointer >= BOOT_SRAM_BASE && stack_pointer <= BOOT_SRAM_END;
+  bool in_ccm =
+      stack_pointer >= BOOT_CCMRAM_BASE && stack_pointer <= BOOT_CCMRAM_END;
+  return (stack_pointer & 0x7u) == 0u && (in_sram || in_ccm);
+}
 
 /* ============================================================================
  * App 有效性检查
- * ============================================================================ */
-bool Boot_CheckAppValid(void)
-{
-    /* 检查 App 起始地址的栈指针是否有效 (STM32G431: 32KB RAM) */
-    uint32_t app_stack = *(volatile uint32_t *)APP_ADDR_START;
-    if (app_stack < 0x20000000 || app_stack > 0x20008000) {
-        return false;
-    }
-    
-    /* 检查 Reset Handler 地址是否有效 */
-    uint32_t app_reset = *(volatile uint32_t *)(APP_ADDR_START + 4);
-    if (app_reset < APP_ADDR_START || app_reset > APP_ADDR_END) {
-        return false;
-    }
-    
-    /* 检查 App Header */
-    const AppHeader_t *header = Boot_GetAppHeader();
-    if (header->magic != APP_MAGIC_NUMBER) {
-        /* Magic 不匹配，可能是旧固件，仍然允许启动 */
-        /* 但不进行 CRC 校验 */
-        return true;
-    }
-    
-    /* 有 Header，进行 CRC 校验 */
-    if (header->size == 0 || header->size > APP_SIZE) {
-        return false;
-    }
-    
-    uint32_t calc_crc = Flash_CalcFlashCRC32(
-        APP_HEADER_ADDR + sizeof(AppHeader_t),
-        header->size);
-    
-    if (calc_crc != header->crc32) {
-        return false;
-    }
-    
-    return true;
+ * ============================================================================
+ */
+bool Boot_CheckAppValid(void) {
+  /* G431 has 22 KiB contiguous SRAM plus a separate 10 KiB CCM SRAM. */
+  uint32_t app_stack = *(volatile uint32_t *)APP_ADDR_START;
+  if (!Boot_IsValidStackPointer(app_stack)) {
+    return false;
+  }
+
+  /* 检查 Reset Handler 地址是否有效 */
+  uint32_t app_reset = *(volatile uint32_t *)(APP_ADDR_START + 4);
+  uint32_t app_reset_addr = app_reset & ~1u;
+  if ((app_reset & 1u) == 0u || app_reset_addr < APP_ADDR_START ||
+      app_reset_addr > APP_ADDR_END) {
+    return false;
+  }
+
+  /* 检查 App Header */
+  const AppHeader_t *header = Boot_GetAppHeader();
+  if (header->magic != APP_MAGIC_NUMBER) {
+    /* A missing or corrupted header is not a valid application: without it
+     * the CRC/size contract cannot be verified. */
+    return false;
+  }
+
+  /* 有 Header，进行 CRC 校验 */
+  uint32_t payload_start = APP_HEADER_ADDR + sizeof(AppHeader_t);
+  uint32_t max_payload_size = APP_ADDR_END + 1u - payload_start;
+  if (header->size == 0u || header->size > max_payload_size ||
+      header->reserved[0] != 0u || header->reserved[1] != 0u ||
+      header->reserved[2] != 0u) {
+    return false;
+  }
+
+  uint32_t calc_crc = Flash_CalcAppImageCRC32(header->size);
+
+  if (calc_crc != header->crc32) {
+    return false;
+  }
+
+  return true;
 }
 
 /* ============================================================================
  * 升级标志操作
- * ============================================================================ */
-bool Boot_CheckUpgradeFlag(void)
-{
-    if (s_boot_flag.magic == BOOT_FLAG_MAGIC &&
-        s_boot_flag.request == BOOT_FLAG_UPGRADE) {
-        return true;
-    }
-    return false;
+ * ============================================================================
+ */
+bool Boot_CheckUpgradeFlag(void) {
+  if (s_boot_flag.magic == BOOT_FLAG_MAGIC &&
+      s_boot_flag.request == BOOT_FLAG_UPGRADE) {
+    return true;
+  }
+  return false;
 }
 
-void Boot_SetUpgradeFlag(void)
-{
-    s_boot_flag.magic = BOOT_FLAG_MAGIC;
-    s_boot_flag.request = BOOT_FLAG_UPGRADE;
+void Boot_SetUpgradeFlag(void) {
+  s_boot_flag.magic = BOOT_FLAG_MAGIC;
+  s_boot_flag.request = BOOT_FLAG_UPGRADE;
 }
 
-void Boot_ClearUpgradeFlag(void)
-{
-    s_boot_flag.magic = 0;
-    s_boot_flag.request = 0;
+void Boot_ClearUpgradeFlag(void) {
+  s_boot_flag.magic = 0;
+  s_boot_flag.request = 0;
 }
 
 /* ============================================================================
  * 强制进入按键检查
- * ============================================================================ */
-bool Boot_CheckForceButton(void)
-{
+ * ============================================================================
+ */
+bool Boot_CheckForceButton(void) {
 #ifdef BOOT_FORCE_GPIO_PORT
-    /* 初始化 GPIO (如果还没初始化) */
-    GPIO_InitTypeDef gpio_init = {0};
-    gpio_init.Pin = BOOT_FORCE_GPIO_PIN;
-    gpio_init.Mode = GPIO_MODE_INPUT;
-    gpio_init.Pull = BOOT_FORCE_ACTIVE_LOW ? GPIO_PULLUP : GPIO_PULLDOWN;
-    
-    /* 使能 GPIO 时钟 */
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-    HAL_GPIO_Init(BOOT_FORCE_GPIO_PORT, &gpio_init);
-    
-    /* 读取按键状态 */
-    GPIO_PinState state = HAL_GPIO_ReadPin(BOOT_FORCE_GPIO_PORT, BOOT_FORCE_GPIO_PIN);
-    
-    if (BOOT_FORCE_ACTIVE_LOW) {
-        return (state == GPIO_PIN_RESET);
-    } else {
-        return (state == GPIO_PIN_SET);
-    }
+  /* 初始化 GPIO (如果还没初始化) */
+  GPIO_InitTypeDef gpio_init = {0};
+  gpio_init.Pin = BOOT_FORCE_GPIO_PIN;
+  gpio_init.Mode = GPIO_MODE_INPUT;
+  gpio_init.Pull = BOOT_FORCE_ACTIVE_LOW ? GPIO_PULLUP : GPIO_PULLDOWN;
+
+  /* 使能 GPIO 时钟 */
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  HAL_GPIO_Init(BOOT_FORCE_GPIO_PORT, &gpio_init);
+
+  /* 读取按键状态 */
+  GPIO_PinState state =
+      HAL_GPIO_ReadPin(BOOT_FORCE_GPIO_PORT, BOOT_FORCE_GPIO_PIN);
+
+  if (BOOT_FORCE_ACTIVE_LOW) {
+    return (state == GPIO_PIN_RESET);
+  } else {
+    return (state == GPIO_PIN_SET);
+  }
 #else
-    return false;
+  return false;
 #endif
 }
 
 /* ============================================================================
  * 跳转到 App
- * ============================================================================ */
+ * ============================================================================
+ */
 typedef void (*pFunction)(void);
 
-void Boot_JumpToApp(void)
-{
-    /* 清除升级标志 */
-    Boot_ClearUpgradeFlag();
-    
-    /* 获取 App 的栈指针和 Reset Handler */
-    uint32_t app_stack = *(volatile uint32_t *)APP_ADDR_START;
-    uint32_t app_reset = *(volatile uint32_t *)(APP_ADDR_START + 4);
-    
-    /* 关闭所有中断 */
-    __disable_irq();
-    
-    /* 关闭 SysTick */
-    SysTick->CTRL = 0;
-    SysTick->LOAD = 0;
-    SysTick->VAL = 0;
-    
-    /* 清除所有挂起的中断 */
-    for (int i = 0; i < 8; i++) {
-        NVIC->ICER[i] = 0xFFFFFFFF;
-        NVIC->ICPR[i] = 0xFFFFFFFF;
-    }
-    
-    /* 重新映射向量表到 App */
-    SCB->VTOR = APP_ADDR_START;
-    
-    /* 设置栈指针 */
-    __set_MSP(app_stack);
-    
-    /* 使能中断 */
-    __enable_irq();
-    
-    /* 跳转到 App */
-    pFunction jump_to_app = (pFunction)app_reset;
-    jump_to_app();
-    
-    /* 不应该到达这里 */
-    while (1);
+void Boot_JumpToApp(void) {
+  /* 清除升级标志 */
+  Boot_ClearUpgradeFlag();
+
+  /* 获取 App 的栈指针和 Reset Handler */
+  uint32_t app_stack = *(volatile uint32_t *)APP_ADDR_START;
+  uint32_t app_reset = *(volatile uint32_t *)(APP_ADDR_START + 4);
+
+  /* 关闭所有中断 */
+  __disable_irq();
+
+  /* 关闭 SysTick */
+  SysTick->CTRL = 0;
+  SysTick->LOAD = 0;
+  SysTick->VAL = 0;
+
+  /* 清除所有挂起的中断 */
+  for (int i = 0; i < 8; i++) {
+    NVIC->ICER[i] = 0xFFFFFFFF;
+    NVIC->ICPR[i] = 0xFFFFFFFF;
+  }
+
+  /* 重新映射向量表到 App */
+  SCB->VTOR = APP_ADDR_START;
+
+  /* 设置栈指针 */
+  __set_MSP(app_stack);
+
+  /* 使能中断 */
+  __enable_irq();
+
+  /* 跳转到 App */
+  pFunction jump_to_app = (pFunction)app_reset;
+  jump_to_app();
+
+  /* 不应该到达这里 */
+  while (1)
+    ;
 }
 
 /* ============================================================================
  * 升级模式
- * ============================================================================ */
-void Boot_EnterUpgradeMode(void)
-{
-    /* 初始化协议 */
-    BootProto_Init();
-    
-    /* 发送就绪消息 */
-    BootProto_SendReady();
-    
-    /* 主循环 */
-    while (1) {
-        /* USB CDC 数据在中断中处理 */
-        /* 这里只需要检查超时 */
-        if (BootProto_CheckTimeout(HAL_GetTick())) {
-            BootProto_SendResponse("boot_timeout");
-        }
-        
-        HAL_Delay(10);
-    }
+ * ============================================================================
+ */
+void Boot_EnterUpgradeMode(void) {
+  /* Keep USB uninitialized on the normal jump-to-app path. */
+  MX_USB_Device_Init();
+
+  /* 初始化协议 */
+  BootProto_Init();
+
+  /* 发送就绪消息 */
+  BootProto_SendReady();
+
+  /* 主循环 */
+  while (1) {
+    /* USB ISR 仅入队；命令解析和 Flash 操作在主循环执行。 */
+    BootProto_Service();
+    (void)BootProto_CheckTimeout(HAL_GetTick());
+    HAL_Delay(1);
+  }
 }
 
 /* ============================================================================
  * Bootloader 主入口
- * ============================================================================ */
-void Boot_Main(void)
-{
-    /* 1. 检查强制进入按键 */
-    if (Boot_CheckForceButton()) {
-        Boot_EnterUpgradeMode();
-        /* 不返回 */
-    }
-    
-    /* 2. 检查升级标志 */
-    if (Boot_CheckUpgradeFlag()) {
-        Boot_ClearUpgradeFlag();
-        Boot_EnterUpgradeMode();
-        /* 不返回 */
-    }
-    
-    /* 3. 检查 App 有效性 */
-    if (!Boot_CheckAppValid()) {
-        Boot_EnterUpgradeMode();
-        /* 不返回 */
-    }
-    
-    /* 4. 跳转到 App */
-    Boot_JumpToApp();
-    
-    /* 不应该到达这里 */
-    while (1);
+ * ============================================================================
+ */
+void Boot_Main(void) {
+  /* 1. 检查强制进入按键 */
+  if (Boot_CheckForceButton()) {
+    Boot_EnterUpgradeMode();
+    /* 不返回 */
+  }
+
+  /* 2. 检查升级标志 */
+  if (Boot_CheckUpgradeFlag()) {
+    Boot_ClearUpgradeFlag();
+    Boot_EnterUpgradeMode();
+    /* 不返回 */
+  }
+
+  /* 3. 检查 App 有效性 */
+  if (!Boot_CheckAppValid()) {
+    Boot_EnterUpgradeMode();
+    /* 不返回 */
+  }
+
+  /* 4. 跳转到 App */
+  Boot_JumpToApp();
+
+  /* 不应该到达这里 */
+  while (1)
+    ;
 }
 
 /* ============================================================================
  * App Header 获取
- * ============================================================================ */
-const AppHeader_t* Boot_GetAppHeader(void)
-{
-    return (const AppHeader_t *)APP_HEADER_ADDR;
+ * ============================================================================
+ */
+const AppHeader_t *Boot_GetAppHeader(void) {
+  return (const AppHeader_t *)APP_HEADER_ADDR;
 }
 
 /* ============================================================================
  * App 端调用: 请求升级
- * ============================================================================ */
-void Boot_RequestUpgrade(void)
-{
-    Boot_SetUpgradeFlag();
-    
-    /* 执行软复位 */
-    __disable_irq();
-    NVIC_SystemReset();
-    
-    /* 不应该到达这里 */
-    while (1);
+ * ============================================================================
+ */
+void Boot_RequestUpgrade(void) {
+  Boot_SetUpgradeFlag();
+
+  /* 执行软复位 */
+  __disable_irq();
+  NVIC_SystemReset();
+
+  /* 不应该到达这里 */
+  while (1)
+    ;
 }

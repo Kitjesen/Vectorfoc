@@ -5,7 +5,7 @@
  *
  *          Provides SystemInit() and SystemCoreClockUpdate().
  *          Default clock after reset: HSI 16MHz.
- *          HSE_VALUE = 24MHz (defined in stm32g4xx_hal.h or here).
+ *          HSE_VALUE = 8MHz (defined in stm32g4xx_hal.h or here).
  *
  * Copyright (c) 2019 STMicroelectronics. All rights reserved.
  */
@@ -13,7 +13,7 @@
 #include "stm32g4xx.h"
 
 #if !defined(HSE_VALUE)
-  #define HSE_VALUE 24000000U
+  #define HSE_VALUE 8000000U
 #endif
 
 #if !defined(HSI_VALUE)

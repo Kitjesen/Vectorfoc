@@ -1,0 +1,4 @@
+#ifndef TEST_APP_INIT_BINDING_MOCKS_BSP_INIT_H
+#define TEST_APP_INIT_BINDING_MOCKS_BSP_INIT_H
+void BSPInit(void);
+#endif

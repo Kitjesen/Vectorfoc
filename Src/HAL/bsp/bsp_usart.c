@@ -19,6 +19,7 @@
  ********************************************************************************/
 #include "bsp_usart.h"
 #include "bsp_log.h"
+#include "platform.h"
 #include <string.h>
 /* usart service instance, modules' info would be recoreded here using
  * USARTRegister() */
@@ -37,6 +38,10 @@ static USARTInstance *usart_instance[DEVICE_USART_CNT] = {NULL};
  * @retval         note
  */
 void USARTServiceInit(USARTInstance *_instance) {
+  if (_instance == NULL || _instance->usart_handle == NULL ||
+      _instance->recv_buff_size == 0U) {
+    return;
+  }
   /* Only set up DMA RX if a DMA handle is linked to the UART (e.g. VectorFOC).
    * On BOARD_XSTAR, USART2 has no DMA configured, so hdmarx is NULL. */
   if (_instance->usart_handle->hdmarx == NULL) {
@@ -55,22 +60,28 @@ void USARTServiceInit(USARTInstance *_instance) {
  * @retval         USART
  */
 USARTInstance *USARTRegister(USART_Init_Config_s *USART_config) {
+  if (USART_config == NULL || USART_config->usart_handle == NULL) {
+    return NULL;
+  }
   if (idx >= DEVICE_USART_CNT) //
   {
-    while (1)
-      LOGERROR("[bsp_usart] USART exceed max instance count!");
+    LOGERROR("[bsp_usart] USART exceed max instance count!");
+    return NULL;
   }
   for (uint8_t i = 0; i < idx; i++) // check
   {
     if (usart_instance[i]->usart_handle == USART_config->usart_handle) {
-      while (1)
-        LOGERROR("[bsp_usart] USART instance already registered!");
+      return usart_instance[i];
     }
   }
   USARTInstance *usart = &usart_pool[idx];
   memset(usart, 0, sizeof(USARTInstance));
   usart->usart_handle = USART_config->usart_handle;
-  usart->recv_buff_size = USART_config->recv_buff_size;
+  usart->recv_buff_size =
+      (USART_config->recv_buff_size == 0U ||
+       USART_config->recv_buff_size > USART_RXBUFF_LIMIT)
+          ? USART_RXBUFF_LIMIT
+          : USART_config->recv_buff_size;
   usart->module_callback = USART_config->module_callback;
   usart_instance[idx++] = usart;
   USARTServiceInit(usart);
@@ -81,9 +92,13 @@ USARTInstance *USARTRegister(USART_Init_Config_s *USART_config) {
  * @note protection，
  */
 static void USART_StartTx(USARTInstance *_instance) {
+  if (_instance == NULL || _instance->usart_handle == NULL) {
+    return;
+  }
   if (_instance->tx_head == _instance->tx_tail) {
     // buffer empty
     _instance->is_transmitting = 0;
+    _instance->last_tx_len = 0;
     return;
   }
   // Determine contiguous length
@@ -95,10 +110,24 @@ static void USART_StartTx(USARTInstance *_instance) {
   } else {
     len = USART_TXBUFF_SIZE - tail;
   }
+
+  HAL_StatusTypeDef status = HAL_ERROR;
   _instance->is_transmitting = 1;
   _instance->last_tx_len = len; // Record length
-  HAL_UART_Transmit_DMA(_instance->usart_handle, &_instance->tx_buff[tail],
-                        len);
+  if (_instance->tx_mode == USART_TRANSFER_IT) {
+    status = HAL_UART_Transmit_IT(_instance->usart_handle,
+                                  &_instance->tx_buff[tail], len);
+  } else if (_instance->tx_mode == USART_TRANSFER_DMA &&
+             _instance->usart_handle->hdmatx != NULL) {
+    status = HAL_UART_Transmit_DMA(_instance->usart_handle,
+                                   &_instance->tx_buff[tail], len);
+  }
+
+  if (status != HAL_OK) {
+    /* Leave queued bytes intact so a later send call can retry them. */
+    _instance->is_transmitting = 0;
+    _instance->last_tx_len = 0;
+  }
 }
 /**
  * @brief          USART (mode)
@@ -113,26 +142,39 @@ static void USART_StartTx(USARTInstance *_instance) {
  */
 void USARTSend(USARTInstance *_instance, uint8_t *send_buf, uint16_t send_size,
                USART_TRANSFER_MODE mode) {
+  if (_instance == NULL || _instance->usart_handle == NULL ||
+      send_buf == NULL || send_size == 0U) {
+    return;
+  }
   if (mode == USART_TRANSFER_BLOCKING) {
     HAL_UART_Transmit(_instance->usart_handle, send_buf, send_size, 100);
     return;
   }
-  // DMA/IT Mode: Push to Ring Buffer
-  // Simple push logic (can be optimized with memcpy)
-  for (uint16_t i = 0; i < send_size; i++) {
-    uint16_t next_head = (_instance->tx_head + 1) % USART_TXBUFF_SIZE;
-    if (next_head != _instance->tx_tail) {
+  if (mode != USART_TRANSFER_IT && mode != USART_TRANSFER_DMA) {
+    return;
+  }
+
+  /* The producer can run in a task or an ISR while the completion callback
+   * consumes the same ring. Publish the bytes, head, mode and kickoff as one
+   * interrupt-atomic operation so the callback cannot observe a partial
+   * enqueue. */
+  CRITICAL_SECTION_BEGIN();
+  if (_instance->is_transmitting == 0U || _instance->tx_mode == mode) {
+    _instance->tx_mode = mode;
+    for (uint16_t i = 0U; i < send_size; ++i) {
+      uint16_t next_head =
+          (uint16_t)((_instance->tx_head + 1U) % USART_TXBUFF_SIZE);
+      if (next_head == _instance->tx_tail) {
+        break;
+      }
       _instance->tx_buff[_instance->tx_head] = send_buf[i];
       _instance->tx_head = next_head;
-    } else {
-      // Buffer overflow
-      break;
+    }
+    if (_instance->is_transmitting == 0U) {
+      USART_StartTx(_instance);
     }
   }
-  // If IDLE, trigger transmission
-  if (_instance->is_transmitting == 0) {
-    USART_StartTx(_instance);
-  }
+  CRITICAL_SECTION_END();
 }
 /**
  * @brief          ,IT/DMA
@@ -140,10 +182,8 @@ void USARTSend(USARTInstance *_instance, uint8_t *send_buf, uint16_t send_size,
  * @retval         ready:1-,0-
  */
 uint8_t USARTIsReady(USARTInstance *_instance) {
-  if (_instance->usart_handle->gState | HAL_UART_STATE_BUSY_TX)
-    return 0;
-  else
-    return 1;
+  return _instance != NULL && _instance->usart_handle != NULL &&
+         _instance->usart_handle->gState == HAL_UART_STATE_READY;
 }
 /**
  * @brief
@@ -158,20 +198,29 @@ uint8_t USARTIsReady(USARTInstance *_instance) {
  * @retval         note
  */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
+  if (huart == NULL) {
+    return;
+  }
   for (uint8_t i = 0; i < idx;
        ++i) { // find the instance which is being handled
     if (huart ==
         usart_instance[i]
             ->usart_handle) { // call the callback function if it is not NULL
+      uint16_t received =
+          (Size < usart_instance[i]->recv_buff_size)
+              ? Size
+              : usart_instance[i]->recv_buff_size;
       if (usart_instance[i]->module_callback != NULL) {
         usart_instance[i]->module_callback();
-        memset(usart_instance[i]->recv_buff, 0,
-               Size); // buffer,
       }
-      HAL_UARTEx_ReceiveToIdle_DMA(usart_instance[i]->usart_handle,
-                                   usart_instance[i]->recv_buff,
-                                   usart_instance[i]->recv_buff_size);
-      __HAL_DMA_DISABLE_IT(usart_instance[i]->usart_handle->hdmarx, DMA_IT_HT);
+      memset(usart_instance[i]->recv_buff, 0, received); // buffer,
+      if (usart_instance[i]->usart_handle->hdmarx != NULL) {
+        HAL_UARTEx_ReceiveToIdle_DMA(usart_instance[i]->usart_handle,
+                                     usart_instance[i]->recv_buff,
+                                     usart_instance[i]->recv_buff_size);
+        __HAL_DMA_DISABLE_IT(usart_instance[i]->usart_handle->hdmarx,
+                            DMA_IT_HT);
+      }
       return; // break the loop
     }
   }
@@ -185,12 +234,18 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
  * @retval         note
  */
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+  if (huart == NULL) {
+    return;
+  }
   for (uint8_t i = 0; i < idx; ++i) {
     if (huart == usart_instance[i]->usart_handle) {
-      HAL_UARTEx_ReceiveToIdle_DMA(usart_instance[i]->usart_handle,
-                                   usart_instance[i]->recv_buff,
-                                   usart_instance[i]->recv_buff_size);
-      __HAL_DMA_DISABLE_IT(usart_instance[i]->usart_handle->hdmarx, DMA_IT_HT);
+      if (usart_instance[i]->usart_handle->hdmarx != NULL) {
+        HAL_UARTEx_ReceiveToIdle_DMA(usart_instance[i]->usart_handle,
+                                     usart_instance[i]->recv_buff,
+                                     usart_instance[i]->recv_buff_size);
+        __HAL_DMA_DISABLE_IT(usart_instance[i]->usart_handle->hdmarx,
+                            DMA_IT_HT);
+      }
       LOGWARNING(
           "[bsp_usart] USART error callback triggered, instance idx [%d]", i);
       return;
@@ -201,21 +256,23 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
  * @brief DMA done
  */
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
+  if (huart == NULL) {
+    return;
+  }
   for (uint8_t i = 0; i < idx; ++i) {
     if (huart == usart_instance[i]->usart_handle) {
       USARTInstance *ins = usart_instance[i];
-      // Advance tail based on what was transmitted
-      uint16_t head = ins->tx_head;
-      uint16_t tail = ins->tx_tail;
-      uint16_t len;
-      if (head > tail) {
-        len = head - tail;
-      } else {
-        len = USART_TXBUFF_SIZE - tail;
+      CRITICAL_SECTION_BEGIN();
+      /* Ignore a spurious completion rather than advancing the consumer past
+       * bytes which were never accepted by HAL. */
+      if (ins->is_transmitting != 0U && ins->last_tx_len != 0U) {
+        ins->tx_tail = (uint16_t)((ins->tx_tail + ins->last_tx_len) %
+                                  USART_TXBUFF_SIZE);
+        ins->is_transmitting = 0U;
+        ins->last_tx_len = 0U;
       }
-      ins->tx_tail = (ins->tx_tail + len) % USART_TXBUFF_SIZE;
-      // Trigger next batch
       USART_StartTx(ins);
+      CRITICAL_SECTION_END();
       return;
     }
   }

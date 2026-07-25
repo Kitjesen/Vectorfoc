@@ -39,7 +39,7 @@ typedef struct {
   void (*update)(void);
   /**
    * @brief getposition
-   * @return position [rad],  [0, 2π]
+   * @return multi-turn mechanical position [rad], relative to boot zero
    */
   float (*get_position)(void);
   /**
@@ -71,15 +71,18 @@ typedef struct {
   float (*get_offset)(void);
 } HAL_Encoder_Interface_t;
 /**
- * @brief encoder
+ * @brief Deprecated runtime registration entry; always returns -1.
+ *
+ * Select an encoder through the PositionSensor board/build configuration.
  */
 int MHAL_Encoder_Register(const HAL_Encoder_Interface_t *interface);
 int MHAL_Encoder_Init(void);
-int MHAL_Encoder_Update(void);
+int MHAL_Encoder_Update(uint8_t pole_pairs);
 float MHAL_Encoder_GetPosition(void);
 float MHAL_Encoder_GetVelocity(void);
 float MHAL_Encoder_GetElectricalAngle(uint8_t pole_pairs);
 float MHAL_Encoder_GetElectricalVelocity(uint8_t pole_pairs);
+int MHAL_Encoder_ZeroPosition(void);
 int MHAL_Encoder_SetOffset(float offset);
 float MHAL_Encoder_GetOffset(void);
 #ifdef __cplusplus

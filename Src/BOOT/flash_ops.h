@@ -40,13 +40,6 @@ void Flash_Lock(void);
 BootStatus_t Flash_EraseAppArea(void);
 
 /**
- * @brief 擦除指定页
- * @param page_num 页号
- * @return BOOT_OK 成功
- */
-BootStatus_t Flash_ErasePage(uint32_t page_num);
-
-/**
  * @brief 写入数据到 Flash
  * @param addr 目标地址 (必须 8 字节对齐)
  * @param data 数据指针
@@ -72,12 +65,28 @@ void Flash_ReadData(uint32_t addr, uint8_t *data, uint32_t len);
 uint32_t Flash_CalcCRC32(const uint8_t *data, uint32_t len);
 
 /**
+ * @brief Continue an IEEE CRC32 calculation.
+ * @param crc Current non-finalized CRC state
+ * @param data Data pointer
+ * @param len Length
+ * @return Updated non-finalized CRC state
+ */
+uint32_t Flash_CRC32Update(uint32_t crc, const uint8_t *data, uint32_t len);
+
+/**
  * @brief 计算 Flash 区域的 CRC32
  * @param addr 起始地址
  * @param len 长度
  * @return CRC32 值
  */
 uint32_t Flash_CalcFlashCRC32(uint32_t addr, uint32_t len);
+
+/**
+ * @brief Calculate the packaged app CRC over vector table and post-header payload.
+ * @param payload_len Header payload length, excluding the 32-byte app header
+ * @return CRC32 value, or 0 when the declared range is invalid
+ */
+uint32_t Flash_CalcAppImageCRC32(uint32_t payload_len);
 
 /**
  * @brief 检查地址是否在 App 区域内

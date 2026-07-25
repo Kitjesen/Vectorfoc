@@ -18,25 +18,9 @@
  */
 #include "fsm.h"
 #include "motor.h"
-#include "config.h"   // 间接包含 board_config.h → HW_POSITION_SENSOR_MODE / HW_MOTOR_HAL_HANDLE
+#include "config.h"
 #include "foc/foc_algorithm.h"
 #include "motor_hal_api.h"
-/* 根据位置传感器类型引入对应驱动头文件及实例声明 */
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-#include "hall_encoder.h"
-extern Motor_HAL_Handle_t xstar_hal_handle;
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
-#include "abz_encoder.h"
-extern Motor_HAL_Handle_t xstar_hal_handle;
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-#include "tmr3109_encoder.h"
-extern Motor_HAL_Handle_t g431_hal_handle;
-extern TMR3109_Handle_t tmr3109_encoder_data;
-#else  /* HW_POSITION_SENSOR_MT6816（默认）*/
-#include "mt6816_encoder.h"
-extern Motor_HAL_Handle_t g431_hal_handle;
-extern MT6816_Handle_t encoder_data;
-#endif
 extern Motor_HAL_Handle_t HW_MOTOR_HAL_HANDLE;
 /* DS402state */
 StateMachine g_ds402_state_machine;
@@ -57,15 +41,6 @@ MOTOR_DATA motor_data = {
     .components =
         {
             .hal = &HW_MOTOR_HAL_HANDLE,
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_HALL
-            .encoder = &hall_data,
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_ABZ
-            .encoder = &abz_data,
-#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-            .encoder = &tmr3109_encoder_data,
-#else  /* HW_POSITION_SENSOR_MT6816（默认）*/
-            .encoder = &encoder_data,
-#endif
         },
     .state =
         {
@@ -146,7 +121,6 @@ MOTOR_DATA motor_data = {
             .max_iout = DEFAULT_POS_MAX_IOUT,
         },
     // New Architecture Initialization
-    .algo_state = {0},
     .algo_config =
         {
             .Rs = DEFAULT_RS,
@@ -167,8 +141,6 @@ MOTOR_DATA motor_data = {
             .deadtime_i_thresh = 0.2f,           /* 电流过零阈值 [A]，ADC 噪声的 2~3 倍 */
             .deadtime_Vdiode = 0.7f,             /* 体二极管压降 [V] */
         },
-    .algo_input = {0},
-    .algo_output = {0},
     // [FIX] 初始化 LADRC 配置
     .ladrc_config =
         {
@@ -177,7 +149,6 @@ MOTOR_DATA motor_data = {
             .b0 = DEFAULT_LADRC_B0,
             .max_output = DEFAULT_LADRC_MAX_OUT,
         },
-    .ladrc_state = {0},
     .ladrc_enable = (float)DEFAULT_LADRC_ENABLE,
     // [FIX] 初始化高级控制参数
     .advanced =
@@ -190,6 +161,5 @@ MOTOR_DATA motor_data = {
             .cogging_comp_enabled = 0.0f,
             .cogging_calib_request = 0.0f,
         },
-    .calib_ctx = {0},
     .params_updated = true,
 };

@@ -10,17 +10,19 @@ VectorFOC 支持通过 USB-CDC 进行 OTA (Over-The-Air) 固件升级。系统�
 ## Flash 布局
 
 ```
-STM32G4 (256KB Flash)
+STM32G431CB (128KB Flash)
 ┌─────────────────────────────────────────────────────────┐
 │ 0x08000000 - 0x08003FFF │ Bootloader (16KB, 8 pages)    │
 ├─────────────────────────────────────────────────────────┤
-│ 0x08004000 - 0x0803BFFF │ Application (224KB, 112 pages)│
+│ 0x08004000 - 0x0801EFFF │ Application (108KB, 54 pages) │
 ├─────────────────────────────────────────────────────────┤
-│ 0x0803C000 - 0x0803FFFF │ Config/Params (16KB, 8 pages) │
+│ 0x0801F000 - 0x0801FFFF │ Config/Params (4KB, 2 pages)  │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ## 启动流程
+
+正常启动路径只做时钟、GPIO 和应用有效性检查；它不会初始化 USB CDC。只有按键/升级标志/无有效 App 进入升级模式后，`Boot_EnterUpgradeMode()` 才初始化 USB。这使跳转到 App 不会遗留已启动的 USB 外设状态。
 
 ```
 ┌──────────────┐
@@ -77,6 +79,7 @@ STM32G4 (256KB Flash)
 | 6 | BOOT_ERR_TIMEOUT - 超时 |
 | 7 | BOOT_ERR_INVALID_CMD - 无效命令 |
 | 8 | BOOT_ERR_APP_INVALID - App 无效 |
+| 9 | BOOT_ERR_RX_OVERFLOW - USB 接收队列溢出；当前升级事务已中止，主机应重新从命令阶段开始 |
 
 ## 使用方法
 
@@ -133,6 +136,8 @@ python scripts/ota_upload.py VectorFoc.bin --port COM3
 # 6. 发送 "boot_reboot" 重启
 ```
 
+上传脚本会在 `boot_erase` 之前发送 `boot_info`，并拒绝以下情况：设备报告的 App 起始地址不是 `0x08004000`、App 区域大小无效，或镜像经 8 字节对齐后超过该区域。因此不会因为主机脚本与设备布局不匹配而先擦除应用区。
+
 ### 5. 强制进入 Bootloader
 
 如果 App 损坏无法响应 `boot_enter`：
@@ -178,6 +183,8 @@ typedef struct {
 
 Header 位于 `0x08004200` (向量表后 512 字节)。
 
+Header 是当前可启动性校验的一部分：缺失或损坏 Header 的镜像不会作为“旧格式 App”启动。Bootloader 会校验栈指针、Reset Handler、Magic、保留字段、payload 大小和 CRC32。
+
 ## 注意事项
 
 1. **Bootloader 大小限制**: Bootloader 必须小于 16KB
@@ -185,6 +192,8 @@ Header 位于 `0x08004200` (向量表后 512 字节)。
 3. **向量表重映射**: App 启动时会重映射向量表到 0x08004000
 4. **升级标志**: 使用 RAM 末尾 16 字节存储升级标志，复位不清除
 5. **CRC 校验**: 使用 IEEE 802.3 CRC32 多项式
+
+CRC32 只能检测偶发传输/写入损坏，不能认证镜像来源。当前实现没有签名校验、上传端认证、单调版本或回滚策略，不能称为 secure boot 或安全 OTA。生产场景应增加签名 manifest、公钥验签、防回滚策略，并配置合适的 STM32 RDP/WRP 与调试/USB/CAN 暴露策略。
 
 ## 故障排除
 
@@ -196,6 +205,7 @@ Header 位于 `0x08004200` (向量表后 512 字节)。
 - 检查 USB 连接
 - 确认固件文件正确
 - 查看返回的错误码
+- 确认 `boot_info` 返回的 App 起始地址和大小与目标硬件匹配；布局不匹配时上传工具会在擦除前停止。
 
 ### App 无法启动
 - 检查 App 链接脚本是否正确 (起始地址 0x08004000)
