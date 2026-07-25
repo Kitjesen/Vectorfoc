@@ -14,6 +14,8 @@
 - 补齐 X-STAR 的 170 MHz/20 kHz PWM 周期与 ADC 触发余量板级契约，并让共享定时器和 X-STAR BSP 使用同一组常量。
 - X-STAR Motor HAL 主机测试直接复用生产 `motor_adc.h` 的类型与结构体布局，消除通用 mock 遮蔽造成的 Linux/Windows 编译失败及潜在 ABI 越界。
 - 删除已弃用的 X-STAR 专用板配置兼容入口，BSP、Hall/ABZ 传感器统一通过 `board_config.h` 选择板级实现。
+- 为 X-STAR Hall 实现补回显式板级编译边界，避免通用源码收集在 Vector 磁编码器构建中引用不存在的 Hall 引脚。
+- `hal_encoder.c` 显式包含 `NULL` 的标准定义，消除 GCC/Linux 对间接头文件包含顺序的依赖。
 
 ### 文档
 

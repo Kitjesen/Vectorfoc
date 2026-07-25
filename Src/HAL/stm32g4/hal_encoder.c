@@ -22,6 +22,8 @@
 #include "platform.h"
 #include "position_sensor.h"
 
+#include <stddef.h>
+
 static int MHAL_Encoder_ReadData(Motor_HAL_EncoderData_t *data) {
   PositionSensorSample_t sample;
   if (data == NULL ||

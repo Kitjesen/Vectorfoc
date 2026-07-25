@@ -31,6 +31,9 @@
  *       无需修改本文件其余逻辑。
  */
 #include "hall_encoder.h"
+
+#ifdef BOARD_XSTAR
+
 #include "board_config.h"
 #include "hal_abstraction.h"  /* HAL_GetMicroseconds() */
 #include <math.h>
@@ -337,3 +340,5 @@ const Motor_HAL_EncoderInterface_t g_hall_encoder_interface = {
     .set_offset = Hall_HAL_SetOffset,
     .get_offset = Hall_HAL_GetOffset,
 };
+
+#endif /* BOARD_XSTAR */
