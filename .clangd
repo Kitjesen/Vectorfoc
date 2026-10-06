@@ -15,42 +15,30 @@ CompileFlags:
     - -mthumb
     - -mfpu=fpv4-sp-d16
     - -mfloat-abi=hard
-    - -ILib/Core/Inc
-    - -ILib/Drivers/STM32G4xx_HAL_Driver/Inc
-    - -ILib/Drivers/CMSIS/Device/ST/STM32G4xx/Include
-    - -ILib/Drivers/CMSIS/Include
-    - -ILib/Middlewares/Third_Party/FreeRTOS/Source/include
-    - -ILib/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS
-    - -ILib/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
-    - -ISrc/config
-    - -ISrc/APP
-    - -ISrc/APP/init
-    - -ISrc/APP/rtos
-    - -ISrc/APP/isr
-    - -ISrc/HAL/interface
-    - -ISrc/HAL/stm32g4
-    - -ISrc/HAL/bsp
-    - -ISrc/HAL/encoder
-    - -ISrc/ALGO
-    - -ISrc/ALGO/motor
-    - -ISrc/ALGO/control
-    - -ISrc/ALGO/foc
-    - -ISrc/ALGO/pid
-    - -ISrc/ALGO/observer
-    - -ISrc/ALGO/trajectory
-    - -ISrc/COMM
-    - -ISrc/COMM/manager
-    - -ISrc/COMM/executor
-    - -ISrc/COMM/protocol
-    - -ISrc/COMM/protocol/vector
-    - -ISrc/COMM/protocol/canopen
-    - -ISrc/COMM/protocol/mit
-    - -ISrc/COMM/transport
-    - -ISrc/UI
-    - -ISrc/UI/parameter
-    - -ISrc/UI/vofa
-    - -ISrc/UI/led
-    - -ISrc/UI/error
+    - -Iplatform/Core/Inc
+    - -Iplatform/Drivers/STM32G4xx_HAL_Driver/Inc
+    - -Iplatform/Drivers/STM32G4xx_HAL_Driver/Inc/Legacy
+    - -Iplatform/Drivers/CMSIS/Device/ST/STM32G4xx/Include
+    - -Iplatform/Drivers/CMSIS/Include
+    - -Iplatform/Middlewares/Third_Party/FreeRTOS/Source/include
+    - -Iplatform/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
+    - -Iplatform/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS
+    - -Iplatform/Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+    - -Iplatform/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
+    - -Iplatform/USB_Device
+    - -Iplatform/USB_Device/App
+    - -Iplatform/USB_Device/Target
+    - -Isrc/config
+    - -Isrc/app
+    - -Isrc/boot
+    - -Isrc/hal
+    - -Isrc/hal/bsp
+    - -Isrc/hal/encoder
+    - -Isrc
+    - -Isrc/motor
+    - -Isrc/foc
+    - -Isrc/safety
+    - -Isrc/comm
 Diagnostics:
   UnusedIncludes: None
   MissingIncludes: None

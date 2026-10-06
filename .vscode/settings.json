@@ -7,7 +7,7 @@
     "C_Cpp.default.intelliSenseMode": "gcc-arm",
     "C_Cpp.default.cStandard": "c11",
     "cmake.configureOnOpen": false,
-    "cmake.buildDirectory": "${workspaceFolder}/build",
+    "cmake.buildDirectory": "${workspaceFolder}/build/arm",
     "cmake.generator": "Ninja",
     "terminal.integrated.env.windows": {
         "PATH": "${env:PATH}"

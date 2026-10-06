@@ -13,7 +13,7 @@ GitHub Releases 是项目的版本发布功能，可以：
 
 1. **创建并推送 tag**：
    ```bash
-   git tag -a v1.0.0 -m "Release version 1.0.0"
+   git tag -a v1.0.0 -m "Release firmware_version 1.0.0"
    git push origin v1.0.0
    ```
 

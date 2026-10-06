@@ -2,13 +2,16 @@
 build/
 build-*/
 build_*/
-test/build/
-test/build-*/
+cmake-build-*/
+out/
+tests/build/
+tests/build-*/
+.ruff_cache/
 
 # Keil / MDK-ARM
-MDK-ARM/DebugConfig/
-MDK-ARM/VectorFOC/
-MDK-ARM/.vscode/
+platform/keil/DebugConfig/
+platform/keil/VectorFOC/
+platform/keil/.vscode/
 *.uvguix.*
 *.uvoptx
 
@@ -32,7 +35,9 @@ MDK-ARM/.vscode/
 *.ilk
 *.exp
 *.elf
+*.axf
 *.bin
 *.hex
 *.map
 *.lst
+compile_commands.json

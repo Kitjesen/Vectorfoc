@@ -1,5 +1,7 @@
 # VectorFOC OTA Bootloader
 
+> 2026-09-27 目录更新：本文的构建入口已按当前目录调整；通信协议、Flash 布局、引脚与升级行为仍是既有设计说明，未由本次迁移进行实板验证。复用前对照 `src/boot/`、当前板型和 [Vector 调试记录](../../docs/DEBUGGING.md)。下列命令均从 `firmware/` 根目录执行。
+
 ## 概述
 
 VectorFOC 支持通过 USB-CDC 进行 OTA (Over-The-Air) 固件升级。系统包含两个独立的固件：
@@ -8,6 +10,10 @@ VectorFOC 支持通过 USB-CDC 进行 OTA (Over-The-Air) 固件升级。系统�
 - **Application**: 主应用程序，包含 FOC 控制逻辑
 
 ## Flash 布局
+
+下图对应当前固件的 bootloader/application 布局，应用链接脚本为
+`platform/stm32g431xx_app.ld`，起址 `0x08004000`。布局中的容量仍须与
+实际 MCU 核对。
 
 ```
 STM32G4 (256KB Flash)
@@ -83,25 +89,23 @@ STM32G4 (256KB Flash)
 ### 1. 编译 Bootloader
 
 ```bash
-# 创建 Bootloader 构建目录
-mkdir build_boot && cd build_boot
-
-# 配置 (使用 Bootloader CMakeLists)
-cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/gcc-arm-none-eabi.cmake \
-      -DCMAKE_BUILD_TYPE=Release \
-      ..
-
-# 编译
-make -j4
+# 使用独立 Bootloader 入口；toolchain 路径相对 cmake/bootloader 源目录
+cmake -S cmake/bootloader -B build/boot -G Ninja \
+  --toolchain ../gcc-arm-none-eabi.cmake \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build/boot --parallel 4
 ```
+
+2026-09-27 离线检查：上述入口可配置，源文件编译完成，但链接报告 Flash 使用 20032 B，超过当前 16 KiB 分区 3648 B。因此尚未生成可用于刷写的有效 bootloader 固件；需先解决容量与分区配置问题，再验证升级链路。
 
 ### 2. 编译 Application
 
 ```bash
-# 使用默认 CMakeLists (已配置为 App 模式)
-mkdir build && cd build
-cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/gcc-arm-none-eabi.cmake ..
-make -j4
+# 使用应用程序入口；板型与编译选项见 BUILD_GUIDE.md
+cmake -S . -B build/arm -G Ninja \
+  --toolchain cmake/gcc-arm-none-eabi.cmake \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build/arm --parallel 4
 ```
 
 ### 3. 首次烧录
@@ -110,10 +114,10 @@ make -j4
 
 ```bash
 # 烧录 Bootloader (0x08000000)
-st-flash write VectorFoc_Bootloader.bin 0x08000000
+st-flash write build/boot/VectorFoc_Bootloader.bin 0x08000000
 
 # 烧录 Application (0x08004000)
-st-flash write VectorFoc.bin 0x08004000
+st-flash write build/arm/VectorFoc.bin 0x08004000
 ```
 
 ### 4. OTA 升级
@@ -122,7 +126,7 @@ st-flash write VectorFoc.bin 0x08004000
 
 ```bash
 # 使用 Python 脚本
-python scripts/ota_upload.py VectorFoc.bin --port COM3
+python scripts/ota_upload.py build/arm/VectorFoc.bin --port COM3
 
 # 或手动发送命令
 # 1. 发送 "boot_enter" 进入 Bootloader
@@ -144,7 +148,7 @@ python scripts/ota_upload.py VectorFoc.bin --port COM3
 ## 文件结构
 
 ```
-Src/BOOT/
+src/boot/
 ├── boot_config.h      # 配置 (地址、Magic Number 等)
 ├── bootloader.c       # Bootloader 主逻辑
 ├── bootloader.h
@@ -153,7 +157,7 @@ Src/BOOT/
 ├── boot_protocol.c    # 升级协议解析
 └── boot_protocol.h
 
-Lib/
+platform/
 ├── stm32g431xx_bootloader.ld  # Bootloader 链接脚本
 └── stm32g431xx_app.ld         # Application 链接脚本
 
@@ -168,7 +172,7 @@ Application 在 Flash 中包含一个 Header 结构，用于 Bootloader 验证�
 ```c
 typedef struct {
     uint32_t magic;         // 0x56464F43 ("VFOC")
-    uint32_t version;       // (major<<16) | (minor<<8) | patch
+    uint32_t firmware_version;       // (major<<16) | (minor<<8) | patch
     uint32_t size;          // App 大小
     uint32_t crc32;         // CRC32 校验
     uint32_t build_time;    // 构建时间戳

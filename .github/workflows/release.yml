@@ -28,22 +28,22 @@ jobs:
 
       - name: Build firmware
         run: |
-          mkdir -p build
-          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
-          cmake --build build -j2
+          mkdir -p build/arm
+          cmake -S . -B build/arm -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
+          cmake --build build/arm -j2
 
-      - name: Extract version from tag
+      - name: Extract firmware_version from tag
         id: get_version
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "firmware_version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
       - name: Generate release notes
         id: release_notes
         run: |
           # 简单的 changelog 生成（可以后续改进）
-          echo "## VectorFOC ${{ steps.get_version.outputs.version }}" > release_notes.md
+          echo "## VectorFOC ${{ steps.get_version.outputs.firmware_version }}" > release_notes.md
           echo "" >> release_notes.md
           echo "### Changes" >> release_notes.md
           git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 HEAD^)..HEAD >> release_notes.md || echo "- Initial release" >> release_notes.md
@@ -52,9 +52,9 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            build/VectorFoc.elf
-            build/VectorFoc.bin
-            build/VectorFoc.hex
+            build/arm/VectorFoc.elf
+            build/arm/VectorFoc.bin
+            build/arm/VectorFoc.hex
           body_path: release_notes.md
           draft: false
           prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}

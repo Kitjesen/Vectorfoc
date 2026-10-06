@@ -1,0 +1,291 @@
+// Copyright 2024-2026 VectorFOC Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @file motor_runtime.h
+ * @brief motor
+ *
+ * motorphase、state。
+ */
+#ifndef MOTOR_RUNTIME_H
+#define MOTOR_RUNTIME_H
+#include "calibration_state.h"
+#include "common.h"
+#include "algorithm/foc_current_loop.h"
+#include "drive_state_machine.h"
+#include "algorithm/ladrc_controller.h"
+#include "algorithm/pid_controller.h"
+#include "board_configuration.h"
+#include "control_mode.h"
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
+#include "mt6816_encoder.h"
+#elif HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#include "tmr3109_encoder.h"
+#endif
+#include <math.h>
+/**
+ * @brief  CAN ID
+ */
+/* CANconfig */
+extern uint8_t g_can_id;
+extern uint8_t g_can_baudrate;
+extern uint8_t g_protocol_type;
+extern uint32_t g_can_timeout_ms;
+/* config */
+extern uint8_t g_zero_sta;
+extern float g_add_offset;
+extern uint8_t g_damper_enable;
+extern uint8_t g_run_mode;
+/**
+ * @brief mode
+ *
+ * motormode，open loop、、speed/velocity、positionmode。
+ */
+/**
+ * @brief calibrationstate
+ *
+ * motorcalibrationstate。
+ */
+typedef enum {
+  SUB_STATE_IDLE = 0,  /**< idlestate */
+  CURRENT_CALIBRATING, /**< currentcalibrationstate */
+  RSLS_CALIBRATING,    /**< calibrationstate */
+  FLUX_CALIBRATING,    /**< fluxcalibrationstate */
+} SUB_STATE;
+/**
+ * @brief calibrationstatestate
+ */
+typedef enum {
+  CS_STATE_IDLE = 0,
+  CS_MOTOR_R_START,     /**< calibration */
+  CS_MOTOR_R_LOOP,      /**< calibration */
+  CS_MOTOR_R_END,       /**< calibration */
+  CS_MOTOR_L_START,     /**< calibration */
+  CS_MOTOR_L_LOOP,      /**< calibration */
+  CS_MOTOR_L_END,       /**< calibration */
+  CS_DIR_PP_START,      /**< /pole pairscalibration */
+  CS_DIR_PP_LOOP,       /**< /pole pairscalibration */
+  CS_DIR_PP_END,        /**< /pole pairscalibration */
+  CS_ENCODER_START,     /**< encodercalibration */
+  CS_ENCODER_CW_LOOP,   /**< encoder */
+  CS_ENCODER_CCW_LOOP,  /**< encoder */
+  CS_ENCODER_END,       /**< encodercalibration */
+  CS_FLUX_START,        /**< fluxcalibration */
+  CS_FLUX_LOOP,         /**< fluxcalibration */
+  CS_FLUX_END,          /**< fluxcalibration */
+  CS_REPORT_OFFSET_LUT, /**< offset */
+} CS_STATE;
+/**
+ * @brief motorrunningstatemode
+ */
+typedef enum {
+  STATE_MODE_IDLE = 0,  /**< idlemode */
+  STATE_MODE_DETECTING, /**< mode */
+  STATE_MODE_RUNNING,   /**< runningmode */
+  STATE_MODE_GUARD,     /**< protectionmode */
+} STATE_MODE;
+/**
+ * @brief faultstate
+ * @deprecated  Safety_GetActiveFaultBits() getfault
+ * @note fault，
+ */
+typedef enum {
+  FAULT_STATE_NORMAL = 0,
+  FAULT_STATE_OVER_CURRENT,
+  FAULT_STATE_OVER_VOLTAGE,
+  FAULT_STATE_UNDER_VOLTAGE,
+  FAULT_STATE_OVER_TEMPERATURE,
+  FAULT_STATE_SPEEDING,
+  FAULT_STATE_ENCODER_LOSS,
+} FAULT_STATE;
+/**
+ * @brief motor：HAL encoder
+ */
+typedef struct {
+  void *encoder;                 /**< encoder (calibration) */
+} MOTOR_COMPONENTS;
+/**
+ * @brief 访问具体编码器句柄（标定代码使用）
+ * @note  仅在 HW_POSITION_SENSOR_MODE 为 MT6816 或 TMR3109 时有效
+ */
+#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
+#define ENC(m) ((TMR3109_Handle_t *)((m)->components.encoder))
+#else
+#define ENC(m) ((MT6816_Handle_t *)((m)->components.encoder))
+#endif
+/**
+ * @brief motorparam
+ */
+typedef struct {
+  float Rs;       /**<  [Ohm] */
+  float Ls;       /**<  [H] */
+  float flux;     /**< flux [V·s] */
+  int pole_pairs; /**< pole pairs */
+} MOTOR_PARAMETERS;
+/**
+ * @brief motorparam
+ */
+typedef struct {
+  float inertia;              /**< [A/(turn/s^2)] */
+  float torque_ramp_rate;     /**<  [Nm/s] */
+  float vel_ramp_rate;        /**< speed/velocity [(turn/s)/s] */
+  float traj_vel;             /**< speed/velocity [turn/s] */
+  float traj_accel;           /**< speed/velocity [(turn/s)/s] */
+  float traj_decel;           /**< speed/velocity [(turn/s)/s] */
+  float vel_limit;            /**< speed/velocitylimit [turn/s] */
+  float torque_const;         /**<  [Nm/A] */
+  float torque_limit;         /**< limit [Nm] */
+  float current_limit;        /**< currentlimit [A] */
+  float voltage_limit;        /**< voltagelimit [V] */
+  float current_ctrl_p_gain;  /**< () current P gain */
+  float current_ctrl_i_gain;  /**< () current I gain */
+  int current_ctrl_bandwidth; /**< current [rad/s] (100~2000) */
+  float input_position; /**< 位置设定值 [turn] — 圈数，与 feedback.position 同单位 */
+  float input_velocity; /**< 速度设定值 [turn/s] — 圈/秒，与 feedback.velocity 同单位 */
+  float input_torque;   /**< 力矩设定值 [Nm] */
+  float input_current;  /**< 电流设定值 [A] */
+  float pos_setpoint;    /**< 位置设定点 [turn] */
+  float vel_setpoint;    /**< 速度设定点 [turn/s] */
+  float torque_setpoint; /**< 力矩设定点 [Nm] */
+  /* MIT 阻抗控制参数
+   * 注意：mit_kp/kd 的单位是 Nm/rad 和 Nm·s/rad（弧度制）。
+   * control_dispatcher.c 中读取 feedback.position/velocity（圈数）后乘 2π 还原为弧度，
+   * 再与 mit_pos_des/vel_des（弧度）做差，保证量纲一致。 */
+  float mit_kp;      /**< MIT 位置刚度 [Nm/rad] */
+  float mit_kd;      /**< MIT 阻尼 [Nm·s/rad] */
+  float mit_pos_des; /**< MIT 期望位置 [rad] */
+  float mit_vel_des; /**< MIT 期望速度 [rad/s] */
+  volatile bool input_updated; /**< inputparamupdate */
+} MOTOR_CONTROLLER;
+/**
+ * @brief motorstate
+ */
+typedef struct {
+  STATE_MODE State_Mode;     /**< motorstate */
+  CONTROL_MODE Control_Mode; /**< mode */
+  SUB_STATE Sub_State;       /**< calibrationstate */
+  CS_STATE Cs_State;         /**< calibrationstate */
+  FAULT_STATE Fault_State;   /**< @deprecated faultstate（，） */
+} MOTOR_STATE;
+/**
+ * @brief motorfeedback
+ */
+typedef struct {
+  float position;          /**< 机械位置 [turn] — 圈数，0~1 per rev；控制层用时乘 2π 得 [rad] */
+  float velocity;          /**< 机械速度 [turn/s] — 圈/秒；控制层用时乘 2π 得 [rad/s] */
+  float phase_angle;       /**< 电角度 [rad]，范围 (-π, π] */
+  float temperature;       /**< 温度 [degC] */
+  float observer_angle;    /**< SMO 估计电角度 [rad] */
+  float observer_velocity; /**< SMO 估计速度 [rad/s] */
+} MOTOR_FEEDBACK;
+/**
+ * @brief motor
+ * 、state、param、、feedbackPID。
+ */
+typedef struct MOTOR_DATA_s {
+  MOTOR_COMPONENTS components; /**<  */
+  MOTOR_STATE state;           /**< runningstate */
+  MOTOR_PARAMETERS parameters; /**< motorparam */
+  MOTOR_CONTROLLER Controller; /**< param */
+  MOTOR_FEEDBACK feedback;     /**< feedback */
+  PidTypeDef IqPID;  /**< current IQ axis PID */
+  PidTypeDef IdPID;  /**< current ID axis PID */
+  PidTypeDef VelPID; /**< speed/velocity PID */
+  PidTypeDef PosPID; /**< position PID */
+  /* === FOC Core Data (New Architecture) === */
+  FOC_AlgorithmState_t algo_state;   /**< FOCstate (integral, filter) */
+  FOC_AlgorithmConfig_t algo_config; /**< FOCconfig (gain, limit) */
+  FOC_AlgorithmInput_t algo_input;   /**< FOCinput (, reference) */
+  FOC_AlgorithmOutput_t algo_output; /**< FOCoutput (PWM, ) */
+  /* === LADRC speed/velocity === */
+  LADRC_Config_t ladrc_config;   /**< LADRC configparam */
+  LADRC_State_t ladrc_state;     /**< LADRC state */
+  float ladrc_enable;            /**< LADRC enable (0.0=PID, 1.0=LADRC) */
+  /* Advanced Control Configs - Persisted parameters map here */
+  struct {
+    float smo_alpha;
+    float smo_beta;
+    float ff_friction;
+    float fw_max_current;
+    float fw_start_velocity;
+    float cogging_comp_enabled;  // Use float for param system compatibility or
+                                 // cast
+    float cogging_calib_request; // 1.0f triggers anticogging calibration
+  } advanced;
+  CalibrationContext calib_ctx;      /**< calibration */
+  uint8_t calib_type_requested;      /**< requested calibration type (0-5) */
+  uint8_t last_calib_result;         /**< last calibration result (CalibResult) */
+  volatile bool params_updated; /**< param (inner loopparam) */
+
+  /* 外环速度反馈滤波状态（迁入此处以支持多电机实例，原在 outer_control.c 静态变量） */
+  float vel_feedback_filtered;       /**< 低通滤波后的速度反馈 [turn/s] */
+  bool vel_filter_initialized;       /**< 滤波器是否已完成首次初始化 */
+} MOTOR_DATA;
+extern MOTOR_DATA motor_data;
+/**
+ * @brief calibrationmotorinit
+ * @param motor motor
+ */
+void Init_Motor_No_Calib(MOTOR_DATA *motor);
+/**
+ * @brief calibrationmotorinit
+ * @param motor motor
+ */
+void Init_Motor_Calib(MOTOR_DATA *motor);
+/**
+ * @brief FOCstate
+ * @param motor motor
+ */
+/* Single production entry for one state-gated control cycle. */
+void Motor_RunControlCycle(MOTOR_DATA *motor);
+/**
+ * @brief FOCprotection
+ * @param motor motor
+ */
+void MotorGuardTask(MOTOR_DATA *motor);
+/**
+ * @brief motorcalibration
+ * @param motor motor
+ * @param calibration_type calibration
+ */
+void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type);
+/**
+ * @brief motorfaultstate
+ * @param motor motor
+ */
+void Motor_ClearFaults(MOTOR_DATA *motor);
+/**
+ * @brief  Abort any ongoing calibration and return motor to IDLE
+ * @param motor motor instance
+ */
+void Motor_AbortCalibration(MOTOR_DATA *motor);
+/**
+ * @brief  Pre-calibration prerequisite check
+ * @param motor      motor instance
+ * @param fail_mask  [out] bitmask of failed checks (bit0=voltage, bit1=temp,
+ *                   bit2=motor_state, bit3=encoder)
+ * @return pass_mask bitmask of passed checks (same bit layout)
+ */
+uint8_t Motor_PreCalibCheck(MOTOR_DATA *motor, uint8_t *fail_mask);
+/**
+ * @brief DS402state
+ *
+ * CANopen DS402state。
+ *  application_init.c init， safety_task.c protection。
+ */
+extern StateMachine g_ds402_state_machine;
+/* Motor task hooks and explicit anti-cogging calibration request. */
+void Motor_API_StartCoggingCalib(MOTOR_DATA *motor);
+void Motor_API_Cogging_Update(MOTOR_DATA *motor);
+#endif /* MOTOR_RUNTIME_H */

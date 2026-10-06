@@ -1,16 +1,20 @@
 {
-    "version": "2.0.0",
+    "firmware_version": "2.0.0",
     "tasks": [
         {
             "label": "CMake: Configure",
             "type": "shell",
             "command": "cmake",
             "args": [
+                "-S",
+                "${workspaceFolder}",
+                "-G",
+                "Ninja",
                 "-DCMAKE_BUILD_TYPE=Debug",
                 "-DCMAKE_TOOLCHAIN_FILE=${workspaceFolder}/cmake/gcc-arm-none-eabi.cmake",
                 "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
                 "-B",
-                "${workspaceFolder}/build"
+                "${workspaceFolder}/build/arm"
             ],
             "problemMatcher": [],
             "group": "build"
@@ -21,7 +25,7 @@
             "command": "cmake",
             "args": [
                 "--build",
-                "${workspaceFolder}/build",
+                "${workspaceFolder}/build/arm",
                 "-j",
                 "8"
             ],
@@ -42,7 +46,7 @@
             "command": "cmake",
             "args": [
                 "--build",
-                "${workspaceFolder}/build",
+                "${workspaceFolder}/build/arm",
                 "--target",
                 "clean"
             ],
@@ -56,7 +60,7 @@
                 "-c",
                 "port=SWD",
                 "-w",
-                "${workspaceFolder}/build/VectorFoc.hex",
+                "${workspaceFolder}/build/arm/VectorFoc.hex",
                 "-v",
                 "-rst"
             ],
@@ -75,7 +79,7 @@
                 "-f",
                 "target/stm32g4x.cfg",
                 "-c",
-                "program ${workspaceFolder}/build/VectorFoc.elf verify reset exit"
+                "program ${workspaceFolder}/build/arm/VectorFoc.elf verify reset exit"
             ],
             "problemMatcher": [],
             "dependsOn": [
@@ -88,7 +92,7 @@
             "command": "arm-none-eabi-size",
             "args": [
                 "-A",
-                "${workspaceFolder}/build/VectorFoc.elf"
+                "${workspaceFolder}/build/arm/VectorFoc.elf"
             ],
             "problemMatcher": []
         }

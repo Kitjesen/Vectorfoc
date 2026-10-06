@@ -25,25 +25,19 @@ jobs:
 
       - name: Build firmware (CMake + arm-none-eabi)
         run: |
-          mkdir -p build
-          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
-          cmake --build build -j2
+          mkdir -p build/arm
+          cmake -S . -B build/arm -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
+          cmake --build build/arm -j2
 
       - name: Build tests (host)
         run: |
-          mkdir -p test/build-ci
-          cmake -S test -B test/build-ci
-          cmake --build test/build-ci -j2
+          mkdir -p build/host
+          cmake -S tests -B build/host
+          cmake --build build/host -j2
 
       - name: Run tests (host)
         run: |
-          ./test/build-ci/test_runner_core
-          ./test/build-ci/test_runner_traj
-          ./test/build-ci/test_runner_pid
-          ./test/build-ci/test_runner_rate_limiter
-          ./test/build-ci/test_runner_ladrc
-          ./test/build-ci/test_runner_trig
-          ./test/build-ci/test_runner_integration
+          ctest --test-dir build/host --output-on-failure
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -51,7 +45,7 @@ jobs:
         with:
           name: firmware-binaries
           path: |
-            build/VectorFoc.elf
-            build/VectorFoc.bin
-            build/VectorFoc.hex
+            build/arm/VectorFoc.elf
+            build/arm/VectorFoc.bin
+            build/arm/VectorFoc.hex
           retention-days: 30

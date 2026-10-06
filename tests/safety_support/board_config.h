@@ -1,0 +1,25 @@
+#ifndef STARTUP_TEST_BOARD_CONFIG_H
+#define STARTUP_TEST_BOARD_CONFIG_H
+#include "adc.h"
+#include "tim.h"
+#define HW_PWM_TIMER htim1
+#define HW_PWM_CH_U TIM_CHANNEL_1
+#define HW_PWM_CH_V TIM_CHANNEL_2
+#define HW_PWM_CH_W TIM_CHANNEL_3
+#define HW_PWM_CH_TRIG TIM_CHANNEL_4
+#ifndef HW_POSITION_SENSOR_MODE
+#define HW_POSITION_SENSOR_MODE 3
+#endif
+#ifndef HW_POSITION_SENSOR_MT6816
+#define HW_POSITION_SENSOR_MT6816 3
+#endif
+#define HW_POSITION_SENSOR_TMR3109 4
+#define HW_ADC_CURRENT hadc1
+#define HW_ADC_TEMP hadc2
+#define HW_ADC_IA_HANDLE hadc1
+#define HW_ADC_IB_HANDLE hadc1
+#define HW_ADC_IC_HANDLE hadc1
+#define HW_ADC_IA_JDR JDR1
+#define HW_ADC_IB_JDR JDR2
+#define HW_ADC_IC_JDR JDR3
+#endif

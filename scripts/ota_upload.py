@@ -64,13 +64,13 @@ def send_command(ser: serial.Serial, cmd: str):
     ser.write((cmd + '\n').encode('utf-8'))
     ser.flush()
 
-def create_app_header(firmware_data: bytes, version: tuple = (1, 0, 0)) -> bytes:
+def create_app_header(firmware_data: bytes, firmware_version: tuple = (1, 0, 0)) -> bytes:
     """Create App Header structure"""
     # Calculate CRC of firmware (excluding header)
     crc = calc_crc32(firmware_data)
     
-    # Header structure: magic(4) + version(4) + size(4) + crc(4) + build_time(4) + reserved(12)
-    version_packed = (version[0] << 16) | (version[1] << 8) | version[2]
+    # Header structure: magic(4) + firmware_version(4) + size(4) + crc(4) + build_time(4) + reserved(12)
+    version_packed = (firmware_version[0] << 16) | (firmware_version[1] << 8) | firmware_version[2]
     build_time = int(time.time())
     
     header = struct.pack('<IIIII3I',

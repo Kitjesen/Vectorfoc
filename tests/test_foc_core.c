@@ -1,0 +1,154 @@
+// Copyright 2024-2026 VectorFOC Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "algorithm/foc_transforms.h"
+#include "algorithm/foc_current_loop.h"
+#include <assert.h>
+#include <math.h>
+#include <stdio.h>
+
+
+// Simple Test Framework
+#define ASSERT_NEAR(a, b, epsilon)                                             \
+  if (fabs((a) - (b)) > (epsilon)) {                                           \
+    printf("FAIL: %s l:%d | %.5f != %.5f\n", __func__, __LINE__, (float)(a),   \
+           (float)(b));                                                        \
+    return 0;                                                                  \
+  }
+
+#define TEST_PASS 1
+#define TEST_FAIL 0
+
+int Test_Clarke() {
+  float Ia = 1.0f, Ib = -0.5f, Ic = -0.5f;
+  float Ialpha, Ibeta;
+
+  // Balanced 3-phase: 1, -0.5, -0.5 -> Alpha should be 1
+  Clarke_Transform(Ia, Ib, Ic, &Ialpha, &Ibeta);
+
+  ASSERT_NEAR(Ialpha, 1.0f, 0.001f);
+  ASSERT_NEAR(Ibeta, 0.0f, 0.001f); // Beta should be 0 since Ib=Ic
+
+  printf("Clarke Test: PASS\n");
+  return TEST_PASS;
+}
+
+int Test_Park() {
+  // 1. Align alpha with d-axis (theta = 0)
+  float Ialpha = 1.0f, Ibeta = 0.0f, theta = 0.0f;
+  float Id, Iq;
+
+  Park_Transform(Ialpha, Ibeta, theta, &Id, &Iq);
+  ASSERT_NEAR(Id, 1.0f, 0.001f);
+  ASSERT_NEAR(Iq, 0.0f, 0.001f);
+
+  // 2. Rotate 90 deg (theta = PI/2) -> Alpha aligns with -Q (Standard Park def?
+  // OR d aligns with alpha?) Standard Park: d = alpha*cos + beta*sin, q =
+  // -alpha*sin + beta*cos
+  theta = 1.570796f;
+  Park_Transform(Ialpha, Ibeta, theta, &Id, &Iq);
+
+  // cos(90) = 0, sin(90) = 1
+  // d = 0 + 0 = 0
+  // q = -1 + 0 = -1
+  ASSERT_NEAR(Id, 0.0f, 0.01f);
+  ASSERT_NEAR(Iq, -1.0f, 0.01f);
+
+  printf("Park Test: PASS\n");
+  return TEST_PASS;
+}
+
+int Test_SVPWM() {
+  float Valpha = 0.0f;
+  float Vbeta = 1.0f; // Pure voltage in beta
+  float v_bus = 12.0f;
+  float t_a, t_b, t_c;
+
+  SVPWM_Modulate(Valpha, Vbeta, v_bus, &t_a, &t_b, &t_c);
+
+  // The alpha/beta inputs are volts, so the duty difference must scale by
+  // Vbus directly.  A beta-axis 1 V request on a 12 V bus is 1/12 p.u.
+  float expected_b = 0.5f + MATH_SQRT3_BY_2 / v_bus;
+  float expected_c = 0.5f - MATH_SQRT3_BY_2 / v_bus;
+  ASSERT_NEAR(t_a, 0.5f, 0.001f);
+  ASSERT_NEAR(t_b, expected_b, 0.001f);
+  ASSERT_NEAR(t_c, expected_c, 0.001f);
+
+  // A 6 V alpha request on a 12 V bus remains linear.
+  int status = SVPWM_Modulate(6.0f, 0.0f, v_bus, &t_a, &t_b, &t_c);
+  if (status != 0)
+    return TEST_FAIL;
+  ASSERT_NEAR(t_a, 0.875f, 0.001f);
+  ASSERT_NEAR(t_b, 0.125f, 0.001f);
+  ASSERT_NEAR(t_c, 0.125f, 0.001f);
+
+  // A request beyond the linear range is scaled and reported.
+  status = SVPWM_Modulate(9.0f, 0.0f, v_bus, &t_a, &t_b, &t_c);
+  if (status != 1)
+    return TEST_FAIL;
+  ASSERT_NEAR(t_a, 1.0f, 0.001f);
+  ASSERT_NEAR(t_b, 0.0f, 0.001f);
+  ASSERT_NEAR(t_c, 0.0f, 0.001f);
+
+  // Invalid bus voltage returns a centered, safe output.
+  status = SVPWM_Modulate(1.0f, 0.0f, 0.0f, &t_a, &t_b, &t_c);
+  if (status != -1)
+    return TEST_FAIL;
+  ASSERT_NEAR(t_a, 0.5f, 0.001f);
+  ASSERT_NEAR(t_b, 0.5f, 0.001f);
+  ASSERT_NEAR(t_c, 0.5f, 0.001f);
+
+  // All duty cycles must remain in range.
+  if (t_a < 0.0f || t_a > 1.0f)
+    return TEST_FAIL;
+  if (t_b < 0.0f || t_b > 1.0f)
+    return TEST_FAIL;
+  if (t_c < 0.0f || t_c > 1.0f)
+    return TEST_FAIL;
+
+  printf("SVPWM Test: PASS\n");
+  return TEST_PASS;
+}
+
+int Test_PositiveAngleWrap(void) {
+  ASSERT_NEAR(Math_WrapAnglePositive(-MATH_PI / 2.0f),
+              1.5f * MATH_PI, 0.000001f);
+  ASSERT_NEAR(Math_WrapAnglePositive(2.5f * MATH_PI),
+              MATH_PI / 2.0f, 0.000001f);
+  ASSERT_NEAR(Math_WrapAnglePositive(MATH_2PI), 0.0f, 0.0f);
+  if (!signbit(Math_WrapAnglePositive(-0.0f)))
+    return TEST_FAIL;
+  printf("Positive Angle Wrap Test: PASS\n");
+  return TEST_PASS;
+}
+
+int main() {
+  int passed = 0;
+  int total = 0;
+
+  total++;
+  passed += Test_Clarke();
+  total++;
+  passed += Test_Park();
+  total++;
+  passed += Test_SVPWM();
+  total++;
+  passed += Test_PositiveAngleWrap();
+
+  printf("=====================\n");
+  printf("Total: %d, Passed: %d\n", total, passed);
+  printf("=====================\n");
+
+  return (passed == total) ? 0 : 1;
+}
