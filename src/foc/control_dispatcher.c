@@ -17,6 +17,8 @@
 #include "control_context.h"
 #include "cogging_compensation.h"
 #include "runtime_compensation.h"
+#include "safety_manager.h"
+#include "algorithm/torque_feedforward.h"
 #include "algorithm/foc_current_loop.h"
 #include "motor_configuration.h"
 #include "error_manager.h"
@@ -27,9 +29,9 @@
 
 static void Control_SetPidLimits(MOTOR_DATA *motor, float voltage, float current,
                                  float velocity);
-static void Control_RunTorqueMode(MOTOR_DATA *motor);
+static bool Control_RunTorqueMode(MOTOR_DATA *motor);
 static void Control_UpdatePositionRamp(MOTOR_DATA *motor, MotorControlCtx *ctx);
-static void Control_RunMitMode(MOTOR_DATA *motor);
+static bool Control_RunMitMode(MOTOR_DATA *motor);
 static void Control_RunVfMode(MOTOR_DATA *motor);
 static void Control_RunOuterLoop(MOTOR_DATA *motor, bool update_position,
                                  bool update_velocity);
@@ -39,32 +41,57 @@ static void Control_ApplyCurrentLoopOutput(MOTOR_DATA *motor);
 
 // Single-motor control state and command ramps.
 static MotorControlCtx s_ctx;
-static RateLimiterTypeDef s_vel_limiter;
-static RateLimiterTypeDef s_torque_limiter;
 static bool s_limiters_initialized = false;
 
+static void Control_ResetCommandRamps(MOTOR_DATA *motor) {
+  float torque = 0.0f;
+  if (isfinite(motor->algo_input.Iq_ref) && isfinite(motor->Controller.torque_const))
+    torque = motor->algo_input.Iq_ref * motor->Controller.torque_const;
+  RateLimiter_Reset(&s_ctx.velocity_limiter, motor->feedback.velocity);
+  RateLimiter_Reset(&s_ctx.torque_limiter, torque);
+  s_ctx.limited_velocity = motor->feedback.velocity;
+  s_ctx.limited_torque = torque;
+}
+
 void Control_Initialize(MOTOR_DATA *motor) {
-  if (s_limiters_initialized) {
-    return;
-  }
-  // Velocity command acceleration, in turn/s^2.
-  RateLimiter_Init(&s_vel_limiter,
-                   motor->Controller.vel_limit * VELOCITY_ACCEL_MULTIPLIER);
-  RateLimiter_Init(&s_torque_limiter, motor->Controller.torque_ramp_rate);
+  if (motor == NULL || s_limiters_initialized) return;
+  RateLimiter_Init(&s_ctx.velocity_limiter,
+      motor->Controller.vel_limit * VELOCITY_ACCEL_MULTIPLIER);
+  RateLimiter_Init(&s_ctx.torque_limiter, motor->Controller.torque_ramp_rate);
+  Control_ResetCommandRamps(motor);
+  s_ctx.last_mode = motor->state.Control_Mode;
   FOC_Algorithm_InitState(&motor->algo_state);
   s_limiters_initialized = true;
 }
 
-void Control_RunCurrentCycle(MOTOR_DATA *motor) {
-  if (motor == NULL) {
-    return;
+bool Control_RunCurrentCycle(MOTOR_DATA *motor) {
+  if (motor == NULL) return false;
+  if (motor->state.Control_Mode != s_ctx.last_mode) {
+    Feedforward_Reset();
+    FieldWeakening_Reset();
+    Control_ResetCommandRamps(motor);
+    PID_clear(&motor->VelPID);
+    PID_clear(&motor->PosPID);
+    LADRC_Reset(&motor->ladrc_state);
+    s_ctx.velocity_loop_tick_count = s_ctx.position_loop_tick_count = 0;
+    motor->vel_filter_initialized = false;
+    motor->Controller.torque_setpoint = 0.0f;
+    if (motor->state.Control_Mode == CONTROL_MODE_VELOCITY_RAMP ||
+        motor->state.Control_Mode == CONTROL_MODE_POSITION_RAMP) {
+      motor->Controller.vel_setpoint = motor->feedback.velocity;
+      motor->Controller.pos_setpoint = motor->feedback.position;
+    }
+    s_ctx.last_mode = motor->state.Control_Mode;
   }
 
   /* Stage 1: advance command ramps at the 20 kHz current-loop rate. */
-  motor->Controller.input_velocity = RateLimiter_Apply(
-      &s_vel_limiter, motor->Controller.input_velocity, COMMAND_RAMP_PERIOD_S);
-  motor->Controller.input_torque = RateLimiter_Apply(
-      &s_torque_limiter, motor->Controller.input_torque, COMMAND_RAMP_PERIOD_S);
+  RateLimiter_SetMaxRate(&s_ctx.velocity_limiter,
+      motor->Controller.vel_limit * VELOCITY_ACCEL_MULTIPLIER);
+  RateLimiter_SetMaxRate(&s_ctx.torque_limiter, motor->Controller.torque_ramp_rate);
+  s_ctx.limited_velocity = RateLimiter_Apply(&s_ctx.velocity_limiter,
+      motor->Controller.input_velocity, COMMAND_RAMP_PERIOD_S);
+  s_ctx.limited_torque = RateLimiter_Apply(&s_ctx.torque_limiter,
+      motor->Controller.input_torque, COMMAND_RAMP_PERIOD_S);
 
   /* Stage 2: prepare references for the active control mode.
    * Open-loop voltage modes write PWM directly and end this cycle here. */
@@ -76,14 +103,14 @@ void Control_RunCurrentCycle(MOTOR_DATA *motor) {
         motor->algo_input.theta_elec + 40 * Ts);
     Control_InjectVoltage(motor, 0.0f, OPEN_MODE_FIXED_VOLTAGE,
                           motor->algo_input.theta_elec);
-    return;
+    return true;
   }
   case CONTROL_MODE_VF:
     Control_RunVfMode(motor);
-    return;
+    return true;
   case CONTROL_MODE_TORQUE:
     Control_SetPidLimits(motor, CURRENT_PID_MAX_OUT, 0.0f, 0.0f);
-    Control_RunTorqueMode(motor);
+    if (!Control_RunTorqueMode(motor)) return false;
     break;
   case CONTROL_MODE_VELOCITY:
     Control_SetPidLimits(motor, CURRENT_PID_MAX_OUT, VEL_PID_MAX_OUT, 0.0f);
@@ -107,7 +134,7 @@ void Control_RunCurrentCycle(MOTOR_DATA *motor) {
     float step = CLAMP(full_step, -max_step_size, max_step_size);
     motor->Controller.vel_setpoint += step;
     motor->Controller.torque_setpoint =
-        (step / COMMAND_RAMP_PERIOD_S) * motor->Controller.inertia;
+        Control_InertiaTorque(motor->Controller.inertia, step / COMMAND_RAMP_PERIOD_S);
     run_outer = true;
     break;
   }
@@ -119,7 +146,7 @@ void Control_RunCurrentCycle(MOTOR_DATA *motor) {
     break;
   case CONTROL_MODE_MIT:
     Control_SetPidLimits(motor, CURRENT_PID_MAX_OUT, 0.0f, 0.0f);
-    Control_RunMitMode(motor);
+    if (!Control_RunMitMode(motor)) return false;
     break;
   case CONTROL_MODE_IF: {
     Control_SetPidLimits(motor, CURRENT_PID_MAX_OUT, 0.0f, 0.0f);
@@ -136,10 +163,12 @@ void Control_RunCurrentCycle(MOTOR_DATA *motor) {
     break;
   }
   default:
-    /* Preserve the existing invalid-mode brake/report followed by current loop. */
-    MHAL_PWM_Brake();
-    ERROR_REPORT(ERROR_MOTOR_ENCODER_LOSS, "Unknown control mode — PWM braked");
-    break;
+    motor->algo_input.Id_ref = motor->algo_input.Iq_ref = 0.0f;
+    motor->algo_input.enabled = false;
+    FOC_Algorithm_ResetState(&motor->algo_state);
+    MHAL_PWM_Disable();
+    Safety_TriggerFault(FAULT_CONTROL_INVALID, motor, &g_ds402_state_machine);
+    return false;
   }
 
   /* Stage 3: run the independently scheduled position and velocity loops. */
@@ -150,16 +179,18 @@ void Control_RunCurrentCycle(MOTOR_DATA *motor) {
   motor->algo_input.omega_elec =
       motor->feedback.velocity * motor->parameters.pole_pairs * M_2PI;
   motor->algo_input.enabled = true;
-  motor->algo_input.Iq_ref += CoggingComp_GetCurrent(motor);
+  FOC_AlgorithmInput_t effective_input = motor->algo_input;
+  effective_input.Iq_ref += CoggingComp_GetCurrent(motor);
 
   FieldWeakening_Config_t fw_cfg = {
       .max_weakening_current = motor->advanced.fw_max_current,
       .start_velocity = motor->advanced.fw_start_velocity,
   };
-  FieldWeakening_Update(motor, &fw_cfg);
-  FOC_Algorithm_CurrentLoop(&motor->algo_input, &motor->algo_config,
+  effective_input.Id_ref += FieldWeakening_Calculate(motor, &fw_cfg, FOC_LOOP_PERIOD_S);
+  FOC_Algorithm_CurrentLoop(&effective_input, &motor->algo_config,
                             &motor->algo_state, &motor->algo_output);
   Control_ApplyCurrentLoopOutput(motor);
+  return true;
 }
 
 static void Control_ScheduleOuterLoops(MOTOR_DATA *motor, bool run_outer) {
@@ -262,11 +293,14 @@ static void Control_RunOuterLoop(MOTOR_DATA *motor, bool update_position,
       .feedback_position = motor->feedback.position,
       .feedback_velocity = motor->feedback.velocity,
       .input_position = motor->Controller.input_position,
-      .input_velocity = motor->Controller.input_velocity,
+      .input_velocity = motor->state.Control_Mode == CONTROL_MODE_VELOCITY
+                            ? s_ctx.limited_velocity : motor->Controller.input_velocity,
       .vel_limit = motor->Controller.vel_limit,
       .pos_setpoint = motor->Controller.pos_setpoint,
       .vel_setpoint = motor->Controller.vel_setpoint,
       .torque_setpoint = motor->Controller.torque_setpoint,
+      .torque_const = motor->Controller.torque_const,
+      .feedforward_current = Feedforward_GetCurrent(motor),
       .position_pid = &motor->PosPID,
       .velocity_pid = &motor->VelPID,
       .ladrc_config = &motor->ladrc_config,
@@ -304,26 +338,25 @@ static void Control_SetPidLimits(MOTOR_DATA *motor, float voltage, float current
   motor->PosPID.max_out = motor->PosPID.max_iout = velocity;
 }
 
+void Control_ApplyConfiguredCurrentGains(MOTOR_DATA *motor) {
+  if (motor == NULL) return;
+  motor->IdPID.Kp = motor->IqPID.Kp = motor->Controller.current_ctrl_p_gain;
+  motor->IdPID.Ki = motor->IqPID.Ki = motor->Controller.current_ctrl_i_gain;
+  Control_SetPidLimits(motor, motor->Controller.voltage_limit,
+      motor->Controller.current_limit, motor->Controller.vel_limit);
+  PID_clear(&motor->IdPID);
+  PID_clear(&motor->IqPID);
+  FOC_Algorithm_ResetState(&motor->algo_state);
+  motor->params_updated = true;
+}
 void Control_UpdateCurrentGains(MOTOR_DATA *motor) {
-  // Electrical bandwidth from the mechanical velocity limit [turn/s].
-  float bandwidth =
-      motor->Controller.vel_limit * motor->parameters.pole_pairs * M_2PI;
+  if (motor == NULL) return;
+  float bandwidth = (float)motor->Controller.current_ctrl_bandwidth;
+  if (bandwidth <= 0.0f)
+    bandwidth = motor->Controller.vel_limit * motor->parameters.pole_pairs * M_2PI;
   motor->Controller.current_ctrl_p_gain = motor->parameters.Ls * bandwidth;
   motor->Controller.current_ctrl_i_gain = motor->parameters.Rs * bandwidth;
-  motor->IdPID.Kp = motor->Controller.current_ctrl_p_gain;
-  motor->IdPID.Ki = motor->Controller.current_ctrl_i_gain;
-  motor->IqPID.Kp = motor->Controller.current_ctrl_p_gain;
-  motor->IqPID.Ki = motor->Controller.current_ctrl_i_gain;
-  // D/Q voltage [V], velocity-loop current [A], position-loop speed [turn/s].
-  float v_limit = motor->Controller.voltage_limit;
-  motor->IdPID.max_out = v_limit;
-  motor->IdPID.max_iout = v_limit;
-  motor->IqPID.max_out = v_limit;
-  motor->IqPID.max_iout = v_limit;
-  motor->VelPID.max_out = motor->Controller.current_limit;
-  motor->VelPID.max_iout = motor->Controller.current_limit;
-  motor->PosPID.max_out = motor->Controller.vel_limit;
-  motor->PosPID.max_iout = motor->Controller.vel_limit;
+  Control_ApplyConfiguredCurrentGains(motor);
 }
 
 void Control_InjectVoltage(MOTOR_DATA *motor, float Vd, float Vq, float angle) {
@@ -342,6 +375,8 @@ void Control_InjectVoltage(MOTOR_DATA *motor, float Vd, float Vq, float angle) {
                  &motor->algo_output.Tc);
   MHAL_PWM_SetDuty(motor->algo_output.Ta, motor->algo_output.Tb,
                    motor->algo_output.Tc);
+  if (StateMachine_GetState(&g_ds402_state_machine) == STATE_CALIBRATING)
+    (void)StateMachine_SetCalibrationPower(&g_ds402_state_machine, true);
 }
 
 #ifndef TORQUE_ADJUST
@@ -351,39 +386,37 @@ void Control_InjectVoltage(MOTOR_DATA *motor, float Vd, float Vq, float angle) {
 #define TORQUE_AND_CURRENT 0
 #endif
 
-static void Control_RunTorqueMode(MOTOR_DATA *motor) {
+static bool Control_RejectInvalidTorque(MOTOR_DATA *motor) {
+  motor->algo_input.Iq_ref = motor->algo_input.Id_ref = 0.0f;
+  motor->algo_input.enabled = false;
+  MHAL_PWM_Disable();
+  Safety_TriggerFault(FAULT_CONTROL_INVALID, motor, &g_ds402_state_machine);
+  return false;
+}
+static bool Control_RunTorqueMode(MOTOR_DATA *motor) {
   motor->algo_input.theta_elec = motor->feedback.phase_angle;
 #if TORQUE_AND_CURRENT
 #if TORQUE_ADJUST
   motor->algo_input.Iq_ref = 0.0f;
   motor->algo_input.Id_ref = 0.5f;
 #else
-  motor->Controller.input_current =
-      CLAMP(motor->Controller.input_current, -motor->Controller.current_limit,
-            motor->Controller.current_limit);
-  float max_step_size =
-      fabsf(COMMAND_RAMP_PERIOD_S * motor->Controller.torque_ramp_rate);
-  float full_step =
-      motor->Controller.input_current - motor->algo_input.Iq_ref;
-  float step = CLAMP(full_step, -max_step_size, max_step_size);
-  motor->algo_input.Iq_ref += step;
+  motor->Controller.input_current = CLAMP(motor->Controller.input_current,
+      -motor->Controller.current_limit, motor->Controller.current_limit);
+  motor->algo_input.Iq_ref = motor->Controller.input_current;
   motor->algo_input.Id_ref = 0.0f;
 #endif
 #else
-  motor->Controller.input_torque =
-      CLAMP(motor->Controller.input_torque, -motor->Controller.torque_limit,
-            motor->Controller.torque_limit);
-  motor->Controller.input_current =
-      CLAMP(motor->Controller.input_torque / motor->Controller.torque_const,
-            -motor->Controller.current_limit, +motor->Controller.current_limit);
-  float max_step_size =
-      fabsf(COMMAND_RAMP_PERIOD_S * motor->Controller.torque_ramp_rate);
-  float full_step =
-      motor->Controller.input_current - motor->algo_input.Iq_ref;
-  float step = CLAMP(full_step, -max_step_size, max_step_size);
-  motor->algo_input.Iq_ref += step;
+  float torque = CLAMP(s_ctx.limited_torque, -motor->Controller.torque_limit,
+                       motor->Controller.torque_limit);
+  float current = 0.0f;
+  if (!Control_TorqueToCurrent(torque, motor->Controller.torque_const, &current))
+    return Control_RejectInvalidTorque(motor);
+  motor->Controller.input_current = CLAMP(current,
+      -motor->Controller.current_limit, motor->Controller.current_limit);
+  motor->algo_input.Iq_ref = motor->Controller.input_current;
   motor->algo_input.Id_ref = 0.0f;
 #endif
+  return true;
 }
 
 static void Control_UpdatePositionRamp(MOTOR_DATA *motor, MotorControlCtx *ctx) {
@@ -414,7 +447,7 @@ static void Control_UpdatePositionRamp(MOTOR_DATA *motor, MotorControlCtx *ctx) 
     motor->Controller.pos_setpoint = ctx->traj.Y;
     motor->Controller.vel_setpoint = ctx->traj.Yd;
     motor->Controller.torque_setpoint =
-        ctx->traj.Ydd * motor->Controller.inertia;
+        Control_InertiaTorque(motor->Controller.inertia, ctx->traj.Ydd);
     if (fabsf(motor->Controller.pos_setpoint - motor->feedback.position) <
         MIT_POSITION_ERROR_TOLERANCE) {
       ctx->traj.t += COMMAND_RAMP_PERIOD_S;
@@ -422,13 +455,13 @@ static void Control_UpdatePositionRamp(MOTOR_DATA *motor, MotorControlCtx *ctx) 
   }
 }
 
-static void Control_RunMitMode(MOTOR_DATA *motor) {
+static bool Control_RunMitMode(MOTOR_DATA *motor) {
   motor->algo_input.theta_elec = motor->feedback.phase_angle;
   // ========== Parameter Validity Check ==========
   if (motor->Controller.mit_kp < 0.0f || motor->Controller.mit_kd < 0.0f) {
     motor->algo_input.Iq_ref = 0.0f;
     motor->algo_input.Id_ref = 0.0f;
-    return;
+    return true;
   }
   // ========== Unit Conversion: turn -> rad ==========
   float pos_actual_rad = motor->feedback.position * M_2PI;
@@ -441,22 +474,26 @@ static void Control_RunMitMode(MOTOR_DATA *motor) {
       fabsf(vel_error) > MIT_VELOCITY_STABILITY_THRESH) {
     motor->algo_input.Iq_ref *= MIT_MODE_DECAY_FACTOR;
     motor->algo_input.Id_ref = 0.0f;
-    return;
+    return true;
   }
   // Calculate Impedance Torque
   float impedance_torque = motor->Controller.mit_kp * pos_error +
                            motor->Controller.mit_kd * vel_error;
   // ========== Torque Limiting ==========
   float desired_torque =
-      CLAMP(impedance_torque + motor->Controller.input_torque,
+      CLAMP(impedance_torque + s_ctx.limited_torque,
             -motor->Controller.torque_limit, motor->Controller.torque_limit);
   // ========== Convert to Current and Limit ==========
-  float desired_current = desired_torque / motor->Controller.torque_const;
+  float desired_current = 0.0f;
+  if (!Control_TorqueToCurrent(desired_torque, motor->Controller.torque_const,
+                               &desired_current))
+    return Control_RejectInvalidTorque(motor);
   motor->Controller.input_current =
       CLAMP(desired_current, -motor->Controller.current_limit,
             motor->Controller.current_limit);
   motor->algo_input.Iq_ref = motor->Controller.input_current;
   motor->algo_input.Id_ref = 0.0f;
+  return true;
 }
 
 static void Control_RunVfMode(MOTOR_DATA *motor) {

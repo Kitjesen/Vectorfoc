@@ -15,6 +15,7 @@
 #include "algorithm/foc_transforms.h"
 #include "algorithm/foc_current_loop.h"
 #include <assert.h>
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 
@@ -133,6 +134,94 @@ int Test_PositiveAngleWrap(void) {
   return TEST_PASS;
 }
 
+static FOC_AlgorithmConfig_t Test_DefaultFocConfig(void) {
+  FOC_AlgorithmConfig_t config = {0};
+  config.Rs = 0.1f;
+  config.Ls = 0.0001f;
+  config.flux = 0.01f;
+  config.pole_pairs = 7;
+  config.Kp_current_d = 1.0f;
+  config.Ki_current_d = 10.0f;
+  config.Kp_current_q = 1.0f;
+  config.Ki_current_q = 10.0f;
+  config.Ts_current = 0.00005f;
+  config.voltage_limit = 12.0f;
+  config.current_limit = 20.0f;
+  config.decoupling_gain = 0.5f;
+  config.Kb_current = 1.0f;
+  config.current_filter_fc = 1000.0f;
+  config.deadtime_i_thresh = 0.1f;
+  config.deadtime_Vdiode = 0.7f;
+  return config;
+}
+
+int Test_FOC_UsesConfiguredVoltageLimit(void) {
+  FOC_AlgorithmInput_t input = {0};
+  FOC_AlgorithmConfig_t config = Test_DefaultFocConfig();
+  FOC_AlgorithmState_t state = {0};
+  FOC_AlgorithmOutput_t output = {0};
+
+  input.enabled = true;
+  input.Vbus = 48.0f;
+  input.Iq_ref = 10.0f;
+  config.Kp_current_q = 10.0f;
+  config.Ki_current_q = 0.0f;
+  config.voltage_limit = 2.0f;
+
+  FOC_Algorithm_CurrentLoop(&input, &config, &state, &output);
+  ASSERT_NEAR(sqrtf(output.Vd * output.Vd + output.Vq * output.Vq), 2.0f,
+              0.001f);
+  return output.voltage_saturated ? TEST_PASS : TEST_FAIL;
+}
+
+int Test_FOC_RejectsNonFiniteConfigAndGains(void) {
+  FOC_AlgorithmConfig_t config = Test_DefaultFocConfig();
+  float kp = 1.0f;
+  float ki = 1.0f;
+
+  if (!FOC_Algorithm_ValidateConfig(&config))
+    return TEST_FAIL;
+  config.Kp_current_d = NAN;
+  if (FOC_Algorithm_ValidateConfig(&config))
+    return TEST_FAIL;
+
+  FOC_Algorithm_CalculateCurrentGains(NAN, 0.0001f, 1000.0f, &kp, &ki);
+  ASSERT_NEAR(kp, 0.0f, 0.0f);
+  ASSERT_NEAR(ki, 0.0f, 0.0f);
+  FOC_Algorithm_CalculateCurrentGains(0.1f, INFINITY, 1000.0f, &kp, &ki);
+  ASSERT_NEAR(kp, 0.0f, 0.0f);
+  ASSERT_NEAR(ki, 0.0f, 0.0f);
+  return TEST_PASS;
+}
+
+int Test_FOC_NonFiniteConfigProducesSafeOutput(void) {
+  FOC_AlgorithmInput_t input = {0};
+  FOC_AlgorithmConfig_t config = Test_DefaultFocConfig();
+  FOC_AlgorithmState_t state = {0};
+  FOC_AlgorithmOutput_t output = {0};
+
+  input.enabled = true;
+  input.Vbus = 24.0f;
+  input.Iq_ref = 5.0f;
+  config.Kp_current_q = NAN;
+  state.integral_d = NAN;
+  state.integral_q = INFINITY;
+  state.Id_filt = NAN;
+  state.Iq_filt = -INFINITY;
+
+  FOC_Algorithm_CurrentLoop(&input, &config, &state, &output);
+  ASSERT_NEAR(output.Ta, 0.5f, 0.0f);
+  ASSERT_NEAR(output.Tb, 0.5f, 0.0f);
+  ASSERT_NEAR(output.Tc, 0.5f, 0.0f);
+  ASSERT_NEAR(output.Vd, 0.0f, 0.0f);
+  ASSERT_NEAR(output.Vq, 0.0f, 0.0f);
+  ASSERT_NEAR(state.integral_d, 0.0f, 0.0f);
+  ASSERT_NEAR(state.integral_q, 0.0f, 0.0f);
+  ASSERT_NEAR(state.Id_filt, 0.0f, 0.0f);
+  ASSERT_NEAR(state.Iq_filt, 0.0f, 0.0f);
+  return TEST_PASS;
+}
+
 int main() {
   int passed = 0;
   int total = 0;
@@ -145,6 +234,12 @@ int main() {
   passed += Test_SVPWM();
   total++;
   passed += Test_PositiveAngleWrap();
+  total++;
+  passed += Test_FOC_UsesConfiguredVoltageLimit();
+  total++;
+  passed += Test_FOC_RejectsNonFiniteConfigAndGains();
+  total++;
+  passed += Test_FOC_NonFiniteConfigProducesSafeOutput();
 
   printf("=====================\n");
   printf("Total: %d, Passed: %d\n", total, passed);

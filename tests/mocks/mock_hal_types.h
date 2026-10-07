@@ -81,7 +81,9 @@ static inline float arm_cos_f32(float x) { return cosf(x); }
 
 /* Mock HAL tick / delay */
 #ifndef STARTUP_TEST
-static inline void HAL_Delay(uint32_t ms) { (void)ms; }
+#ifndef STARTUP_TEST
+#define HAL_Delay(ms) ((void)(ms))
+#endif
 #endif
 /* HAL_GetTick: declared but not defined here.
  * Each test translation unit that needs it must provide its own definition,

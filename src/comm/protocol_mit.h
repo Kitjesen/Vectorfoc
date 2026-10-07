@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /**
- * @file    protocol_mit.h
+ * @file    mit_protocol.h
  * @brief   MIT Cheetah protocol implementation.
  * @details
  * - Lightweight impedance control protocol from MIT.

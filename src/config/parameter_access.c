@@ -13,25 +13,46 @@
 // limitations under the License.
 
 /**
- * @file parameter_access.c
+ * @file param_access.c
  * @brief param
  */
 #include "parameter_access.h"
+#include "encoder_calibration_storage_internal.h"
 #include "error_manager.h"
 #include "error_types.h"
 #include "parameter_storage.h"
-#include <string.h>
-#include <stddef.h>
+#if !defined(TEST_ENV)
+#include "common.h"
+#endif
 #include <stdbool.h>
+#include <math.h>
+#include <string.h>
+
 static volatile bool s_param_save_pending = false;
+static volatile uint32_t s_param_save_generation = 0U;
 static bool s_param_system_initialized = false;
-/* ============================================================================
- *
- * ============================================================================
- */
-/**
- * @brief checkparam
- */
+static bool s_runtime_side_effects_deferred = false;
+static FlashParamData s_flash_workspace;
+static ParamRuntimeApplyCallback s_runtime_apply_callback = NULL;
+static void *s_runtime_apply_context = NULL;
+
+void Param_SetRuntimeApplyCallback(ParamRuntimeApplyCallback callback,
+                                   void *context) {
+  s_runtime_apply_context = context;
+  s_runtime_apply_callback = callback;
+}
+
+static void Param_NotifyRuntimeChange(uint16_t index) {
+  if (s_runtime_side_effects_deferred || s_runtime_apply_callback == NULL) {
+    return;
+  }
+  s_runtime_apply_callback(s_runtime_apply_context, index);
+}
+
+void Param_ApplyRuntimeState(void) {
+  Param_NotifyRuntimeChange(PARAM_RUNTIME_APPLY_ALL);
+}
+
 static inline bool ParamTable_IsReadable(const ParamEntry *entry) {
   return (entry != NULL) && (entry->access & PARAM_ACCESS_R);
 }
@@ -45,79 +66,178 @@ static inline bool ParamTable_IsWritable(const ParamEntry *entry) {
  * @brief checkparam
  */
 static bool ParamTable_IsInRange(const ParamEntry *entry, const void *value) {
+  float float_val;
+  int32_t int_val;
+  uint32_t uint_val;
+
   if (entry == NULL || value == NULL)
     return false;
+
   switch (entry->type) {
-  case PARAM_TYPE_FLOAT: {
-    float val = *(const float *)value;
-    return (val >= entry->min) && (val <= entry->max);
+  case PARAM_TYPE_FLOAT:
+    float_val = *(const float *)value;
+    return isfinite(float_val) && (float_val >= entry->min) &&
+           (float_val <= entry->max);
+  case PARAM_TYPE_INT32:
+    int_val = *(const int32_t *)value;
+    return (int_val >= (int32_t)entry->min) &&
+           (int_val <= (int32_t)entry->max);
+  case PARAM_TYPE_UINT8:
+    uint_val = *(const uint8_t *)value;
+    return (uint_val >= (uint32_t)entry->min) &&
+           (uint_val <= (uint32_t)entry->max);
+  case PARAM_TYPE_UINT16:
+    uint_val = *(const uint16_t *)value;
+    return (uint_val >= (uint32_t)entry->min) &&
+           (uint_val <= (uint32_t)entry->max);
+  case PARAM_TYPE_UINT32:
+    uint_val = *(const uint32_t *)value;
+    return (uint_val >= (uint32_t)entry->min) &&
+           (uint_val <= (uint32_t)entry->max);
+  default:
+    return false;
+  }
+}
+
+static bool ParamTable_IsDefaultValid(const ParamEntry *entry) {
+  ParamTargetBinding binding = {0};
+  if (entry == NULL ||
+      ParamTable_GetBinding(entry, &binding) != PARAM_OK ||
+      !isfinite(binding.default_val)) {
+    return false;
+  }
+
+  float value = binding.default_val;
+  switch (entry->type) {
+  case PARAM_TYPE_FLOAT:
+    return ParamTable_IsInRange(entry, &value);
+  case PARAM_TYPE_UINT8: {
+    if (value < 0.0f || value > (float)UINT8_MAX) {
+      return false;
+    }
+    uint8_t typed = (uint8_t)value;
+    return value == (float)typed && ParamTable_IsInRange(entry, &typed);
+  }
+  case PARAM_TYPE_UINT16: {
+    if (value < 0.0f || value > (float)UINT16_MAX) {
+      return false;
+    }
+    uint16_t typed = (uint16_t)value;
+    return value == (float)typed && ParamTable_IsInRange(entry, &typed);
+  }
+  case PARAM_TYPE_UINT32: {
+    if (value < 0.0f || (double)value > (double)UINT32_MAX) {
+      return false;
+    }
+    uint32_t typed = (uint32_t)value;
+    return value == (float)typed && ParamTable_IsInRange(entry, &typed);
   }
   case PARAM_TYPE_INT32: {
-    int32_t val = *(const int32_t *)value;
-    return (val >= (int32_t)entry->min) && (val <= (int32_t)entry->max);
-  }
-  case PARAM_TYPE_UINT8:
-  case PARAM_TYPE_UINT16:
-  case PARAM_TYPE_UINT32: {
-    // ，
-    uint32_t val = 0;
-    if (entry->type == PARAM_TYPE_UINT8)
-      val = *(const uint8_t *)value;
-    else if (entry->type == PARAM_TYPE_UINT16)
-      val = *(const uint16_t *)value;
-    else
-      val = *(const uint32_t *)value;
-    return (val >= (uint32_t)entry->min) && (val <= (uint32_t)entry->max);
+    if ((double)value < (double)INT32_MIN ||
+        (double)value > (double)INT32_MAX) {
+      return false;
+    }
+    int32_t typed = (int32_t)value;
+    return value == (float)typed && ParamTable_IsInRange(entry, &typed);
   }
   default:
     return false;
   }
+}
+
+static ParamResult Param_CheckWriteType(uint16_t index, ParamType expected,
+                                        const char *operation) {
+  const ParamEntry *entry = ParamTable_Find(index);
+  if (entry == NULL) {
+    ERROR_REPORT(ERROR_PARAM_INVALID_INDEX, operation);
+    return PARAM_ERR_INVALID_INDEX;
+  }
+  if (!ParamTable_IsWritable(entry)) {
+    ERROR_REPORT(ERROR_PARAM_ACCESS_DENIED, operation);
+    return PARAM_ERR_READONLY;
+  }
+  if (entry->type != expected) {
+    ERROR_REPORT(ERROR_PARAM_INVALID_VALUE, operation);
+    return PARAM_ERR_INVALID_TYPE;
+  }
+  return PARAM_OK;
+}
+
+static ParamResult Param_ValidateWriteValue(uint16_t index,
+                                            ParamType expected,
+                                            const void *value,
+                                            const char *operation) {
+  ParamResult result = Param_CheckWriteType(index, expected, operation);
+  if (result != PARAM_OK) {
+    return result;
+  }
+  const ParamEntry *entry = ParamTable_Find(index);
+  if (!ParamTable_IsInRange(entry, value)) {
+    ERROR_REPORT(ERROR_PARAM_OUT_OF_RANGE, operation);
+    return PARAM_ERR_OUT_OF_RANGE;
+  }
+  return PARAM_OK;
 }
 /* ============================================================================
  *
  * ============================================================================
  */
-ParamResult Param_Read(uint16_t index, void *data, ParamType *type) {
+static ParamResult Param_ReadRaw(uint16_t index, void *data,
+                                 ParamType expected_type,
+                                 const char *operation) {
   if (data == NULL) {
-    ERROR_REPORT(ERROR_PARAM_NULL_PTR, "Param_Read: NULL pointer");
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR, operation);
     return PARAM_ERR_NULL_PTR;
   }
   const ParamEntry *entry = ParamTable_Find(index);
   if (entry == NULL) {
-    ERROR_REPORT(ERROR_PARAM_INVALID_INDEX, "Param_Read: invalid index");
+    ERROR_REPORT(ERROR_PARAM_INVALID_INDEX, operation);
     return PARAM_ERR_INVALID_INDEX;
   }
   if (!ParamTable_IsReadable(entry)) {
-    ERROR_REPORT(ERROR_PARAM_ACCESS_DENIED, "Param_Read: not readable");
+    ERROR_REPORT(ERROR_PARAM_ACCESS_DENIED, operation);
     return PARAM_ERR_READONLY;
   }
-  // ，
-  if (type != NULL) {
-    *type = entry->type;
-  }
-  //
-  switch (entry->type) {
-  case PARAM_TYPE_UINT8:
-    *(uint8_t *)data = *(uint8_t *)entry->ptr;
-    break;
-  case PARAM_TYPE_UINT16:
-    *(uint16_t *)data = *(uint16_t *)entry->ptr;
-    break;
-  case PARAM_TYPE_INT32:
-    *(int32_t *)data = *(int32_t *)entry->ptr;
-    break;
-  case PARAM_TYPE_UINT32:
-    *(uint32_t *)data = *(uint32_t *)entry->ptr;
-    break;
-  case PARAM_TYPE_FLOAT:
-    *(float *)data = *(float *)entry->ptr;
-    break;
-  default:
+  if (entry->type != expected_type) {
+    ERROR_REPORT(ERROR_PARAM_INVALID_VALUE, operation);
     return PARAM_ERR_INVALID_TYPE;
   }
+  ParamTargetBinding binding = {0};
+  ParamResult binding_result = ParamTable_GetBinding(entry, &binding);
+  if (binding_result != PARAM_OK) {
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR, operation);
+    return binding_result;
+  }
+
+#if !defined(TEST_ENV)
+  CRITICAL_SECTION_BEGIN();
+#endif
+  switch (entry->type) {
+  case PARAM_TYPE_UINT8:
+    *(uint8_t *)data = *(const uint8_t *)binding.target;
+    break;
+  case PARAM_TYPE_UINT16:
+    *(uint16_t *)data = *(const uint16_t *)binding.target;
+    break;
+  case PARAM_TYPE_INT32:
+    *(int32_t *)data = *(const int32_t *)binding.target;
+    break;
+  case PARAM_TYPE_UINT32:
+    *(uint32_t *)data = *(const uint32_t *)binding.target;
+    break;
+  case PARAM_TYPE_FLOAT:
+    *(float *)data = *(const float *)binding.target;
+    break;
+  default:
+    break;
+  }
+#if !defined(TEST_ENV)
+  CRITICAL_SECTION_END();
+#endif
   return PARAM_OK;
 }
-ParamResult Param_Write(uint16_t index, const void *data) {
+
+static ParamResult Param_WriteRaw(uint16_t index, const void *data) {
   if (data == NULL) {
     ERROR_REPORT(ERROR_PARAM_NULL_PTR, "Param_Write: NULL pointer");
     return PARAM_ERR_NULL_PTR;
@@ -131,167 +251,544 @@ ParamResult Param_Write(uint16_t index, const void *data) {
     ERROR_REPORT(ERROR_PARAM_ACCESS_DENIED, "Param_Write: not writable");
     return PARAM_ERR_READONLY;
   }
+  ParamTargetBinding binding = {0};
+  ParamResult binding_result = ParamTable_GetBinding(entry, &binding);
+  if (binding_result != PARAM_OK) {
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR, "Param_Write: NULL target");
+    return binding_result;
+  }
   // check
   if (!ParamTable_IsInRange(entry, data)) {
     ERROR_REPORT(ERROR_PARAM_OUT_OF_RANGE, "Param_Write: out of range");
     return PARAM_ERR_OUT_OF_RANGE;
   }
-  //
+
+  ParamResult result = PARAM_OK;
+#if !defined(TEST_ENV)
+  CRITICAL_SECTION_BEGIN();
+#endif
   switch (entry->type) {
   case PARAM_TYPE_UINT8:
-    *(uint8_t *)entry->ptr = *(const uint8_t *)data;
+    *(uint8_t *)binding.target = *(const uint8_t *)data;
     break;
   case PARAM_TYPE_UINT16:
-    *(uint16_t *)entry->ptr = *(const uint16_t *)data;
+    *(uint16_t *)binding.target = *(const uint16_t *)data;
     break;
   case PARAM_TYPE_INT32:
-    *(int32_t *)entry->ptr = *(const int32_t *)data;
+    *(int32_t *)binding.target = *(const int32_t *)data;
     break;
   case PARAM_TYPE_UINT32:
-    *(uint32_t *)entry->ptr = *(const uint32_t *)data;
+    *(uint32_t *)binding.target = *(const uint32_t *)data;
     break;
   case PARAM_TYPE_FLOAT:
-    *(float *)entry->ptr = *(const float *)data;
+    *(float *)binding.target = *(const float *)data;
     break;
   default:
-    return PARAM_ERR_INVALID_TYPE;
+    result = PARAM_ERR_INVALID_TYPE;
+    break;
   }
-  return PARAM_OK;
+#if !defined(TEST_ENV)
+  CRITICAL_SECTION_END();
+#endif
+  if (result == PARAM_OK) {
+    Param_NotifyRuntimeChange(index);
+  }
+  return result;
 }
 /* ============================================================================
  *
  * ============================================================================
  */
 ParamResult Param_ReadFloat(uint16_t index, float *value) {
-  ParamType type;
-  ParamResult result = Param_Read(index, value, &type);
+  if (value == NULL) {
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR, "Param_ReadFloat: NULL pointer");
+    return PARAM_ERR_NULL_PTR;
+  }
+  float tmp = 0.0f;
+  ParamResult result = Param_ReadRaw(index, &tmp, PARAM_TYPE_FLOAT,
+                                     "Param_ReadFloat: type mismatch");
   if (result != PARAM_OK)
     return result;
-  if (type != PARAM_TYPE_FLOAT) {
-    ERROR_REPORT(ERROR_PARAM_INVALID_VALUE, "Param_ReadFloat: type mismatch");
-    return PARAM_ERR_INVALID_TYPE;
-  }
+  *value = tmp;
   return PARAM_OK;
 }
 ParamResult Param_WriteFloat(uint16_t index, float value) {
-  return Param_Write(index, &value);
+  ParamResult result = Param_CheckWriteType(index, PARAM_TYPE_FLOAT,
+                                           "Param_WriteFloat: type mismatch");
+  return (result == PARAM_OK) ? Param_WriteRaw(index, &value) : result;
 }
 ParamResult Param_ReadUint8(uint16_t index, uint8_t *value) {
-  ParamType type;
-  ParamResult result = Param_Read(index, value, &type);
+  if (value == NULL) {
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR, "Param_ReadUint8: NULL pointer");
+    return PARAM_ERR_NULL_PTR;
+  }
+  uint8_t tmp = 0U;
+  ParamResult result = Param_ReadRaw(index, &tmp, PARAM_TYPE_UINT8,
+                                     "Param_ReadUint8: type mismatch");
   if (result != PARAM_OK)
     return result;
-  if (type != PARAM_TYPE_UINT8) {
-    ERROR_REPORT(ERROR_PARAM_INVALID_VALUE, "Param_ReadUint8: type mismatch");
-    return PARAM_ERR_INVALID_TYPE;
-  }
+  *value = tmp;
   return PARAM_OK;
 }
 ParamResult Param_WriteUint8(uint16_t index, uint8_t value) {
-  return Param_Write(index, &value);
+  ParamResult result = Param_CheckWriteType(index, PARAM_TYPE_UINT8,
+                                           "Param_WriteUint8: type mismatch");
+  return (result == PARAM_OK) ? Param_WriteRaw(index, &value) : result;
+}
+
+ParamResult Param_ReadUint16(uint16_t index, uint16_t *value) {
+  if (value == NULL) {
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR, "Param_ReadUint16: NULL pointer");
+    return PARAM_ERR_NULL_PTR;
+  }
+  uint16_t tmp = 0U;
+  ParamResult result = Param_ReadRaw(index, &tmp, PARAM_TYPE_UINT16,
+                                     "Param_ReadUint16: type mismatch");
+  if (result != PARAM_OK) {
+    return result;
+  }
+  *value = tmp;
+  return PARAM_OK;
+}
+
+ParamResult Param_WriteUint16(uint16_t index, uint16_t value) {
+  ParamResult result = Param_CheckWriteType(index, PARAM_TYPE_UINT16,
+                                           "Param_WriteUint16: type mismatch");
+  return (result == PARAM_OK) ? Param_WriteRaw(index, &value) : result;
+}
+ParamResult Param_ReadUint32(uint16_t index, uint32_t *value) {
+  if (value == NULL) {
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR, "Param_ReadUint32: NULL pointer");
+    return PARAM_ERR_NULL_PTR;
+  }
+  uint32_t tmp = 0U;
+  ParamResult result = Param_ReadRaw(index, &tmp, PARAM_TYPE_UINT32,
+                                     "Param_ReadUint32: type mismatch");
+  if (result != PARAM_OK)
+    return result;
+  *value = tmp;
+  return PARAM_OK;
+}
+ParamResult Param_WriteUint32(uint16_t index, uint32_t value) {
+  ParamResult result = Param_CheckWriteType(index, PARAM_TYPE_UINT32,
+                                           "Param_WriteUint32: type mismatch");
+  return (result == PARAM_OK) ? Param_WriteRaw(index, &value) : result;
+}
+
+ParamResult Param_ReadInt32(uint16_t index, int32_t *value) {
+  if (value == NULL) {
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR, "Param_ReadInt32: NULL pointer");
+    return PARAM_ERR_NULL_PTR;
+  }
+  int32_t tmp = 0;
+  ParamResult result = Param_ReadRaw(index, &tmp, PARAM_TYPE_INT32,
+                                     "Param_ReadInt32: type mismatch");
+  if (result != PARAM_OK) {
+    return result;
+  }
+  *value = tmp;
+  return PARAM_OK;
+}
+
+ParamResult Param_WriteInt32(uint16_t index, int32_t value) {
+  ParamResult result = Param_CheckWriteType(index, PARAM_TYPE_INT32,
+                                           "Param_WriteInt32: type mismatch");
+  return (result == PARAM_OK) ? Param_WriteRaw(index, &value) : result;
+}
+
+ParamResult Param_ReadAsFloat(uint16_t index, float *value) {
+  if (value == NULL) {
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR, "Param_ReadAsFloat: NULL pointer");
+    return PARAM_ERR_NULL_PTR;
+  }
+  const ParamEntry *entry = ParamTable_Find(index);
+  if (entry == NULL) {
+    ERROR_REPORT(ERROR_PARAM_INVALID_INDEX, "Param_ReadAsFloat: invalid index");
+    return PARAM_ERR_INVALID_INDEX;
+  }
+
+  ParamResult result;
+  switch (entry->type) {
+  case PARAM_TYPE_FLOAT:
+    result = Param_ReadFloat(index, value);
+    if (result == PARAM_OK && !isfinite(*value)) {
+      return PARAM_ERR_OUT_OF_RANGE;
+    }
+    return result;
+  case PARAM_TYPE_UINT8: {
+    uint8_t typed = 0U;
+    result = Param_ReadUint8(index, &typed);
+    *value = (float)typed;
+    return result;
+  }
+  case PARAM_TYPE_UINT16: {
+    uint16_t typed = 0U;
+    result = Param_ReadUint16(index, &typed);
+    *value = (float)typed;
+    return result;
+  }
+  case PARAM_TYPE_UINT32: {
+    uint32_t typed = 0U;
+    result = Param_ReadUint32(index, &typed);
+    if (result != PARAM_OK) {
+      return result;
+    }
+    *value = (float)typed;
+    if ((double)*value > (double)UINT32_MAX ||
+        (uint32_t)*value != typed) {
+      return PARAM_ERR_OUT_OF_RANGE;
+    }
+    return PARAM_OK;
+  }
+  case PARAM_TYPE_INT32: {
+    int32_t typed = 0;
+    result = Param_ReadInt32(index, &typed);
+    if (result != PARAM_OK) {
+      return result;
+    }
+    *value = (float)typed;
+    if ((double)*value < (double)INT32_MIN ||
+        (double)*value > (double)INT32_MAX || (int32_t)*value != typed) {
+      return PARAM_ERR_OUT_OF_RANGE;
+    }
+    return PARAM_OK;
+  }
+  default:
+    return PARAM_ERR_INVALID_TYPE;
+  }
+}
+
+ParamResult Param_WriteFromFloat(uint16_t index, float value) {
+  if (!isfinite(value)) {
+    ERROR_REPORT(ERROR_PARAM_OUT_OF_RANGE, "Param_WriteFromFloat: non-finite");
+    return PARAM_ERR_OUT_OF_RANGE;
+  }
+  const ParamEntry *entry = ParamTable_Find(index);
+  if (entry == NULL) {
+    ERROR_REPORT(ERROR_PARAM_INVALID_INDEX, "Param_WriteFromFloat: invalid index");
+    return PARAM_ERR_INVALID_INDEX;
+  }
+
+  switch (entry->type) {
+  case PARAM_TYPE_FLOAT:
+    return Param_WriteFloat(index, value);
+  case PARAM_TYPE_UINT8:
+    if (value < 0.0f || value > (float)UINT8_MAX ||
+        value != (float)(uint8_t)value) {
+      return PARAM_ERR_OUT_OF_RANGE;
+    }
+    return Param_WriteUint8(index, (uint8_t)value);
+  case PARAM_TYPE_UINT16:
+    if (value < 0.0f || value > (float)UINT16_MAX ||
+        value != (float)(uint16_t)value) {
+      return PARAM_ERR_OUT_OF_RANGE;
+    }
+    return Param_WriteUint16(index, (uint16_t)value);
+  case PARAM_TYPE_UINT32:
+    if (value < 0.0f || (double)value > (double)UINT32_MAX) {
+      return PARAM_ERR_OUT_OF_RANGE;
+    }
+    {
+      uint32_t typed = (uint32_t)value;
+      if (value != (float)typed) {
+        return PARAM_ERR_OUT_OF_RANGE;
+      }
+      return Param_WriteUint32(index, typed);
+    }
+  case PARAM_TYPE_INT32:
+    if ((double)value < (double)INT32_MIN ||
+        (double)value > (double)INT32_MAX) {
+      return PARAM_ERR_OUT_OF_RANGE;
+    }
+    {
+      int32_t typed = (int32_t)value;
+      if (value != (float)typed) {
+        return PARAM_ERR_OUT_OF_RANGE;
+      }
+      return Param_WriteInt32(index, typed);
+    }
+  default:
+    return PARAM_ERR_INVALID_TYPE;
+  }
 }
 /* ============================================================================
  *
  * ============================================================================
  */
-/* The saved field set is intentionally explicit: LADRC and runtime-only
- * parameters are not part of the existing Flash image. Keep this order and the
- * packed FlashParamData layout independent of parameter-table attributes. */
-typedef struct {
-  uint16_t index;
-  uint16_t offset;
-  ParamType type;
-} FlashParamBinding;
-#define FLASH_FIELD(index, member, type) \
-  {index, offsetof(FlashParamData, member), type}
-static const FlashParamBinding s_flash_bindings[] = {
-  FLASH_FIELD(PARAM_MOTOR_RS, motor_rs, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_MOTOR_LS, motor_ls, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_MOTOR_FLUX, motor_flux, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_MOTOR_POLE_PAIRS, motor_pole_pairs, PARAM_TYPE_UINT8),
-  FLASH_FIELD(PARAM_CUR_KP, cur_kp, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_CUR_KI, cur_ki, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_SPD_KP, spd_kp, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_SPD_KI, spd_ki, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_POS_KP, pos_kp, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_LIMIT_TORQUE, limit_torque, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_LIMIT_CURRENT, limit_current, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_LIMIT_SPEED, limit_speed, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_VEL_MAX, vel_max, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_ACC_SET, acc_set, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_ACC_RAD, acc_rad, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_INERTIA, inertia, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_CAN_ID, can_id, PARAM_TYPE_UINT8),
-  FLASH_FIELD(PARAM_CAN_BAUDRATE, can_baudrate, PARAM_TYPE_UINT8),
-  FLASH_FIELD(PARAM_PROTOCOL_TYPE, protocol_type, PARAM_TYPE_UINT8),
-  FLASH_FIELD(PARAM_ZERO_STA, zero_sta, PARAM_TYPE_UINT8),
-  FLASH_FIELD(PARAM_ADD_OFFSET, add_offset, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_DAMPER, damper, PARAM_TYPE_UINT8),
-  FLASH_FIELD(PARAM_RUN_MODE, run_mode, PARAM_TYPE_UINT8),
-  FLASH_FIELD(PARAM_CAN_TIMEOUT, can_timeout, PARAM_TYPE_UINT32),
-  FLASH_FIELD(PARAM_OV_THRESHOLD, over_voltage_threshold, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_UV_THRESHOLD, under_voltage_threshold, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_OC_THRESHOLD, over_current_threshold, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_OT_THRESHOLD, over_temp_threshold, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_SMO_ALPHA, smo_alpha, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_SMO_BETA, smo_beta, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_FF_FRICTION, ff_friction, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_FW_MAX_CUR, fw_max_current, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_FW_START_VEL, fw_start_velocity, PARAM_TYPE_FLOAT),
-  FLASH_FIELD(PARAM_COGGING_EN, cogging_comp_enabled, PARAM_TYPE_FLOAT),
-};
-#undef FLASH_FIELD
-#define FLASH_BINDING_COUNT (sizeof(s_flash_bindings) / sizeof(s_flash_bindings[0]))
-
-/* CAN timeout historically bypasses access/range checks during Flash transfer.
- * Preserve that exception without changing the public typed access functions. */
-static uint32_t *FlashTimeoutValue(uint16_t index) {
-  const ParamEntry *entry = NULL;
-  if (Param_GetInfo(index, &entry) == PARAM_OK && entry != NULL &&
-      entry->type == PARAM_TYPE_UINT32) return entry->ptr;
-  return NULL;
-}
+/**
+ * @brief paramparam FlashParamData
+ * @note  packed warning
+ */
 static void CollectParamsToFlashData(FlashParamData *flash_data) {
-  memset(flash_data, 0, sizeof(*flash_data));
-  for (size_t i = 0; i < FLASH_BINDING_COUNT; ++i) {
-    const FlashParamBinding *field = &s_flash_bindings[i];
-    uint8_t *dest = (uint8_t *)flash_data + field->offset;
-    if (field->type == PARAM_TYPE_FLOAT) {
-      float value;
-      if (Param_ReadFloat(field->index, &value) == PARAM_OK)
-        memcpy(dest, &value, sizeof(value));
-    } else if (field->type == PARAM_TYPE_UINT8) {
-      uint8_t value;
-      if (Param_ReadUint8(field->index, &value) == PARAM_OK)
-        memcpy(dest, &value, sizeof(value));
-    } else {
-      const uint32_t *value = FlashTimeoutValue(field->index);
-      if (value) memcpy(dest, value, sizeof(*value));
-    }
+  memset(flash_data, 0, sizeof(FlashParamData));
+  float tmp_float;
+  uint8_t tmp_uint8;
+  uint32_t tmp_uint32;
+  // motorparam
+  if (Param_ReadFloat(PARAM_MOTOR_RS, &tmp_float) == PARAM_OK)
+    flash_data->motor_rs = tmp_float;
+  if (Param_ReadFloat(PARAM_MOTOR_LS, &tmp_float) == PARAM_OK)
+    flash_data->motor_ls = tmp_float;
+  if (Param_ReadFloat(PARAM_MOTOR_FLUX, &tmp_float) == PARAM_OK)
+    flash_data->motor_flux = tmp_float;
+  if (Param_ReadUint8(PARAM_MOTOR_POLE_PAIRS, &tmp_uint8) == PARAM_OK)
+    flash_data->motor_pole_pairs = tmp_uint8;
+  // PIDparam
+  if (Param_ReadFloat(PARAM_CUR_KP, &tmp_float) == PARAM_OK)
+    flash_data->cur_kp = tmp_float;
+  if (Param_ReadFloat(PARAM_CUR_KI, &tmp_float) == PARAM_OK)
+    flash_data->cur_ki = tmp_float;
+  if (Param_ReadFloat(PARAM_SPD_KP, &tmp_float) == PARAM_OK)
+    flash_data->spd_kp = tmp_float;
+  if (Param_ReadFloat(PARAM_SPD_KI, &tmp_float) == PARAM_OK)
+    flash_data->spd_ki = tmp_float;
+  if (Param_ReadFloat(PARAM_POS_KP, &tmp_float) == PARAM_OK)
+    flash_data->pos_kp = tmp_float;
+  // PARAM_CUR_FILT_GAIN and PARAM_SPD_FILT_GAIN removed - PidTypeDef has no
+  // filter_alpha if (Param_ReadFloat(PARAM_CUR_FILT_GAIN, &tmp_float) ==
+  // PARAM_OK)
+  //   flash_data->cur_filt_gain = tmp_float;
+  // if (Param_ReadFloat(PARAM_SPD_FILT_GAIN, &tmp_float) == PARAM_OK)
+  //   flash_data->spd_filt_gain = tmp_float;
+  // limitparam
+  if (Param_ReadFloat(PARAM_LIMIT_TORQUE, &tmp_float) == PARAM_OK)
+    flash_data->limit_torque = tmp_float;
+  if (Param_ReadFloat(PARAM_LIMIT_CURRENT, &tmp_float) == PARAM_OK)
+    flash_data->limit_current = tmp_float;
+  if (Param_ReadFloat(PARAM_LIMIT_SPEED, &tmp_float) == PARAM_OK)
+    flash_data->limit_speed = tmp_float;
+  // position/speed/velocitymodeparam
+  if (Param_ReadFloat(PARAM_VEL_MAX, &tmp_float) == PARAM_OK)
+    flash_data->vel_max = tmp_float;
+  if (Param_ReadFloat(PARAM_ACC_SET, &tmp_float) == PARAM_OK)
+    flash_data->acc_set = tmp_float;
+  if (Param_ReadFloat(PARAM_ACC_RAD, &tmp_float) == PARAM_OK)
+    flash_data->acc_rad = tmp_float;
+  if (Param_ReadFloat(PARAM_INERTIA, &tmp_float) == PARAM_OK)
+    flash_data->inertia = tmp_float;
+  // CANconfig
+  if (Param_ReadUint8(PARAM_CAN_ID, &tmp_uint8) == PARAM_OK)
+    flash_data->can_id = tmp_uint8;
+  if (Param_ReadUint8(PARAM_CAN_BAUDRATE, &tmp_uint8) == PARAM_OK)
+    flash_data->can_baudrate = tmp_uint8;
+  if (Param_ReadUint8(PARAM_PROTOCOL_TYPE, &tmp_uint8) == PARAM_OK)
+    flash_data->protocol_type = tmp_uint8;
+  // config
+  if (Param_ReadUint8(PARAM_ZERO_STA, &tmp_uint8) == PARAM_OK)
+    flash_data->zero_sta = tmp_uint8;
+  if (Param_ReadFloat(PARAM_ADD_OFFSET, &tmp_float) == PARAM_OK)
+    flash_data->add_offset = tmp_float;
+  if (Param_ReadUint8(PARAM_DAMPER, &tmp_uint8) == PARAM_OK)
+    flash_data->damper = tmp_uint8;
+  if (Param_ReadUint8(PARAM_RUN_MODE, &tmp_uint8) == PARAM_OK)
+    flash_data->run_mode = tmp_uint8;
+  // CANtimeout ( UINT32 )
+  if (Param_ReadUint32(PARAM_CAN_TIMEOUT, &tmp_uint32) == PARAM_OK)
+    flash_data->can_timeout = tmp_uint32;
+  // protectionconfig
+  if (Param_ReadFloat(PARAM_OV_THRESHOLD, &tmp_float) == PARAM_OK)
+    flash_data->over_voltage_threshold = tmp_float;
+  if (Param_ReadFloat(PARAM_UV_THRESHOLD, &tmp_float) == PARAM_OK)
+    flash_data->under_voltage_threshold = tmp_float;
+  if (Param_ReadFloat(PARAM_OC_THRESHOLD, &tmp_float) == PARAM_OK)
+    flash_data->over_current_threshold = tmp_float;
+  if (Param_ReadFloat(PARAM_OT_THRESHOLD, &tmp_float) == PARAM_OK)
+    flash_data->over_temp_threshold = tmp_float;
+  // config
+  if (Param_ReadFloat(PARAM_SMO_ALPHA, &tmp_float) == PARAM_OK)
+    flash_data->smo_alpha = tmp_float;
+  if (Param_ReadFloat(PARAM_SMO_BETA, &tmp_float) == PARAM_OK)
+    flash_data->smo_beta = tmp_float;
+  if (Param_ReadFloat(PARAM_FF_FRICTION, &tmp_float) == PARAM_OK)
+    flash_data->ff_friction = tmp_float;
+  if (Param_ReadFloat(PARAM_FW_MAX_CUR, &tmp_float) == PARAM_OK)
+    flash_data->fw_max_current = tmp_float;
+  if (Param_ReadFloat(PARAM_FW_START_VEL, &tmp_float) == PARAM_OK)
+    flash_data->fw_start_velocity = tmp_float;
+  if (Param_ReadFloat(PARAM_COGGING_EN, &tmp_float) == PARAM_OK)
+    flash_data->cogging_comp_enabled = tmp_float;
+  ParamEncoderCalibration_Collect(flash_data);
+  if (Param_ReadFloat(PARAM_LADRC_ENABLE, &tmp_float) == PARAM_OK)
+    flash_data->ladrc_enable = tmp_float;
+  if (Param_ReadFloat(PARAM_LADRC_OMEGA_O, &tmp_float) == PARAM_OK)
+    flash_data->ladrc_omega_o = tmp_float;
+  if (Param_ReadFloat(PARAM_LADRC_OMEGA_C, &tmp_float) == PARAM_OK)
+    flash_data->ladrc_omega_c = tmp_float;
+  if (Param_ReadFloat(PARAM_LADRC_B0, &tmp_float) == PARAM_OK)
+    flash_data->ladrc_b0 = tmp_float;
+  if (Param_ReadFloat(PARAM_LADRC_MAX_OUT, &tmp_float) == PARAM_OK)
+    flash_data->ladrc_max_output = tmp_float;
   }
+/**
+ * @brief  FlashParamData param
+ * @note  packed
+ */
+static void ApplyParamsFromFlashData(const FlashParamData *flash_data) {
+#if !defined(TEST_ENV)
+  CRITICAL_SECTION_BEGIN();
+#endif
+  s_runtime_side_effects_deferred = true;
+
+  // motorparam
+  Param_WriteFloat(PARAM_MOTOR_RS, flash_data->motor_rs);
+  Param_WriteFloat(PARAM_MOTOR_LS, flash_data->motor_ls);
+  Param_WriteFloat(PARAM_MOTOR_FLUX, flash_data->motor_flux);
+  Param_WriteUint8(PARAM_MOTOR_POLE_PAIRS, flash_data->motor_pole_pairs);
+  // PIDparam
+  Param_WriteFloat(PARAM_CUR_KP, flash_data->cur_kp);
+  Param_WriteFloat(PARAM_CUR_KI, flash_data->cur_ki);
+  Param_WriteFloat(PARAM_SPD_KP, flash_data->spd_kp);
+  Param_WriteFloat(PARAM_SPD_KI, flash_data->spd_ki);
+  Param_WriteFloat(PARAM_POS_KP, flash_data->pos_kp);
+  // PARAM_CUR_FILT_GAIN and PARAM_SPD_FILT_GAIN removed - PidTypeDef has no
+  // filter_alpha Param_WriteFloat(PARAM_CUR_FILT_GAIN,
+  // flash_data->cur_filt_gain); Param_WriteFloat(PARAM_SPD_FILT_GAIN,
+  // flash_data->spd_filt_gain);
+  // limitparam
+  Param_WriteFloat(PARAM_LIMIT_TORQUE, flash_data->limit_torque);
+  Param_WriteFloat(PARAM_LIMIT_CURRENT, flash_data->limit_current);
+  Param_WriteFloat(PARAM_LIMIT_SPEED, flash_data->limit_speed);
+  // position/speed/velocitymodeparam
+  Param_WriteFloat(PARAM_VEL_MAX, flash_data->vel_max);
+  Param_WriteFloat(PARAM_ACC_SET, flash_data->acc_set);
+  Param_WriteFloat(PARAM_ACC_RAD, flash_data->acc_rad);
+  Param_WriteFloat(PARAM_INERTIA, flash_data->inertia);
+  // CANconfig
+  Param_WriteUint8(PARAM_CAN_ID, flash_data->can_id);
+  Param_WriteUint8(PARAM_CAN_BAUDRATE, flash_data->can_baudrate);
+  Param_WriteUint8(PARAM_PROTOCOL_TYPE, flash_data->protocol_type);
+  // config
+  Param_WriteUint8(PARAM_ZERO_STA, flash_data->zero_sta);
+  Param_WriteFloat(PARAM_ADD_OFFSET, flash_data->add_offset);
+  Param_WriteUint8(PARAM_DAMPER, flash_data->damper);
+  Param_WriteUint8(PARAM_RUN_MODE, flash_data->run_mode);
+  // CANtimeout ( UINT32 )
+  (void)Param_WriteUint32(PARAM_CAN_TIMEOUT, flash_data->can_timeout);
+  // protectionconfig
+  Param_WriteFloat(PARAM_OV_THRESHOLD, flash_data->over_voltage_threshold);
+  Param_WriteFloat(PARAM_UV_THRESHOLD, flash_data->under_voltage_threshold);
+  Param_WriteFloat(PARAM_OC_THRESHOLD, flash_data->over_current_threshold);
+  Param_WriteFloat(PARAM_OT_THRESHOLD, flash_data->over_temp_threshold);
+  // config
+  Param_WriteFloat(PARAM_SMO_ALPHA, flash_data->smo_alpha);
+  Param_WriteFloat(PARAM_SMO_BETA, flash_data->smo_beta);
+  Param_WriteFloat(PARAM_FF_FRICTION, flash_data->ff_friction);
+  Param_WriteFloat(PARAM_FW_MAX_CUR, flash_data->fw_max_current);
+  Param_WriteFloat(PARAM_FW_START_VEL, flash_data->fw_start_velocity);
+  Param_WriteFloat(PARAM_COGGING_EN, flash_data->cogging_comp_enabled);
+  Param_WriteFloat(PARAM_LADRC_ENABLE, flash_data->ladrc_enable);
+  Param_WriteFloat(PARAM_LADRC_OMEGA_O, flash_data->ladrc_omega_o);
+  Param_WriteFloat(PARAM_LADRC_OMEGA_C, flash_data->ladrc_omega_c);
+  Param_WriteFloat(PARAM_LADRC_B0, flash_data->ladrc_b0);
+  Param_WriteFloat(PARAM_LADRC_MAX_OUT, flash_data->ladrc_max_output);
+  ParamEncoderCalibration_Restore(flash_data);
+
+  s_runtime_side_effects_deferred = false;
+#if !defined(TEST_ENV)
+  CRITICAL_SECTION_END();
+#endif
+  Param_ApplyRuntimeState();
 }
-static void RestoreParamsFromFlashData(const FlashParamData *flash_data) {
-  for (size_t i = 0; i < FLASH_BINDING_COUNT; ++i) {
-    const FlashParamBinding *field = &s_flash_bindings[i];
-    const uint8_t *src = (const uint8_t *)flash_data + field->offset;
-    if (field->type == PARAM_TYPE_FLOAT) {
-      float value;
-      memcpy(&value, src, sizeof(value));
-      Param_WriteFloat(field->index, value);
-    } else if (field->type == PARAM_TYPE_UINT8) {
-      Param_WriteUint8(field->index, *src);
-    } else {
-      uint32_t *value = FlashTimeoutValue(field->index);
-      if (value) memcpy(value, src, sizeof(*value));
-    }
+
+static ParamResult Param_ValidateFloatValue(uint16_t index, float value) {
+  return Param_ValidateWriteValue(index, PARAM_TYPE_FLOAT, &value,
+                                  "Flash restore float validation");
+}
+
+static ParamResult Param_ValidateUint8Value(uint16_t index, uint8_t value) {
+  return Param_ValidateWriteValue(index, PARAM_TYPE_UINT8, &value,
+                                  "Flash restore uint8 validation");
+}
+
+static ParamResult Param_ValidateUint32Value(uint16_t index, uint32_t value) {
+  return Param_ValidateWriteValue(index, PARAM_TYPE_UINT32, &value,
+                                  "Flash restore uint32 validation");
+}
+
+#define PARAM_RESTORE_CHECK(expression)                                         \
+  do {                                                                          \
+    ParamResult restore_result = (expression);                                  \
+    if (restore_result != PARAM_OK) {                                            \
+      return restore_result;                                                     \
+    }                                                                           \
+  } while (0)
+
+static ParamResult ValidateParamsFromFlashData(
+    const FlashParamData *flash_data) {
+  if (flash_data == NULL) {
+    return PARAM_ERR_NULL_PTR;
   }
+
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_MOTOR_RS, flash_data->motor_rs));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_MOTOR_LS, flash_data->motor_ls));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_MOTOR_FLUX, flash_data->motor_flux));
+  PARAM_RESTORE_CHECK(Param_ValidateUint8Value(PARAM_MOTOR_POLE_PAIRS, flash_data->motor_pole_pairs));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_CUR_KP, flash_data->cur_kp));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_CUR_KI, flash_data->cur_ki));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_SPD_KP, flash_data->spd_kp));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_SPD_KI, flash_data->spd_ki));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_POS_KP, flash_data->pos_kp));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_LIMIT_TORQUE, flash_data->limit_torque));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_LIMIT_CURRENT, flash_data->limit_current));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_LIMIT_SPEED, flash_data->limit_speed));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_VEL_MAX, flash_data->vel_max));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_ACC_SET, flash_data->acc_set));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_ACC_RAD, flash_data->acc_rad));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_INERTIA, flash_data->inertia));
+  PARAM_RESTORE_CHECK(Param_ValidateUint8Value(PARAM_CAN_ID, flash_data->can_id));
+  PARAM_RESTORE_CHECK(Param_ValidateUint8Value(PARAM_CAN_BAUDRATE, flash_data->can_baudrate));
+  PARAM_RESTORE_CHECK(Param_ValidateUint8Value(PARAM_PROTOCOL_TYPE, flash_data->protocol_type));
+  PARAM_RESTORE_CHECK(Param_ValidateUint8Value(PARAM_ZERO_STA, flash_data->zero_sta));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_ADD_OFFSET, flash_data->add_offset));
+  PARAM_RESTORE_CHECK(Param_ValidateUint8Value(PARAM_DAMPER, flash_data->damper));
+  PARAM_RESTORE_CHECK(Param_ValidateUint8Value(PARAM_RUN_MODE, flash_data->run_mode));
+  PARAM_RESTORE_CHECK(Param_ValidateUint32Value(PARAM_CAN_TIMEOUT, flash_data->can_timeout));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_OV_THRESHOLD, flash_data->over_voltage_threshold));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_UV_THRESHOLD, flash_data->under_voltage_threshold));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_OC_THRESHOLD, flash_data->over_current_threshold));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_OT_THRESHOLD, flash_data->over_temp_threshold));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_SMO_ALPHA, flash_data->smo_alpha));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_SMO_BETA, flash_data->smo_beta));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_FF_FRICTION, flash_data->ff_friction));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_FW_MAX_CUR, flash_data->fw_max_current));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_FW_START_VEL, flash_data->fw_start_velocity));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_COGGING_EN, flash_data->cogging_comp_enabled));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_LADRC_ENABLE, flash_data->ladrc_enable));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_LADRC_OMEGA_O, flash_data->ladrc_omega_o));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_LADRC_OMEGA_C, flash_data->ladrc_omega_c));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_LADRC_B0, flash_data->ladrc_b0));
+  PARAM_RESTORE_CHECK(Param_ValidateFloatValue(PARAM_LADRC_MAX_OUT, flash_data->ladrc_max_output));
+  if (!ParamEncoderCalibration_IsFlashDataValid(flash_data)) {
+    ERROR_REPORT(ERROR_PARAM_INVALID_VALUE,
+                 "Flash restore encoder metadata invalid");
+    return PARAM_ERR_OUT_OF_RANGE;
+  }
+
+  return PARAM_OK;
 }
+
+static ParamResult RestoreParamsFromFlashData(
+    const FlashParamData *flash_data) {
+  ParamResult result = ValidateParamsFromFlashData(flash_data);
+  if (result != PARAM_OK) {
+    return result;
+  }
+  ApplyParamsFromFlashData(flash_data);
+  return PARAM_OK;
+}
+
+#undef PARAM_RESTORE_CHECK
 ParamResult Param_SaveToFlash(void) {
-  FlashParamData flash_data;
   // param FlashParamData
-  CollectParamsToFlashData(&flash_data);
+  CollectParamsToFlashData(&s_flash_workspace);
+  ParamResult validation =
+      ValidateParamsFromFlashData(&s_flash_workspace);
+  if (validation != PARAM_OK) {
+    ERROR_REPORT(ERROR_PARAM_WRITE_FAILED, "Runtime parameters failed validation");
+    return validation;
+  }
   //
-  FlashStorageResult result = ParamStorage_Save(&flash_data);
+  FlashStorageResult result = ParamStorage_Save(&s_flash_workspace);
   // error
   switch (result) {
   case FLASH_STORAGE_OK:
@@ -300,32 +797,35 @@ ParamResult Param_SaveToFlash(void) {
   case FLASH_STORAGE_ERR_WRITE:
   case FLASH_STORAGE_ERR_VERIFY:
     ERROR_REPORT(ERROR_PARAM_WRITE_FAILED, "Flash save failed");
-    return PARAM_ERR_INVALID_TYPE; // error
+    return PARAM_ERR_STORAGE;
   default:
     ERROR_REPORT(ERROR_PARAM_WRITE_FAILED, "Flash save error");
-    return PARAM_ERR_INVALID_TYPE;
+    return PARAM_ERR_STORAGE;
   }
 }
 ParamResult Param_LoadFromFlash(void) {
-  // check Flash
-  if (!ParamStorage_HasValidData()) {
-    ERROR_REPORT(ERROR_PARAM_READ_FAILED, "No valid Flash data");
-    return PARAM_ERR_INVALID_INDEX;
-  }
-  FlashParamData flash_data;
   //  Flash
-  FlashStorageResult result = ParamStorage_Load(&flash_data);
+  FlashStorageResult result = ParamStorage_Load(&s_flash_workspace);
   if (result != FLASH_STORAGE_OK) {
     ERROR_REPORT(ERROR_PARAM_READ_FAILED, "Flash load failed");
-    return PARAM_ERR_INVALID_TYPE;
+    return PARAM_ERR_STORAGE;
   }
   // param
-  RestoreParamsFromFlashData(&flash_data);
-  return PARAM_OK;
+  ParamResult restore_result =
+      RestoreParamsFromFlashData(&s_flash_workspace);
+  if (restore_result != PARAM_OK) {
+    ERROR_REPORT(ERROR_PARAM_READ_FAILED, "Flash values failed validation");
+  }
+  return restore_result;
 }
 ParamResult Param_SystemInitOnce(void) {
   if (s_param_system_initialized) {
     return PARAM_OK;
+  }
+  if (!ParamTable_IsBound()) {
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR,
+                 "Param_SystemInitOnce: parameter targets are unbound");
+    return PARAM_ERR_NULL_PTR;
   }
   ParamTable_Init();
   ParamResult result = Param_LoadFromFlash();
@@ -333,50 +833,59 @@ ParamResult Param_SystemInitOnce(void) {
   return result;
 }
 ParamResult Param_RestoreDefaults(void) {
+  if (!ParamTable_IsBound()) {
+    ERROR_REPORT(ERROR_PARAM_NULL_PTR,
+                 "RestoreDefaults: parameter targets are unbound");
+    return PARAM_ERR_NULL_PTR;
+  }
   const ParamEntry *table = ParamTable_GetTable();
   uint32_t count = ParamTable_GetCount();
   if (table == NULL || count == 0) {
     ERROR_REPORT(ERROR_PARAM_INVALID_INDEX, "RestoreDefaults: empty table");
     return PARAM_ERR_INVALID_INDEX;
   }
-  // param，param
+
   for (uint32_t i = 0; i < count; i++) {
     const ParamEntry *entry = &table[i];
-    // param
+    if ((entry->access & PARAM_ACCESS_W) &&
+        !ParamTable_IsDefaultValid(entry)) {
+      ERROR_REPORT(ERROR_PARAM_INVALID_VALUE,
+                   "RestoreDefaults: invalid table default");
+      return PARAM_ERR_OUT_OF_RANGE;
+    }
+  }
+
+  ParamResult result = PARAM_OK;
+#if !defined(TEST_ENV)
+  CRITICAL_SECTION_BEGIN();
+#endif
+  s_runtime_side_effects_deferred = true;
+  for (uint32_t i = 0; i < count; i++) {
+    const ParamEntry *entry = &table[i];
     if (!(entry->access & PARAM_ACCESS_W)) {
       continue;
     }
-    //
-    switch (entry->type) {
-    case PARAM_TYPE_UINT8: {
-      uint8_t val = (uint8_t)entry->default_val;
-      *(uint8_t *)entry->ptr = val;
-      break;
+
+    ParamTargetBinding binding = {0};
+    result = ParamTable_GetBinding(entry, &binding);
+    if (result == PARAM_OK) {
+      result = Param_WriteFromFloat(entry->index, binding.default_val);
     }
-    case PARAM_TYPE_UINT16: {
-      uint16_t val = (uint16_t)entry->default_val;
-      *(uint16_t *)entry->ptr = val;
-      break;
-    }
-    case PARAM_TYPE_INT32: {
-      int32_t val = (int32_t)entry->default_val;
-      *(int32_t *)entry->ptr = val;
-      break;
-    }
-    case PARAM_TYPE_UINT32: {
-      uint32_t val = (uint32_t)entry->default_val;
-      *(uint32_t *)entry->ptr = val;
-      break;
-    }
-    case PARAM_TYPE_FLOAT: {
-      *(float *)entry->ptr = entry->default_val;
-      break;
-    }
-    default:
+    if (result != PARAM_OK) {
+      ERROR_REPORT(ERROR_PARAM_INVALID_VALUE,
+                   "RestoreDefaults: invalid table default");
       break;
     }
   }
-  return PARAM_OK;
+
+  s_runtime_side_effects_deferred = false;
+#if !defined(TEST_ENV)
+  CRITICAL_SECTION_END();
+#endif
+  if (result == PARAM_OK) {
+    Param_ApplyRuntimeState();
+  }
+  return result;
 }
 ParamResult Param_GetInfo(uint16_t index, const ParamEntry **entry) {
   if (entry == NULL) {
@@ -390,12 +899,115 @@ ParamResult Param_GetInfo(uint16_t index, const ParamEntry **entry) {
   }
   return PARAM_OK;
 }
-void Param_ScheduleSave(void) { s_param_save_pending = true; }
-bool Param_ProcessScheduledSave(void) {
-  if (s_param_save_pending) {
+static void Param_SetSavePending(void) {
+#if defined(TEST_ENV)
+  s_param_save_pending = true;
+#else
+  CRITICAL_SECTION_BEGIN();
+  s_param_save_pending = true;
+  CRITICAL_SECTION_END();
+#endif
+}
+
+static bool Param_TakeSavePending(void) {
+  bool pending;
+#if defined(TEST_ENV)
+  pending = s_param_save_pending;
+  s_param_save_pending = false;
+#else
+  CRITICAL_SECTION_BEGIN();
+  pending = s_param_save_pending;
+  s_param_save_pending = false;
+  CRITICAL_SECTION_END();
+#endif
+  return pending;
+}
+
+void Param_ScheduleSave(void) {
+#if defined(TEST_ENV)
+  s_param_save_generation++;
+  s_param_save_pending = true;
+#else
+  CRITICAL_SECTION_BEGIN();
+  s_param_save_generation++;
+  s_param_save_pending = true;
+  CRITICAL_SECTION_END();
+#endif
+}
+
+bool Param_HasScheduledSave(void) {
+  bool pending;
+#if defined(TEST_ENV)
+  pending = s_param_save_pending;
+#else
+  CRITICAL_SECTION_BEGIN();
+  pending = s_param_save_pending;
+  CRITICAL_SECTION_END();
+#endif
+  return pending;
+}
+
+uint32_t Param_GetScheduledSaveGeneration(void) {
+  uint32_t generation;
+#if defined(TEST_ENV)
+  generation = s_param_save_generation;
+#else
+  CRITICAL_SECTION_BEGIN();
+  generation = s_param_save_generation;
+  CRITICAL_SECTION_END();
+#endif
+  return generation;
+}
+
+void Param_DiscardScheduledSave(void) {
+#if defined(TEST_ENV)
+  s_param_save_pending = false;
+#else
+  CRITICAL_SECTION_BEGIN();
+  s_param_save_pending = false;
+  CRITICAL_SECTION_END();
+#endif
+}
+
+bool Param_DiscardScheduledSaveIfGeneration(uint32_t generation) {
+  bool discarded = false;
+#if defined(TEST_ENV)
+  if (s_param_save_generation == generation) {
     s_param_save_pending = false;
-    Param_SaveToFlash();
-    return true;
+    discarded = true;
   }
-  return false;
+#else
+  CRITICAL_SECTION_BEGIN();
+  if (s_param_save_generation == generation) {
+    s_param_save_pending = false;
+    discarded = true;
+  }
+  CRITICAL_SECTION_END();
+#endif
+  return discarded;
+}
+
+ParamResult Param_RollbackScheduledSave(void) {
+  ParamResult result = Param_LoadFromFlash();
+  if (result == PARAM_OK) {
+    return PARAM_OK;
+  }
+
+  result = Param_RestoreDefaults();
+  if (result == PARAM_OK) {
+    ParamEncoderCalibration_Clear();
+  }
+  return result;
+}
+
+bool Param_ProcessScheduledSave(void) {
+  if (!Param_TakeSavePending()) {
+    return false;
+  }
+  if (Param_SaveToFlash() != PARAM_OK) {
+    /* Retry later, while preserving any request raised during this attempt. */
+    Param_SetSavePending();
+    return false;
+  }
+  return true;
 }

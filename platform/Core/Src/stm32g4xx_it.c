@@ -7,12 +7,19 @@
 #include "main.h"
 #include "stm32g4xx_it.h"
 
+#include <stdbool.h>
+
 /* External peripheral handles */
 extern ADC_HandleTypeDef   hadc1;
 extern ADC_HandleTypeDef   hadc2;
 extern FDCAN_HandleTypeDef hfdcan1;
 extern TIM_HandleTypeDef   htim1;
 
+#ifdef BOARD_XSTAR
+extern TIM_HandleTypeDef   htim3;
+extern TIM_HandleTypeDef   htim17;
+extern UART_HandleTypeDef  huart2;
+#else
 extern PCD_HandleTypeDef   hpcd_USB_FS;
 extern DMA_HandleTypeDef   hdma_adc2;
 extern DMA_HandleTypeDef   hdma_tim3_ch2;
@@ -20,30 +27,36 @@ extern DMA_HandleTypeDef   hdma_usart1_rx;
 extern DMA_HandleTypeDef   hdma_usart1_tx;
 extern UART_HandleTypeDef  huart1;
 extern TIM_HandleTypeDef   htim17;
+#endif
 
 /* ---- Cortex-M4 Exception Handlers ---- */
 
 void NMI_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
 
 void HardFault_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
 
 void MemManage_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
 
 void BusFault_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
 
 void UsageFault_Handler(void) {
+  Emergency_Shutdown();
   while (1) {
   }
 }
@@ -53,9 +66,24 @@ void DebugMon_Handler(void) {
 
 /* ---- Peripheral Interrupt Handlers ---- */
 
+static bool ADC_HasPendingEnabledInterrupt(const ADC_HandleTypeDef *hadc) {
+  const uint32_t adc_irq_mask =
+      ADC_IT_RDY | ADC_IT_EOSMP | ADC_IT_EOC | ADC_IT_EOS | ADC_IT_OVR |
+      ADC_IT_JEOC | ADC_IT_JEOS | ADC_IT_AWD1 | ADC_IT_AWD2 | ADC_IT_AWD3 |
+      ADC_IT_JQOVF;
+
+  return hadc != NULL && hadc->Instance != NULL &&
+         ((hadc->Instance->ISR & hadc->Instance->IER & adc_irq_mask) != 0U);
+}
+
 /* ADC1 + ADC2 shared interrupt（FOC ISR，两块板通用） */
 void ADC1_2_IRQHandler(void) {
-  HAL_ADC_IRQHandler(&hadc1);
+  if (ADC_HasPendingEnabledInterrupt(&hadc1)) {
+    HAL_ADC_IRQHandler(&hadc1);
+  }
+  if (ADC_HasPendingEnabledInterrupt(&hadc2)) {
+    HAL_ADC_IRQHandler(&hadc2);
+  }
 }
 
 /* FDCAN1 interrupt line 0 */
@@ -68,7 +96,31 @@ void FDCAN1_IT1_IRQHandler(void) {
   HAL_FDCAN_IRQHandler(&hfdcan1);
 }
 
-/* DMA, USB, timer and UART interrupts for the selected hardware adapter. */
+#ifdef BOARD_XSTAR
+/* ---- X-STAR-S 专用中断 ---- */
+
+/* TIM17: HAL tick 源（与 TIM1_TRG_COM 共享中断线） */
+void TIM1_TRG_COM_TIM17_IRQHandler(void) {
+  HAL_TIM_IRQHandler(&htim17);
+}
+
+/* TIM3: Hall 传感器跳变检测（CC1 中断） */
+void TIM3_IRQHandler(void) {
+  HAL_TIM_IRQHandler(&htim3);
+}
+
+/* USART2: 调试串口 */
+void USART2_IRQHandler(void) {
+  HAL_UART_IRQHandler(&huart2);
+}
+
+/* TIM1 更新中断（HAL Tick 用 TIM17，此处仅处理 TIM1 本身事件） */
+void TIM1_UP_TIM16_IRQHandler(void) {
+  HAL_TIM_IRQHandler(&htim1);
+}
+
+#else
+/* ---- VectorFOC 专用中断 ---- */
 
 /* DMA1 Ch1: TIM3_CH2 (WS2812 LED) */
 void DMA1_Channel1_IRQHandler(void) {
@@ -109,3 +161,5 @@ void TIM1_TRG_COM_TIM17_IRQHandler(void) {
 void USART1_IRQHandler(void) {
   HAL_UART_IRQHandler(&huart1);
 }
+
+#endif /* BOARD_XSTAR */

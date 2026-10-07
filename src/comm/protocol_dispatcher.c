@@ -13,35 +13,48 @@
 // limitations under the License.
 
 /**
- * @file protocol_dispatcher.c
- * @brief CAN queue, protocol routing and communication statistics.
+ * @file manager.c
+ * @brief  -
  *
- * CAN ISR -> Protocol_QueueRxFrame -> communication task -> protocol parser
- *         -> Executor_ProcessCommand.
- * Replies and periodic reports use Protocol_SendFrame -> BSP_CAN_SendFrame.
- * Parsing and command execution always run in task context.
+ * :
+ *   1. : Vector/CANopen/MIT
+ *   2. :
+ *   3. : motor
+ *
+ * :
+ *   CAN → Protocol_ProcessRxFrame() →  → motor
+ *                                       ↓
+ *   CAN ← Protocol_BuildFeedback() ← state
+ *
+ * :
+ *   Protocol_Init(PROTOCOL_VECTOR);        // init
+ *   Protocol_ProcessRxFrame(&can_frame);    // CANinterrupt
+ *   Protocol_SendFrame(&can_frame);         // CAN
+    CAN 。
  */
-#include "main.h" // For FDCAN support
 #include "protocol_dispatcher.h"
-#include "board_can.h" //  CAN
 #include "board_cycle_counter.h"
-#include "protocol_canopen.h"
+#include "device_identity.h"
 #include "error_manager.h"
 #include "error_types.h"
 #include "command_executor.h"
+#include "fault_monitor.h"
 #include "drive_state_machine.h"
 #include "hardware_interface.h"
 #include "encoder_interface.h"
-#include "protocol_vector.h"
-#include "protocol_mit.h"
+#include "main.h" // For FDCAN support
 #include "motor_runtime.h"
-#include "safety_manager.h" // For Safety_GetActiveFaultBits
 #include "parameter_access.h"
 #include "parameter_registry.h"
-#include "device_identity.h"
+#include "common.h"
+#include "protocol_canopen.h"
+#include "protocol_mit.h"
+#include "protocol_vector.h"
+#include "safety_manager.h" // For Safety_GetActiveFaultBits
+#include "board_can.h"
 #include <string.h>
 #define CAN_BROADCAST_ADDR 0x7F   ///< CAN
-#define VECTOR_CMD_GET_ID 0x00   ///< InovxiogetID
+#define VECTOR_CMD_GET_ID 0x00    ///< Vector GET_ID
 #define PROTOCOL_RX_QUEUE_LEN 32U ///< Rx ring buffer length
 /*  */
 static ProtocolType s_current_protocol = PROTOCOL_VECTOR;
@@ -54,19 +67,55 @@ static volatile bool s_rx_overflow = false;
 /* Communication statistics */
 static CommStats_t s_comm_stats = {0};
 static volatile uint32_t s_rx_queue_peak = 0;
+static uint32_t s_rx_overflow_reported_drops = 0;
+
+static void Protocol_FillMotorStatus(MotorStatus *status) {
+  if (status == NULL) {
+    return;
+  }
+  memset(status, 0, sizeof(*status));
+  status->position = Protocol_TurnsToRadians(motor_data.feedback.position);
+  status->velocity = Protocol_TurnsToRadians(motor_data.feedback.velocity);
+  status->torque = motor_data.Controller.torque_setpoint;
+  status->temperature = motor_data.feedback.temperature;
+  status->voltage = motor_data.algo_input.Vbus;
+  status->motor_state = (uint8_t)motor_data.state.State_Mode;
+  status->control_mode = (uint8_t)motor_data.state.Control_Mode;
+  status->fault_code = Safety_GetActiveFaultBits();
+  status->can_id = g_can_id;
+  status->calib_stage = (uint8_t)motor_data.state.Sub_State;
+  status->calib_sub_stage = (uint8_t)motor_data.state.Cs_State;
+  status->calib_progress = CalibContext_GetProgress(motor_data.state.Sub_State,
+                                                    motor_data.state.Cs_State,
+                                                    &motor_data.calib_ctx);
+  status->calib_result = motor_data.last_calib_result;
+}
+
 static bool Protocol_DequeueRxFrame(CAN_Frame *out) {
   if (out == NULL) {
     return false;
   }
   bool has_frame = false;
-  __disable_irq();
+  CRITICAL_SECTION_BEGIN();
   if (s_rx_head != s_rx_tail) {
     *out = s_rx_queue[s_rx_tail];
     s_rx_tail = (uint8_t)((s_rx_tail + 1U) % PROTOCOL_RX_QUEUE_LEN);
     has_frame = true;
   }
-  __enable_irq();
+  CRITICAL_SECTION_END();
   return has_frame;
+}
+/**
+ * @brief
+ */
+static void Protocol_RecordTxResult(bool success) {
+  CRITICAL_SECTION_BEGIN();
+  if (success) {
+    s_comm_stats.tx_frames_total++;
+  } else {
+    s_comm_stats.tx_frames_failed++;
+  }
+  CRITICAL_SECTION_END();
 }
 /**
  * @brief init
@@ -85,7 +134,7 @@ void Protocol_Init(ProtocolType default_protocol) {
     ProtocolMIT_Init();
     break;
   default:
-    // Inovxio
+    // Vector private protocol
     s_current_protocol = PROTOCOL_VECTOR;
     ProtocolVector_Init();
     break;
@@ -110,6 +159,11 @@ ProtocolType Protocol_GetType(void) { return s_current_protocol; }
 ParseResult Protocol_ParseFrame(const CAN_Frame *frame, MotorCommand *cmd) {
   if (frame == NULL || cmd == NULL) {
     ERROR_REPORT(ERROR_COMM_INVALID_FRAME, "Invalid CAN frame");
+    return PARSE_ERR_INVALID_FRAME;
+  }
+  if (frame->is_rtr) {
+    s_comm_stats.parse_errors++;
+    ERROR_REPORT(ERROR_COMM_INVALID_FRAME, "RTR frame rejected");
     return PARSE_ERR_INVALID_FRAME;
   }
   ParseResult result;
@@ -203,26 +257,56 @@ bool Protocol_BuildCalibStatus(const MotorStatus *status, CAN_Frame *frame) {
 }
 /**
  * @brief CAN
- * @note ， BSP_CAN_SendFrame
  */
 bool Protocol_SendFrame(const CAN_Frame *frame) {
-  if (frame == NULL) {
+  if (frame == NULL || frame->dlc > sizeof(frame->data) || frame->is_rtr) {
     return false;
   }
-  /* Preserve the classic-CAN data-frame contract of the former adapter. */
-  CAN_Frame tx_frame = {0};
-  tx_frame.id = frame->id;
-  tx_frame.dlc = (frame->dlc > 8U) ? 8U : frame->dlc;
-  tx_frame.is_extended = frame->is_extended;
-  tx_frame.is_rtr = false;
-  memcpy(tx_frame.data, frame->data, tx_frame.dlc);
-  bool result = BSP_CAN_SendFrame(&tx_frame);
-  if (result) {
-    s_comm_stats.tx_frames_total++;
-  } else {
-    s_comm_stats.tx_frames_failed++;
-  }
+
+  BSP_CAN_Frame bsp_frame = {0};
+  bsp_frame.id = frame->id;
+  bsp_frame.dlc = frame->dlc;
+  bsp_frame.is_extended = frame->is_extended;
+  memcpy(bsp_frame.data, frame->data, frame->dlc);
+  bool result = BSP_CAN_SendFrame(&bsp_frame);
+  Protocol_RecordTxResult(result);
   return result;
+}
+
+bool Protocol_SendTrackedFrame(const CAN_Frame *frame,
+                               BSP_CAN_TxTicket *ticket) {
+  if (frame == NULL || ticket == NULL) {
+    return false;
+  }
+  memset(ticket, 0, sizeof(*ticket));
+  if (frame->dlc > sizeof(frame->data) || frame->is_rtr) {
+    return false;
+  }
+
+  BSP_CAN_Frame bsp_frame = {0};
+  bsp_frame.id = frame->id;
+  bsp_frame.dlc = frame->dlc;
+  bsp_frame.is_extended = frame->is_extended;
+  memcpy(bsp_frame.data, frame->data, frame->dlc);
+  bool result = BSP_CAN_SendTrackedFrame(&bsp_frame, ticket);
+  Protocol_RecordTxResult(result);
+  return result;
+}
+
+bool Protocol_TxTicketIsComplete(const BSP_CAN_TxTicket *ticket) {
+  if (ticket == NULL || ticket->marker == 0U) {
+    return false;
+  }
+
+  return BSP_CAN_TxTicketIsComplete(ticket);
+}
+
+void Protocol_CancelTrackedSend(const BSP_CAN_TxTicket *ticket) {
+  if (ticket == NULL || ticket->marker == 0U) {
+    return;
+  }
+
+  BSP_CAN_CancelTrackedSend(ticket);
 }
 /**
  * @brief Rx (ISRsafety)
@@ -254,14 +338,26 @@ bool Protocol_QueueRxFrame(const CAN_Frame *frame) {
  * @brief CAN
  */
 void Protocol_ProcessQueuedFrames(void) {
-  CAN_Frame frame;
-  if (s_rx_overflow) {
+  CAN_Frame frame = {0};
+  bool had_overflow = false;
+  uint32_t dropped_snapshot = 0;
+  CRITICAL_SECTION_BEGIN();
+  had_overflow = s_rx_overflow;
+  if (had_overflow) {
     s_rx_overflow = false;
+    dropped_snapshot = s_rx_dropped;
+  }
+  CRITICAL_SECTION_END();
+  if (had_overflow && dropped_snapshot != s_rx_overflow_reported_drops) {
+    s_rx_overflow_reported_drops = dropped_snapshot;
     s_comm_stats.rx_overflow_events++;
     ErrorManager_Report(ERROR_COMM_INVALID_FRAME, "Rx queue overflow");
   }
   while (Protocol_DequeueRxFrame(&frame)) {
     Protocol_ProcessRxFrame(&frame);
+  }
+  if (s_current_protocol == PROTOCOL_VECTOR) {
+    ProtocolVector_Service();
   }
 }
 /**
@@ -278,15 +374,19 @@ void Protocol_ProcessRxFrame(const CAN_Frame *frame) {
   start_cnt = DWT->CYCCNT;
 #endif
   MotorCommand cmd;
+  if (frame->is_rtr) {
+    (void)Protocol_ParseFrame(frame, &cmd);
+    return;
+  }
   // 0. Vector GET_ID fast-path (before full parse)
   // ，motor
-  if (s_current_protocol == PROTOCOL_VECTOR) {
+  if (s_current_protocol == PROTOCOL_VECTOR && frame->is_extended) {
     uint8_t cmd_type = (frame->id >> 24) & 0x1F;
     if (cmd_type == VECTOR_CMD_GET_ID) {
       uint8_t target = frame->id & 0xFF;
       // ID
       if (target == g_can_id || target == CAN_BROADCAST_ADDR) {
-        CAN_Frame tx_frame;
+        CAN_Frame tx_frame = {0};
         // : [0][MyID][FE][UUID-Low32]
         // UUID32，
         tx_frame.id = (0x00 << 24) | (g_can_id << 8) | 0xFE;
@@ -296,6 +396,7 @@ void Protocol_ProcessRxFrame(const CAN_Frame *frame) {
         DeviceUID_t uid;
         DeviceID_GetUID(&uid);
         memcpy(tx_frame.data, &uid, 8); // 8 (word0 + word1)
+        Detection_FeedWatchdog(HAL_GetSystemTick());
         Protocol_SendFrame(&tx_frame);
         return; // ，
       }
@@ -305,7 +406,17 @@ void Protocol_ProcessRxFrame(const CAN_Frame *frame) {
   ParseResult result = Protocol_ParseFrame(frame, &cmd);
   // 2. :  MotorCommand
   if (result == PARSE_OK) {
-    Executor_ProcessCommand(&cmd);
+    Detection_FeedWatchdog(HAL_GetSystemTick());
+    if (cmd.request_feedback) {
+      MotorStatus status;
+      CAN_Frame tx_frame = {0};
+      Protocol_FillMotorStatus(&status);
+      if (Protocol_BuildFeedback(&status, &tx_frame)) {
+        Protocol_SendFrame(&tx_frame);
+      }
+    } else {
+      Executor_ProcessCommand(&cmd);
+    }
   }
 #ifdef DEBUG
   // Calculate execution time
@@ -319,7 +430,7 @@ void Protocol_ProcessRxFrame(const CAN_Frame *frame) {
  * @brief  Callback for Safety Module to report faults via CAN.
  */
 bool Protocol_ReportFaultCallback(uint32_t fault_bits, MOTOR_DATA *motor) {
-  CAN_Frame tx_frame;
+  CAN_Frame tx_frame = {0};
   // Build fault frame (CMD 21)
   if (Protocol_BuildFault(fault_bits, &tx_frame)) {
     // Send frame (returns true on success, false on TX full)
@@ -330,7 +441,7 @@ bool Protocol_ReportFaultCallback(uint32_t fault_bits, MOTOR_DATA *motor) {
 void Protocol_PeriodicUpdate(uint32_t now_ms, const MotorStatus *status) {
   (void)status;
   if (s_current_protocol == PROTOCOL_CANOPEN) {
-    CAN_Frame hb_frame;
+    CAN_Frame hb_frame = {0};
     if (ProtocolCANopen_BuildHeartbeat(now_ms, &hb_frame)) {
       Protocol_SendFrame(&hb_frame);
     }
@@ -343,7 +454,7 @@ void Protocol_GetStats(CommStats_t *stats) {
   if (stats == NULL) {
     return;
   }
-  __disable_irq();
+  CRITICAL_SECTION_BEGIN();
   *stats = s_comm_stats;
   // Calculate current queue depth
   uint8_t depth = (s_rx_head >= s_rx_tail)
@@ -351,13 +462,13 @@ void Protocol_GetStats(CommStats_t *stats) {
                       : (PROTOCOL_RX_QUEUE_LEN - s_rx_tail + s_rx_head);
   stats->rx_queue_depth = depth;
   stats->rx_queue_peak = s_rx_queue_peak;
-  __enable_irq();
+  CRITICAL_SECTION_END();
 }
 /**
  * @brief Reset communication statistics
  */
 void Protocol_ResetStats(void) {
-  __disable_irq();
+  CRITICAL_SECTION_BEGIN();
   s_comm_stats.rx_frames_total = 0;
   s_comm_stats.rx_frames_dropped = 0;
   s_comm_stats.rx_overflow_events = 0;
@@ -366,5 +477,6 @@ void Protocol_ResetStats(void) {
   s_comm_stats.parse_errors = 0;
   s_comm_stats.exec_time_max_us = 0;
   s_rx_queue_peak = 0;
-  __enable_irq();
+  s_rx_overflow_reported_drops = s_rx_dropped;
+  CRITICAL_SECTION_END();
 }

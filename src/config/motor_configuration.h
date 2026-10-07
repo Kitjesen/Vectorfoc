@@ -156,7 +156,7 @@
 #define FLUX_CALIB_VEL (5.0f * M_PI)  // fluxcalibrationspeed/velocity [rad/s]
 #define CALIB_FILTER_ALPHA 0.01f      // calibrationfilter
 /* param */
-#define MAX_POLE_PAIRS 7          // pole pairs (≥ DEFAULT_POLE_PAIRS=7, reduces calib RAM)
+#define MAX_POLE_PAIRS 20          // maximum supported calibration pole pairs
 #define SAMPLES_PER_POLE_PAIR 100 // sample
 #define FLUX_VALID_MIN 0.001f     // flux [Wb]
 #define FLUX_VALID_MAX 0.500f     // flux [Wb]
@@ -200,9 +200,9 @@
  */
 /* config */
 #define DEFAULT_CAN_ID 0x01
-#define DEFAULT_CAN_BAUDRATE 1   // 1Mbps
+#define DEFAULT_CAN_BAUDRATE 0   // 0=1Mbps, 1=500kbps, 2=250kbps
 #define DEFAULT_PROTOCOL_TYPE 0  // Inovxio
-#define DEFAULT_CAN_TIMEOUT_MS 0 // 0=Disable (Safety managed separately)
+#define DEFAULT_CAN_TIMEOUT_MS 1000 // command watchdog [ms]; 0 disables it
 #define DEFAULT_ZERO_STA 0
 #define DEFAULT_ADD_OFFSET 0.0f
 #define DEFAULT_DAMPER_ENABLE 0

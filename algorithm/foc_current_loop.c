@@ -14,12 +14,13 @@
 
 /**
  * @file    foc_current_loop.c
- * @brief   FOC（，）
+ * @brief   Chip-independent current control and validated PWM output
  */
 #include "foc_current_loop.h"
 #include "foc_transforms.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #ifndef MATH_PI
 #define MATH_PI 3.14159265358979323846f
@@ -29,6 +30,77 @@
 #define VOLTAGE_MARGIN 0.95f               /* 5%safety */
 /*  */
 /*  */
+static bool FOC_Algorithm_IsFinite(float value) {
+  union {
+    float f;
+    uint32_t u;
+  } bits;
+  bits.f = value;
+  return (bits.u & 0x7F800000u) != 0x7F800000u;
+}
+
+static void FOC_Algorithm_SetSafeOutput(FOC_AlgorithmOutput_t *output) {
+  output->Ta = 0.5f;
+  output->Tb = 0.5f;
+  output->Tc = 0.5f;
+  output->Ialpha = 0.0f;
+  output->Ibeta = 0.0f;
+  output->Id = 0.0f;
+  output->Iq = 0.0f;
+  output->Vd = 0.0f;
+  output->Vq = 0.0f;
+  output->Valpha = 0.0f;
+  output->Vbeta = 0.0f;
+  output->overmodulation = false;
+  output->voltage_saturated = false;
+  output->current_limited = false;
+}
+
+static bool FOC_Algorithm_StateIsFinite(const FOC_AlgorithmState_t *state) {
+  return FOC_Algorithm_IsFinite(state->integral_d) &&
+         FOC_Algorithm_IsFinite(state->integral_q) &&
+         FOC_Algorithm_IsFinite(state->Id_filt) &&
+         FOC_Algorithm_IsFinite(state->Iq_filt);
+}
+
+static bool FOC_Algorithm_OutputIsFinite(const FOC_AlgorithmOutput_t *output) {
+  return FOC_Algorithm_IsFinite(output->Ta) &&
+         FOC_Algorithm_IsFinite(output->Tb) &&
+         FOC_Algorithm_IsFinite(output->Tc) &&
+         FOC_Algorithm_IsFinite(output->Ialpha) &&
+         FOC_Algorithm_IsFinite(output->Ibeta) &&
+         FOC_Algorithm_IsFinite(output->Id) &&
+         FOC_Algorithm_IsFinite(output->Iq) &&
+         FOC_Algorithm_IsFinite(output->Vd) &&
+         FOC_Algorithm_IsFinite(output->Vq) &&
+         FOC_Algorithm_IsFinite(output->Valpha) &&
+         FOC_Algorithm_IsFinite(output->Vbeta);
+}
+
+static bool FOC_Algorithm_RuntimeInputsFinite(
+    const FOC_AlgorithmInput_t *input, const FOC_AlgorithmConfig_t *config) {
+  return FOC_Algorithm_IsFinite(input->Ia) &&
+         FOC_Algorithm_IsFinite(input->Ib) &&
+         FOC_Algorithm_IsFinite(input->Ic) &&
+         FOC_Algorithm_IsFinite(input->Vbus) &&
+         FOC_Algorithm_IsFinite(input->theta_elec) &&
+         FOC_Algorithm_IsFinite(input->omega_elec) &&
+         FOC_Algorithm_IsFinite(input->Id_ref) &&
+         FOC_Algorithm_IsFinite(input->Iq_ref) &&
+         FOC_Algorithm_IsFinite(config->Kp_current_d) &&
+         FOC_Algorithm_IsFinite(config->Ki_current_d) &&
+         FOC_Algorithm_IsFinite(config->Kp_current_q) &&
+         FOC_Algorithm_IsFinite(config->Ki_current_q) &&
+         FOC_Algorithm_IsFinite(config->Ts_current) &&
+         FOC_Algorithm_IsFinite(config->voltage_limit) &&
+         FOC_Algorithm_IsFinite(config->current_limit) &&
+         FOC_Algorithm_IsFinite(config->decoupling_gain) &&
+         FOC_Algorithm_IsFinite(config->Kb_current) &&
+         FOC_Algorithm_IsFinite(config->current_filter_fc) &&
+         FOC_Algorithm_IsFinite(config->Ls) &&
+         FOC_Algorithm_IsFinite(config->flux);
+}
+
 void FOC_Algorithm_InitState(FOC_AlgorithmState_t *state) {
   if (state == NULL)
     return;
@@ -40,6 +112,14 @@ void FOC_Algorithm_CurrentLoop(const FOC_AlgorithmInput_t *input,
                                FOC_AlgorithmOutput_t *output) {
   if (input == NULL || config == NULL || state == NULL || output == NULL) {
     return;
+  }
+  if (!FOC_Algorithm_RuntimeInputsFinite(input, config)) {
+    FOC_Algorithm_ResetState(state);
+    FOC_Algorithm_SetSafeOutput(output);
+    return;
+  }
+  if (!FOC_Algorithm_StateIsFinite(state)) {
+    FOC_Algorithm_ResetState(state);
   }
   // disableoutput
   if (!input->enabled) {
@@ -66,12 +146,12 @@ void FOC_Algorithm_CurrentLoop(const FOC_AlgorithmInput_t *input,
   // alpha = 2*pi*fc*Ts / (1 + 2*pi*fc*Ts) (Tustin )
   float omega_c = 2.0f * MATH_PI * config->current_filter_fc;
   float dt = config->Ts_current;
-  
+
   // [FIX] 添加 dt 有效性检查，避免除零和异常滤波
   if (dt <= 0.0f || dt > 0.01f) {
     dt = 0.00005f;  // 默认 20kHz
   }
-  
+
   float alpha_filter = (omega_c * dt) / (1.0f + omega_c * dt);
   if (config->current_filter_fc <= 0.0f)
     alpha_filter = 1.0f; // frequency <= 0，filter（）
@@ -121,7 +201,10 @@ void FOC_Algorithm_CurrentLoop(const FOC_AlgorithmInput_t *input,
   // Step 7: voltage
   // limitvoltageinverteroutput
   // V_max = (Vbus / sqrt(3)) * 0.95f ( 5% safety)
-  float V_max = input->Vbus * ONE_OVER_SQRT3 * VOLTAGE_MARGIN;
+  float inverter_limit =
+      fmaxf(input->Vbus, 0.0f) * ONE_OVER_SQRT3 * VOLTAGE_MARGIN;
+  float configured_limit = fmaxf(config->voltage_limit, 0.0f);
+  float V_max = fminf(inverter_limit, configured_limit);
   float V_mag = sqrtf(output->Vd * output->Vd + output->Vq * output->Vq);
   if (V_mag > V_max) {
     float scale = V_max / V_mag;
@@ -150,7 +233,13 @@ void FOC_Algorithm_CurrentLoop(const FOC_AlgorithmInput_t *input,
   // calc
   int ret = SVPWM_Modulate(output->Valpha, output->Vbeta, input->Vbus,
                            &output->Ta, &output->Tb, &output->Tc);
-  output->overmodulation = (ret != 0);
+  output->overmodulation = (ret == SVPWM_STATUS_OVERMODULATION);
+
+  if (!FOC_Algorithm_StateIsFinite(state) ||
+      !FOC_Algorithm_OutputIsFinite(output)) {
+    FOC_Algorithm_ResetState(state);
+    FOC_Algorithm_SetSafeOutput(output);
+  }
 }
 void FOC_Algorithm_ResetState(FOC_AlgorithmState_t *state) {
   if (state == NULL)
@@ -160,3 +249,74 @@ void FOC_Algorithm_ResetState(FOC_AlgorithmState_t *state) {
   state->Id_filt = 0.0f;
   state->Iq_filt = 0.0f;
 }
+bool FOC_Algorithm_ValidateConfig(const FOC_AlgorithmConfig_t *config) {
+  if (config == NULL)
+    return false;
+  if (!FOC_Algorithm_IsFinite(config->Rs) ||
+      !FOC_Algorithm_IsFinite(config->Ls) ||
+      !FOC_Algorithm_IsFinite(config->flux) ||
+      !FOC_Algorithm_IsFinite(config->Kp_current_d) ||
+      !FOC_Algorithm_IsFinite(config->Ki_current_d) ||
+      !FOC_Algorithm_IsFinite(config->Kp_current_q) ||
+      !FOC_Algorithm_IsFinite(config->Ki_current_q) ||
+      !FOC_Algorithm_IsFinite(config->Ts_current) ||
+      !FOC_Algorithm_IsFinite(config->voltage_limit) ||
+      !FOC_Algorithm_IsFinite(config->current_limit) ||
+      !FOC_Algorithm_IsFinite(config->decoupling_gain) ||
+      !FOC_Algorithm_IsFinite(config->Kb_current) ||
+      !FOC_Algorithm_IsFinite(config->current_filter_fc) ||
+      !FOC_Algorithm_IsFinite(config->deadtime_i_thresh) ||
+      !FOC_Algorithm_IsFinite(config->deadtime_Vdiode)) {
+    return false;
+  }
+  // checkmotorparam
+  if (config->Rs <= 0.0f || config->Rs > 100.0f)
+    return false;
+  if (config->Ls <= 0.0f || config->Ls > 1.0f)
+    return false;
+  if (config->flux < 0.0f || config->flux > 1.0f)
+    return false;
+  if (config->pole_pairs == 0 || config->pole_pairs > 50)
+    return false;
+  // checkPIparam
+  if (config->Kp_current_d < 0.0f || config->Ki_current_d < 0.0f)
+    return false;
+  if (config->Kp_current_q < 0.0f || config->Ki_current_q < 0.0f)
+    return false;
+  // checksampleperiod
+  if (config->Ts_current <= 0.0f || config->Ts_current > 0.01f)
+    return false;
+  // checklimit
+  if (config->voltage_limit <= 0.0f)
+    return false;
+  if (config->current_limit <= 0.0f)
+    return false;
+  // checkgain
+  if (config->decoupling_gain < 0.0f || config->decoupling_gain > 1.0f)
+    return false;
+  return true;
+}
+void FOC_Algorithm_CalculateCurrentGains(float Rs, float Ls, float bw_hertz,
+                                         float *Kp, float *Ki) {
+  if (Kp == NULL || Ki == NULL)
+    return;
+
+  // [FIX] 添加参数有效性检查
+  if (!FOC_Algorithm_IsFinite(Rs) || !FOC_Algorithm_IsFinite(Ls) ||
+      !FOC_Algorithm_IsFinite(bw_hertz)) {
+    *Kp = 0.0f;
+    *Ki = 0.0f;
+    return;
+  }
+  if (Ls <= 0.0f || Rs <= 0.0f || bw_hertz <= 0.0f) {
+    *Kp = 0.0f;
+    *Ki = 0.0f;
+    return;
+  }
+
+  // current ( IMC )
+  float omega_c = 2.0f * MATH_PI * bw_hertz;
+  *Kp = Ls * omega_c;
+  *Ki = Rs * omega_c;
+}
+/* Private function implementations */

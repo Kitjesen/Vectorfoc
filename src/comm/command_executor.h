@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /**
- * @file command_executor.h
+ * @file executor.h
  * @brief Command Executor - Business Logic Layer
  * @details Handles the execution of MotorCommands (Statemachine, Targets,
  * Params)

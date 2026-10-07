@@ -59,6 +59,8 @@ uint32_t Detection_PreviewFaults(void *motor);
  * @brief updateCAN ()
  */
 void Detection_FeedWatchdog(uint32_t timestamp);
+/* Configure and disarm/re-arm communication timeout atomically. */
+void Detection_SetCANTimeout(uint32_t timeout_ms);
 /**
  * @brief 获取检测配置指针（运行时访问，推荐使用）
  * @return 配置指针（非 NULL）

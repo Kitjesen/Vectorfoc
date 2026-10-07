@@ -18,11 +18,7 @@
 #include "motor_configuration.h"
 #include "algorithm/foc_transforms.h"
 #include "encoder_interface.h"
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-#include "tmr3109_encoder.h"
-#else
-#include "mt6816_encoder.h"
-#endif
+#include "position_sensor.h"
 #include <math.h>
 
 /**
@@ -114,19 +110,17 @@ CalibResult FluxCalib_Finish(MOTOR_DATA *motor, CalibrationContext *ctx) {
         1.5f * (float)motor->parameters.pole_pairs * motor->parameters.flux;
   }
 
-  MHAL_PWM_Brake();
+  if (PositionSensor_SetCalibrationValid(true) != POSITION_SENSOR_STATUS_OK) {
+    (void)MHAL_PWM_Brake();
+    return CALIB_FAILED_INVALID_PARAMS;
+  }
+  (void)MHAL_PWM_Brake();
   flux->flux_sum = 0.0f;
   flux->flux_samples = 0;
   flux->loop_count = 0;
   motor->state.Cs_State = CS_FLUX_END;
   motor->state.Sub_State = SUB_STATE_IDLE;
   motor->state.State_Mode = STATE_MODE_RUNNING;
-
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  ((TMR3109_Handle_t *)motor->components.encoder)->calib_valid = true;
-#else
-  ((MT6816_Handle_t *)motor->components.encoder)->calib_valid = true;
-#endif
 
   PID_clear(&motor->IqPID);
   PID_clear(&motor->IdPID);

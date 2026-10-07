@@ -3,6 +3,7 @@
 
 #ifndef APP_H
 #define APP_H
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,6 +13,7 @@ extern "C" {
  * Passive current-offset averaging finishes in the ADC ISR; a fresh explicit
  * enable command must pass the safety gate before any phase output starts. */
 void App_Init(void);
+bool App_IsFocRuntimeReady(void);
 
 void StartDefaultTask(void const *argument); /* USB: 1 ms */
 void StartGuardTask(void const *argument);   /* Protection: 5 ms */

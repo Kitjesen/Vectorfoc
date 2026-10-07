@@ -15,9 +15,7 @@
 #include "resistance_inductance_calibration.h"
 #include "encoder_calibration.h"
 #include "motor_configuration.h"   // 间接包含 board_configuration.h → HW_POSITION_SENSOR_MODE
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
-#include "mt6816_encoder.h"
-#endif
+#include "position_sensor.h"
 #include "foc/control_dispatcher.h"
 #include "pwm_interface.h"
 #include <math.h>
@@ -47,7 +45,16 @@ CalibResult RSLSCalib_Start(MOTOR_DATA *motor, CalibrationContext *ctx) {
   memset(&ctx->resistance, 0, sizeof(ResistanceCalibContext));
   memset(&ctx->inductance, 0, sizeof(InductanceCalibContext));
   memset(&ctx->dir_pole, 0, sizeof(DirectionPoleCalibContext));
+  /* Calibration transient reset must retain the fixed CCM workspaces. */
+  int *error_array = ctx->encoder.error_array;
+  size_t error_array_size = ctx->encoder.error_array_size;
+  int16_t *offset_lut = ctx->encoder.offset_lut;
+  size_t offset_lut_size = ctx->encoder.offset_lut_size;
   memset(&ctx->encoder, 0, sizeof(EncoderCalibContext));
+  ctx->encoder.error_array = error_array;
+  ctx->encoder.error_array_size = error_array_size;
+  ctx->encoder.offset_lut = offset_lut;
+  ctx->encoder.offset_lut_size = offset_lut_size;
 
   // Initialize constants (Resistance)
   ctx->resistance.kI = 2.0f;
@@ -56,11 +63,11 @@ CalibResult RSLSCalib_Start(MOTOR_DATA *motor, CalibrationContext *ctx) {
   ctx->inductance.voltages[0] = -VOLTAGE_MAX_CALIB;
   ctx->inductance.voltages[1] = +VOLTAGE_MAX_CALIB;
 
-  // MT6816 需要设置初始旋转方向；TMR3109 驱动器保留其自身方向状态
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_MT6816
-  MT6816_Handle_t *enc = (MT6816_Handle_t *)motor->components.encoder;
-  enc->dir = MT6816_DIR_CW;
-#endif
+  const PositionSensorDescriptor_t *sensor = PositionSensor_GetDescriptor();
+  if (sensor == NULL ||
+      ((sensor->capabilities & POSITION_SENSOR_CAP_RAW_DIRECTION_POLE) != 0u &&
+       PositionSensor_RawCalibrationPrepareClockwise() != POSITION_SENSOR_STATUS_OK))
+    return CALIB_FAILED_INVALID_PARAMS;
 
   // State machine starting point
   motor->state.Cs_State = CS_MOTOR_R_START;

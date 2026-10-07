@@ -72,6 +72,51 @@ void GetTempNtc(uint16_t value_adc, float *value_temp) {
   }
   *value_temp = ((float)temp / 10.0f);
 }
+
+static uint16_t MedianOfSnapshot(uint16_t *samples, uint16_t count) {
+  for (uint16_t sorted = 1u; sorted < count; ++sorted) {
+    uint16_t value = samples[sorted];
+    uint16_t pos = sorted;
+    while (pos > 0u && samples[pos - 1u] > value) {
+      samples[pos] = samples[pos - 1u];
+      --pos;
+    }
+    samples[pos] = value;
+  }
+  return samples[count / 2u];
+}
+
+uint16_t adc1_median_filter(uint8_t channel) {
+  if (channel >= adc1_channel) return 0u;
+  uint16_t snapshot[adc1_samples];
+  for (uint16_t i = 0u; i < adc1_samples; ++i)
+    snapshot[i] = adc1_dma_value[i][channel];
+  return MedianOfSnapshot(snapshot, adc1_samples);
+}
+
+uint16_t adc1_avg_filter(uint8_t channel) {
+  if (channel >= adc1_channel) return 0u;
+  uint32_t sum = 0u;
+  for (uint16_t i = 0u; i < adc1_samples; ++i)
+    sum += adc1_dma_value[i][channel];
+  return (uint16_t)(sum / adc1_samples);
+}
+
+uint16_t adc2_median_filter(uint8_t channel) {
+  if (channel >= adc2_channel) return 0u;
+  uint16_t snapshot[adc2_samples];
+  for (uint16_t i = 0u; i < adc2_samples; ++i)
+    snapshot[i] = adc2_dma_value[i][channel];
+  return MedianOfSnapshot(snapshot, adc2_samples);
+}
+
+uint16_t adc2_avg_filter(uint8_t channel) {
+  if (channel >= adc2_channel) return 0u;
+  uint32_t sum = 0u;
+  for (uint16_t i = 0u; i < adc2_samples; ++i)
+    sum += adc2_dma_value[i][channel];
+  return (uint16_t)(sum / adc2_samples);
+}
 // temperatureparam
 #define TEMP_UPDATE_INTERVAL_MS 20    // 50Hz temperatureupdatefrequency
 #define TEMP_LPF_ALPHA 0.1f           // filter (0-1，)
@@ -94,7 +139,7 @@ static float G431_ReadTemperature(void) {
   s_last_temp_update = now;
   // 2.  ADC （，filter）
   // ： DMA
-  uint16_t adc_raw = adc2_dma_value[0][0];
+  uint16_t adc_raw = adc2_median_filter(0u);
   // 3. errorcheck：ADC
   if (adc_raw < TEMP_ADC_MIN_VALID || adc_raw > TEMP_ADC_MAX_VALID) {
     if (s_temp_sensor_ok) {

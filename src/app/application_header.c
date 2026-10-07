@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /**
- * @file application_header.c
+ * @file app_header.c
  * @brief Application Header (用于 OTA 校验)
  *
  * 此文件定义 App Header，放置在 Flash 的固定位置 (0x08004200)

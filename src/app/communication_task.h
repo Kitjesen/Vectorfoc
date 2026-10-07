@@ -14,21 +14,29 @@
 
 /**
  * @file communication_task.h
- * @brief CAN task controls; processing runs in task context, never in an ISR.
+ * @brief CAN processing, deferred parameter persistence and status reporting.
  */
-#ifndef TASK_COMM_H
-#define TASK_COMM_H
+#ifndef COMMUNICATION_TASK_H
+#define COMMUNICATION_TASK_H
 #include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/** Drain queued frames, service deferred Flash saves and publish due reports. */
+void CommTask_Init(void);                   // init
 void CommTask_Process(void);
-/** Enable or disable the existing 100 Hz CAN motor feedback stream. */
 void CommTask_SetReportEnabled(bool enable);
-
+/**
+ * @brief Reserve Flash-save maintenance before mutating persistent state.
+ * @return true when the maintenance lease is held for this save request.
+ */
+bool CommTask_BeginScheduledSave(void);
+/** @brief Queue the Flash save after CommTask_BeginScheduledSave succeeds. */
+void CommTask_CommitScheduledSave(void);
+/** @brief Release an uncommitted save reservation without queuing Flash I/O. */
+void CommTask_CancelScheduledSave(void);
+/** @brief Reserve maintenance and queue a save with no additional mutation. */
+bool CommTask_RequestScheduledSave(void);
 #ifdef __cplusplus
 }
 #endif
-#endif /* TASK_COMM_H */
+#endif /* COMMUNICATION_TASK_H */

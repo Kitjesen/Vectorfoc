@@ -54,6 +54,9 @@ void RateLimiter_Init(RateLimiterTypeDef *limiter, float max_rate);
  */
 void RateLimiter_Reset(RateLimiterTypeDef *limiter, float initial_value);
 
+/** Update the rate limit without resetting the command history. */
+void RateLimiter_SetMaxRate(RateLimiterTypeDef *limiter, float max_rate);
+
 /**
  * @brief  Apply rate limiting.
  * @param  limiter  Limiter instance.

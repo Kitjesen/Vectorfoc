@@ -97,6 +97,12 @@ void FOC_Algorithm_CurrentLoop(const FOC_AlgorithmInput_t *input,
 /* Clear current integrators and filters on the caller's chosen transition. */
 void FOC_Algorithm_ResetState(FOC_AlgorithmState_t *state);
 
+/* Validate configured limits and electrical parameters before use. */
+bool FOC_Algorithm_ValidateConfig(const FOC_AlgorithmConfig_t *config);
+/* Derive current PI gains from an electrical bandwidth expressed in Hz. */
+void FOC_Algorithm_CalculateCurrentGains(float Rs, float Ls, float bw_hertz,
+                                        float *Kp, float *Ki);
+
 #ifdef __cplusplus
 }
 #endif

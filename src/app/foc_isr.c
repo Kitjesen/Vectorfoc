@@ -17,9 +17,11 @@
  * @brief Sampling, protection, control and observer scheduling at 20 kHz.
  */
 #include "encoder_interface.h"
+#include "adc_sample_guard.h"
 #include "adc.h"
+#include "application.h"
 #include "board_configuration.h"
-#include "hardware_interface.h" // For HAL_WatchdogFeed()
+#include "encoder_failure_guard.h"
 #include "main.h"
 #include "motor_runtime.h"
 #include "current_calibration.h"
@@ -29,6 +31,35 @@
 #include "telemetry_vofa.h"
 #include "runtime_compensation.h"
 #include "observer_adapter.h"
+#include "pwm_interface.h"
+#include "watchdog_supervisor.h"
+
+static AdcSampleGuardState s_adc_sample_guard;
+static EncoderFailureGuardState s_encoder_failure_guard;
+
+static inline bool ISR_ADCSequenceComplete(ADC_HandleTypeDef *hadc) {
+  return __HAL_ADC_GET_FLAG(hadc, ADC_FLAG_JEOS) != 0u;
+}
+
+static inline bool ISR_ADCHasError(ADC_HandleTypeDef *hadc) {
+  const uint32_t error_mask =
+      HAL_ADC_ERROR_OVR | HAL_ADC_ERROR_JQOVF | HAL_ADC_ERROR_INTERNAL;
+  return (hadc->ErrorCode & error_mask) != 0u ||
+         __HAL_ADC_GET_FLAG(hadc, ADC_FLAG_OVR) != 0u ||
+         __HAL_ADC_GET_FLAG(hadc, ADC_FLAG_JQOVF) != 0u;
+}
+
+static inline bool ISR_ADCValidateFreshSample(ADC_HandleTypeDef *hadc) {
+  AdcSampleRaw sample = {
+      .ia = (uint16_t)HW_ADC_IA_HANDLE.Instance->HW_ADC_IA_JDR,
+      .ib = (uint16_t)HW_ADC_IB_HANDLE.Instance->HW_ADC_IB_JDR,
+      .ic = (uint16_t)HW_ADC_IC_HANDLE.Instance->HW_ADC_IC_JDR,
+      .vbus = (uint16_t)HW_ADC_VBUS_HANDLE.Instance->HW_ADC_VBUS_JDR,
+  };
+  return AdcSampleGuard_Check(&s_adc_sample_guard, &sample,
+                              ISR_ADCSequenceComplete(hadc),
+                              ISR_ADCHasError(hadc)) == ADC_SAMPLE_GUARD_OK;
+}
 static inline void ISR_UpdateSensors(MOTOR_DATA *motor) {
   MotorSensorData sensor_data;
   ADC_ReadSensors(&sensor_data);
@@ -38,9 +69,16 @@ static inline void ISR_UpdateSensors(MOTOR_DATA *motor) {
   motor->algo_input.Vbus = sensor_data.v_bus;
   motor->feedback.temperature = sensor_data.temp;
 }
-static inline void ISR_UpdateEncoder(MOTOR_DATA *motor) {
+static inline bool ISR_UpdateEncoder(MOTOR_DATA *motor) {
   EncoderData enc_data;
-  MHAL_Encoder_Update();
+  if (MHAL_Encoder_Update() != 0) {
+    if (EncoderFailureGuard_Record(&s_encoder_failure_guard, false)) {
+      MHAL_PWM_Disable();
+      Safety_TriggerFault(FAULT_ENCODER_LOSS, motor, &g_ds402_state_machine);
+    }
+    return false;
+  }
+  (void)EncoderFailureGuard_Record(&s_encoder_failure_guard, true);
   MHAL_Encoder_GetData(&enc_data);
   /* Mechanical feedback uses turn and turn/s; electrical angle uses rad.
    * MIT control converts mechanical feedback back to rad and rad/s. */
@@ -51,22 +89,33 @@ static inline void ISR_UpdateEncoder(MOTOR_DATA *motor) {
   if (motor->state.Control_Mode != CONTROL_MODE_OPEN) {
     motor->algo_input.theta_elec = enc_data.elec_angle;
   }
+  return true;
 }
 
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
   if (hadc->Instance != HW_ADC_CURRENT.Instance)
     return;
+  /* Sampling starts before every consumer is initialized.  The HAL has
+   * already acknowledged this interrupt, so returning keeps the bridge off. */
+  if (!App_IsFocRuntimeReady()) return;
   static uint16_t state_machine_tick_count = 0;
   static uint16_t torque_compensation_tick_count = 0;
 #if SCOPE_LOG_ENABLED
   static uint16_t scope_log_tick_count = 0;
 #endif
-  // Watchdog and passive startup offsets, with phase outputs disabled.
-  HAL_WatchdogFeed();
+  if (!ISR_ADCValidateFreshSample(hadc)) {
+    MHAL_PWM_Disable();
+    if (AdcSampleGuard_ShouldFault(&s_adc_sample_guard))
+      Safety_TriggerFault(FAULT_ADC_STALE, &motor_data,
+                          &g_ds402_state_machine);
+    return;
+  }
+
+  // Passive startup offsets are collected while all phase outputs stay off.
   CurrentCalib_UpdateStartup(&motor_data);
   // Fresh current, voltage, temperature and encoder feedback.
   ISR_UpdateSensors(&motor_data);
-  ISR_UpdateEncoder(&motor_data);
+  if (!ISR_UpdateEncoder(&motor_data)) return;
   // Fast protection (20 kHz) precedes FSM and control.
   Safety_Update_Fast(&motor_data, &g_ds402_state_machine);
   // State transitions (1 kHz).
@@ -99,4 +148,5 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc) {
     Scope_Update();
   }
 #endif
+  WatchdogSupervisor_MarkFOC();
 }

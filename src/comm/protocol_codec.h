@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /**
- * @file protocol_codec.h
+ * @file protocol_utils.h
  * @brief CAN 协议帧量化工具函数（Vector 和 MIT 协议共用）
  *
  * 提供浮点数 ↔ 固定精度整数的线性映射，以及大端字节序的缓冲区读写。

@@ -137,7 +137,10 @@ void Motor_RunControlCycle(MOTOR_DATA *motor) {
   // 4.  (Do Action)
   switch (motor->state.State_Mode) {
   case STATE_MODE_RUNNING: // runningmode
-    Control_RunCurrentCycle(motor);
+    if (Control_RunCurrentCycle(motor) && !Safety_HasActiveFault() &&
+        !g_ds402_state_machine.operation_power_enabled) {
+      (void)StateMachine_SetOperationPower(&g_ds402_state_machine, true);
+    }
     break;
   case STATE_MODE_DETECTING: // calibration/mode
     MotorInitializeTask(motor);
@@ -215,7 +218,7 @@ void Init_Motor_No_Calib(MOTOR_DATA *motor) {
   motor->state.Sub_State = SUB_STATE_IDLE;
   motor->state.Cs_State = CS_STATE_IDLE;
   /* No power-on request: startup offsets and an explicit command are required. */
-  Control_UpdateCurrentGains(motor);
+  Control_ApplyConfiguredCurrentGains(motor);
   LADRC_Init(&motor->ladrc_state, &motor->ladrc_config);
   motor->params_updated = true;
 }
@@ -226,12 +229,35 @@ void Init_Motor_Calib(MOTOR_DATA *motor) {
 void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type) {
   if (!motor) return;
   uint32_t irq_state = HAL_EnterCritical();
+  if (calibration_type < 1u || calibration_type > 5u ||
+      motor->state.Sub_State != SUB_STATE_IDLE) {
+    /* Reject malformed or repeated requests before resetting any context. */
+    motor->last_calib_result = CALIB_FAILED_INVALID_PARAMS;
+    StateMachine_RequestState(&g_ds402_state_machine, STATE_SWITCH_ON_DISABLED);
+    HAL_ExitCritical(irq_state);
+    return;
+  }
   if (!Safety_CanEnable(motor)) {
     StateMachine_RequestState(&g_ds402_state_machine, STATE_SWITCH_ON_DISABLED);
     HAL_ExitCritical(irq_state);
     return;
   }
+  uint8_t fail_mask = 0u;
+  if (calibration_type != 5u && Motor_PreCalibCheck(motor, &fail_mask) != 0x0Fu) {
+    motor->last_calib_result = CALIB_FAILED_INVALID_PARAMS;
+    StateMachine_RequestState(&g_ds402_state_machine, STATE_SWITCH_ON_DISABLED);
+    HAL_ExitCritical(irq_state);
+    return;
+  }
   if (calibration_type == 5) {
+    if (StateMachine_GetState(&g_ds402_state_machine) != STATE_OPERATION_ENABLED) {
+      motor->last_calib_result = CALIB_FAILED_INVALID_PARAMS;
+      StateMachine_RequestState(&g_ds402_state_machine, STATE_SWITCH_ON_DISABLED);
+      HAL_ExitCritical(irq_state);
+      return;
+    }
+    motor->calib_type_requested = calibration_type;
+    motor->last_calib_result = CALIB_IN_PROGRESS;
     Motor_API_StartCoggingCalib(motor);
     HAL_ExitCritical(irq_state);
     return;
@@ -257,10 +283,14 @@ void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type) {
     motor->state.Sub_State = FLUX_CALIBRATING;
     /* FluxCalib_Update starts voltage injection after CALIBRATING is accepted. */
     break;
-  default:
+  case 3:
     motor->state.Sub_State = CURRENT_CALIBRATING;
     motor->calib_ctx.current.is_initialized = false;
     break;
+  default:
+    motor->last_calib_result = CALIB_FAILED_INVALID_PARAMS;
+    HAL_ExitCritical(irq_state);
+    return;
   }
   if (!StateMachine_RequestState(&g_ds402_state_machine, STATE_CALIBRATING)) {
     motor->state.Sub_State = SUB_STATE_IDLE;
@@ -321,8 +351,8 @@ uint8_t Motor_PreCalibCheck(MOTOR_DATA *motor, uint8_t *fail_mask) {
     *fail_mask = fail;
   return pass;
 }
-void Motor_ClearFaults(MOTOR_DATA *motor) {
-  if (!motor || !Safety_ClearFaults(&g_ds402_state_machine)) return;
+bool Motor_ClearFaults(MOTOR_DATA *motor) {
+  if (!motor || !Safety_ClearFaults(&g_ds402_state_machine)) return false;
   motor->state.Fault_State = FAULT_STATE_NORMAL;
   motor->state.State_Mode = STATE_MODE_IDLE;
   motor->state.Sub_State = SUB_STATE_IDLE;
@@ -334,6 +364,7 @@ void Motor_ClearFaults(MOTOR_DATA *motor) {
   PID_clear(&motor->VelPID);
   PID_clear(&motor->PosPID);
   LADRC_Reset(&motor->ladrc_state);
+  return true;
 }
 
 void Motor_API_StartCoggingCalib(MOTOR_DATA *motor) {

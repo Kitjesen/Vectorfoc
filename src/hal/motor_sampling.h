@@ -53,4 +53,10 @@ void ADC_SetCurrentOffsets(float Ia, float Ib, float Ic);
  * @param  value_temp [out] Pointer to store result [degC].
  */
 void GetTempNtc(uint16_t value_adc, float *value_temp);
+/* Filters copy DMA data before sorting; the DMA-owned buffers are never
+ * reordered in place.  Invalid channels fail closed with zero. */
+uint16_t adc1_median_filter(uint8_t channel);
+uint16_t adc1_avg_filter(uint8_t channel);
+uint16_t adc2_median_filter(uint8_t channel);
+uint16_t adc2_avg_filter(uint8_t channel);
 #endif // CORE_ADC_H

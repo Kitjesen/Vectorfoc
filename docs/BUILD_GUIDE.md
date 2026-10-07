@@ -79,9 +79,9 @@ cmake --build build/host --parallel 4
 ctest --test-dir build/host --output-on-failure
 ```
 
-The suite builds and runs 18 executables covering algorithms, control modes,
+The suite builds and runs C regression executables covering algorithms, control modes,
 CAN/task integration, startup safety, electrical calibration and parameter
-compatibility, plus a CubeMX/board PWM configuration check (19 CTest entries).
+compatibility, ADC/encoder guards, watchdog supervision and sensor health, plus tooling and CubeMX/PWM configuration checks.
 Release and RelWithDebInfo retain test assertions. Configuration
 also compiles one valid non-default timing setup and rejects 15 invalid setups
 (zero, faster than the PWM base, or non-divisible frequencies).
@@ -92,28 +92,27 @@ startup and PWM code in `test_runner_startup`; only peripheral I/O is mocked.
 
 ## 最新验证
 
-2026-10-07，本轮整理基于本地 `4520d1c`，发布到 `codex/vector-control-cleanup`。
+2026-10-07，将整理分支 `da2b068` 与主线 `a756902` 合并。测试和工程引用已适配当前目录；纯算法继续独立编译。
 
 | 检查 | 结果 |
 | --- | --- |
-| Release 主机测试 | 19 / 19 通过，测试断言保持开启 |
-| 频率配置编译检查 | 1 组合合法配置通过，15 组非法配置按预期被拒绝 |
-| 逐周期对照 | 默认控制、`TORQUE_AND_CURRENT`、`TORQUE_ADJUST`、前馈、R/L 标定共 5 组输出完全一致；对照本轮开始时保存的源码 |
-| 默认传感器 MT6816 ARM 固件 | 构建通过；RAM 28,400 B / 32,752 B，Flash 97,284 B / 224 KiB |
-| TMR3109 ARM 固件 | 构建通过；RAM 28,408 B / 32,752 B，Flash 97,468 B / 224 KiB |
-| Keil 引用 | XML 中 100 个源文件路径存在，未执行 Keil 编译 |
-| Bootloader | 编译完成、链接失败；20,032 B 超过 16 KiB，仍超出 3,648 B |
+| Release 主机回归 | 29 / 29 通过；Release 保留断言，包含 12 组真实启动/FSM/保护/PWM 链路检查 |
+| 频率配置编译检查 | 1 组合法配置通过，15 组非法配置按预期拒绝 |
+| MT6816 ARM 应用 | 构建、链接和镜像 CRC 校验通过；RAM 20,264 / 22,512 B，CCM 9,280 / 10,240 B，Flash 102,060 / 110,592 B |
+| TMR3109 ARM 应用 | 构建、链接和镜像 CRC 校验通过；RAM 20,272 / 22,512 B，CCM 9,280 / 10,240 B，Flash 102,144 / 110,592 B |
+| Bootloader | 构建、链接通过；Flash 13,704 / 16,384 B，原有超限已解决 |
+| Keil 引用 | XML 中 115 个源文件路径存在；只核对引用，没有执行 Keil 编译 |
+| Python 工具 | OTA 镜像头长度/CRC 回归及受影响脚本的 ruff 检查通过 |
 
-本轮删除未使用的 CMSIS-DSP 预编译库和头文件（3,035,549 字节），
-并同步移除 Keil 引用。纯算法仍由 CMake 独立构建；构建结果不表示已完成硬件验证。
+STM32G431CB 的物理分区为 128 KiB Flash、22 KiB 普通 SRAM 和 10 KiB CCM；普通 SRAM 顶部 16 B 保留为启动标志。应用 Flash 为 108 KiB，Bootloader 为 16 KiB，参数为 4 KiB。旧记录中使用的连续 32 KiB RAM 和 224 KiB 应用 Flash 不适用于当前目标；本次采用主线修正后的链接与启动配置。
+
+默认应用普通 RAM 剩余 2,248 B，CCM 剩余 960 B。增加缓冲区或任务栈前需要重新检查两块内存；静态链接用量不能代替运行时栈峰值和执行时序测量。
+
+本次合并包括非有限值保护、前馈单位和参数边界修复，不沿用上一轮“与旧源码逐周期完全一致”的结论。门极电平、采样连续性、被动零偏、真实电机和 USB OTA 跳转仍需上板验证；本轮未烧录。GitHub CI 分别运行 Release 主机测试、两种位置传感器应用和 Bootloader 构建。
 
 ## Flashing
 
-The bootloader overflow recorded on 2026-09-27 was reproduced on 2026-10-07:
-20032 B exceeds
-its 16 KiB Flash region by 3648 B. The paths below describe the intended outputs;
-there is no validated bootloader image from this check. Resolve that blocker
-and confirm the board, linker layout, and hardware conditions before flashing.
+The bootloader now fits its 16 KiB region after integrating the upstream size and memory-layout fixes. Build success is a software check; validate the board and actual upgrade/jump path before flashing. This merge did not flash hardware.
 
 ### First-time via SWD
 

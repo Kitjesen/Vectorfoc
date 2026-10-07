@@ -62,6 +62,11 @@ static inline void cpu_exit_critical(uint32_t priority_mask) {
   (void)priority_mask;
 }
 
+/* Production common.h maps these to the MCU interrupt mask. Host tests are
+ * single-threaded, so preserve the scoped statement contract as a no-op. */
+#define CRITICAL_SECTION_BEGIN() do {
+#define CRITICAL_SECTION_END() } while (0)
+
 static inline float fmodf_pos(float x, float y) {
   float out = fmodf(x, y);
   if (out < 0.0f)

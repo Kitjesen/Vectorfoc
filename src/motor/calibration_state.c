@@ -17,6 +17,28 @@
 #include "resistance_inductance_calibration.h"
 #include <string.h>
 
+/* Single-axis calibration is never concurrent.  Keep the large temporary
+ * buffers out of MOTOR_DATA and DMA/RTOS SRAM on target builds. */
+#if !defined(TEST_ENV)
+static int s_encoder_error_workspace[SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS]
+    __attribute__((section(".ccm_bss"), aligned(8)));
+static int16_t
+    s_encoder_offset_lut_workspace[POSITION_SENSOR_CALIBRATION_LUT_SIZE]
+        __attribute__((section(".ccm_bss"), aligned(8)));
+#endif
+
+static void CalibContext_AssignEncoderWorkspace(CalibrationContext *ctx) {
+#if defined(TEST_ENV)
+  ctx->encoder.error_array = ctx->encoder.error_array_storage;
+  ctx->encoder.offset_lut = ctx->encoder.offset_lut_storage;
+#else
+  ctx->encoder.error_array = s_encoder_error_workspace;
+  ctx->encoder.offset_lut = s_encoder_offset_lut_workspace;
+#endif
+  ctx->encoder.error_array_size = SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS;
+  ctx->encoder.offset_lut_size = POSITION_SENSOR_CALIBRATION_LUT_SIZE;
+}
+
 /**
  * @file calibration_state.c
  * @brief Calibration context management implementation
@@ -35,8 +57,7 @@ void CalibContext_Init(CalibrationContext *ctx) {
   // Initialize constants
   ctx->resistance.kI = 2.0f;
 
-  ctx->encoder.error_array = ctx->encoder.error_array_storage;
-  ctx->encoder.error_array_size = SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS;
+  CalibContext_AssignEncoderWorkspace(ctx);
 
   // Set initialization flag
   ctx->current.is_initialized = true;
@@ -49,8 +70,7 @@ void CalibContext_Release(CalibrationContext *ctx) {
   if (ctx == NULL)
     return;
 
-  ctx->encoder.error_array = ctx->encoder.error_array_storage;
-  ctx->encoder.error_array_size = SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS;
+  CalibContext_AssignEncoderWorkspace(ctx);
 }
 
 /**

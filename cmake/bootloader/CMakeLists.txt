@@ -12,6 +12,9 @@ add_definitions(-DSTM32G431xx -DUSE_HAL_DRIVER -DSTM32G4xx -DBOOTLOADER_BUILD)
 
 # Build type - always optimize for size
 set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_C_FLAGS_RELEASE "-Os -DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-Os -DNDEBUG")
+add_compile_definitions(HSE_VALUE=8000000U)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${MCU_FLAGS} -Wall -fdata-sections -ffunction-sections -Os")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MCU_FLAGS} -Wall -fdata-sections -ffunction-sections -Os")
@@ -33,6 +36,7 @@ include_directories(
     # Bootloader
     ${FIRMWARE_ROOT}/src/boot
     ${FIRMWARE_ROOT}/src/config
+    ${FIRMWARE_ROOT}/src/hal
 )
 
 # Bootloader source files
@@ -75,6 +79,7 @@ set(USB_SOURCES
 set(SYSTEM_SOURCES
     ${FIRMWARE_ROOT}/platform/Core/Src/system_stm32g4xx.c
     ${FIRMWARE_ROOT}/platform/Core/Src/stm32g4xx_hal_msp.c
+    ${FIRMWARE_ROOT}/src/hal/system_calls.c
 )
 
 # Startup file

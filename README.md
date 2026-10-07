@@ -87,7 +87,7 @@ cmake -S . -B build/arm --toolchain cmake/gcc-arm-none-eabi.cmake
 cmake --build build/arm --parallel 4
 ```
 
-主机测试在 Release 中也保留断言。当前 19 项检查覆盖算法、控制模式、通信、参数兼容、启动与故障，以及 CubeMX 与板级 PWM 配置的一致性；配置阶段另检查 16 组合法和非法频率。控制、前馈和标定的 5 组逐周期对照通过，默认传感器与 TMR3109 的 ARM 构建通过。详见[验证记录](docs/BUILD_GUIDE.md#最新验证)。
+29 项主机检查全部通过，Release 中保留断言，覆盖算法、控制模式、通信、类型安全参数、传感器健康、启动与故障、看门狗和镜像打包；配置阶段另检查 16 组合法和非法频率。默认 MT6816、TMR3109 应用及 Bootloader 构建通过。详见[验证记录](docs/BUILD_GUIDE.md#最新验证)。
 
 软件测试不代替门极电平、ADC 连续性、零偏、真实电机和 OTA 上板验证，本轮未烧录。
 
@@ -95,8 +95,8 @@ cmake --build build/arm --parallel 4
 
 - [算法导读](algorithm/README.md) · [固件控制适配](src/foc/README.md)
 - [构建与验证](docs/BUILD_GUIDE.md) · [协议字段](src/comm/PROTOCOL_CN.md)
-- [与 GitHub main 的差异](docs/UPSTREAM_COMPARISON.md) · [文档索引](docs/README.md)
+- [主线合并记录](docs/UPSTREAM_COMPARISON.md) · [文档索引](docs/README.md)
 
-当前整理分支基于 `4520d1c`，未合并 `main` 上新增的安全、传感器和通信修复；结构简化不代表所有功能领先于主线。
+已合并主线的安全、位置传感器、参数和通信修复，保持当前浅目录与纯算法边界。合并内容见[主线合并记录](docs/UPSTREAM_COMPARISON.md)。
 
 Copyright 2024–2026 VectorFOC Contributors · [Apache License 2.0](LICENSE)

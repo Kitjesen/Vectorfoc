@@ -31,7 +31,11 @@ CalibResult CurrentCalib_Start(MOTOR_DATA *motor, CalibrationContext *ctx) {
     return CALIB_FAILED_INVALID_PARAMS;
   }
   /* Explicit calibration runs only after the state machine accepts it. */
-  if (MHAL_PWM_Brake() != 0) return CALIB_FAILED_INVALID_PARAMS;
+  /* Active braking must use the same interrupt-safe power transition as
+   * voltage calibration. Startup sampling never calls this function. */
+  if (MHAL_PWM_SetDuty(0.0f, 0.0f, 0.0f) != 0 ||
+      !StateMachine_SetCalibrationPower(&g_ds402_state_machine, true))
+    return CALIB_FAILED_INVALID_PARAMS;
   // Reset calibration context
   ctx->current.loop_count = 0;
   ctx->current.offset_sum_a = 0.0f;

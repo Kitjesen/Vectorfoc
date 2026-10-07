@@ -46,6 +46,9 @@ void Safety_Update_Fast(MOTOR_DATA *motor, StateMachine *fsm);
  * @note fault，CPU3μs
  */
 void Safety_Update_Slow(MOTOR_DATA *motor, StateMachine *fsm);
+/* Latch a fault detected outside the periodic monitor (ISR/control guards). */
+void Safety_TriggerFault(uint32_t fault_bits, MOTOR_DATA *motor,
+                         StateMachine *fsm);
 /**
  * @brief faultstate
  * @param fsm state

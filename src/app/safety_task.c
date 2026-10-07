@@ -17,6 +17,7 @@
  * @brief protection - motorsafetyLED (200Hz)
  */
 #include "FreeRTOS.h"
+#include "app_freertos.h"
 #include "cmsis_os.h"
 #include "status_led.h"
 #include "motor_runtime.h"
@@ -26,23 +27,48 @@
 #include "protocol_messages.h"
 #include "drive_state_machine.h"
 #include "board_log.h"
+#include "hardware_interface.h"
+#include "watchdog_supervisor.h"
 
 __attribute__((noreturn)) void StartGuardTask(void const *argument) {
   (void)argument;
   uint32_t heartbeat_cnt = 0;
+  static AppFreertosRuntimeStats_t runtime_stats;
+  WatchdogSupervisorState watchdog_state;
+  WatchdogSupervisor_Init(&watchdog_state, HAL_GetSystemTick(),
+                          WATCHDOG_SUPERVISION_WINDOW_MS,
+                          WatchdogSupervisor_GetFOCHeartbeat(),
+                          WatchdogSupervisor_GetCommHeartbeat());
 
   for (;;) {
     MotorGuardTask(&motor_data);
+
+    WatchdogWindowStatus watchdog_status = WatchdogSupervisor_Evaluate(
+        &watchdog_state, HAL_GetSystemTick(),
+        WatchdogSupervisor_GetFOCHeartbeat(),
+        WatchdogSupervisor_GetCommHeartbeat());
+    if (watchdog_status == WATCHDOG_WINDOW_HEALTHY) HAL_WatchdogFeed();
 
     /* 每 200 次 × 5ms = 1s，发一帧心跳 CAN 帧（cmd=0x1F, target=0xFE）*/
     if (++heartbeat_cnt >= 200u) {
       heartbeat_cnt = 0u;
       /* 诊断：打印 FSM 状态、运行模式、故障位 */
-      LOGINFO("FSM=%d mode=%d fault=%08X ctrl=%d",
-              (int)StateMachine_GetState(&g_ds402_state_machine),
-              (int)motor_data.state.State_Mode,
-              (unsigned int)Safety_GetActiveFaultBits(),
-              (int)motor_data.state.Control_Mode);
+      if (AppFreertos_GetRuntimeStats(&runtime_stats)) {
+        LOGINFO("FSM=%d mode=%d fault=%08X ctrl=%d stack_free_w=%lu/%lu/%lu",
+                (int)StateMachine_GetState(&g_ds402_state_machine),
+                (int)motor_data.state.State_Mode,
+                (unsigned int)Safety_GetActiveFaultBits(),
+                (int)motor_data.state.Control_Mode,
+                (unsigned long)runtime_stats.default_stack_high_water_words,
+                (unsigned long)runtime_stats.guard_stack_high_water_words,
+                (unsigned long)runtime_stats.comm_stack_high_water_words);
+      } else {
+        LOGINFO("FSM=%d mode=%d fault=%08X ctrl=%d stack_free_w=unavailable",
+                (int)StateMachine_GetState(&g_ds402_state_machine),
+                (int)motor_data.state.State_Mode,
+                (unsigned int)Safety_GetActiveFaultBits(),
+                (int)motor_data.state.Control_Mode);
+      }
       /* 心跳帧携带诊断数据（替代 UART）:
        *   byte[0] = FSM state
        *   byte[1] = State_Mode  (0=IDLE,1=DET,2=RUN,3=GUARD)

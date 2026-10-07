@@ -18,7 +18,7 @@
           <Vendor>STMicroelectronics</Vendor>
           <PackID>Keil.STM32G4xx_DFP.1.5.0</PackID>
           <PackURL>https://www.keil.com/pack/</PackURL>
-          <Cpu>IRAM(0x20000000-0x20007FFF) IROM(0x8000000-0x801FFFF)  CLOCK(8000000) FPU2 CPUTYPE("Cortex-M4") TZ</Cpu>
+          <Cpu>IRAM(0x20000000-0x200057EF) IROM(0x8004000-0x801EFFF)  CLOCK(8000000) FPU2 CPUTYPE("Cortex-M4") TZ</Cpu>
           <FlashUtilSpec></FlashUtilSpec>
           <StartupFile></StartupFile>
           <FlashDriverDll></FlashDriverDll>
@@ -247,12 +247,12 @@
               <IRAM>
                 <Type>0</Type>
                 <StartAddress>0x20000000</StartAddress>
-                <Size>0x8000</Size>
+                <Size>0x57f0</Size>
               </IRAM>
               <IROM>
                 <Type>1</Type>
-                <StartAddress>0x8000000</StartAddress>
-                <Size>0x20000</Size>
+                <StartAddress>0x8004000</StartAddress>
+                <Size>0x1b000</Size>
               </IROM>
               <XRAM>
                 <Type>0</Type>
@@ -276,8 +276,8 @@
               </OCR_RVCT3>
               <OCR_RVCT4>
                 <Type>1</Type>
-                <StartAddress>0x8000000</StartAddress>
-                <Size>0x20000</Size>
+                <StartAddress>0x8004000</StartAddress>
+                <Size>0x1b000</Size>
               </OCR_RVCT4>
               <OCR_RVCT5>
                 <Type>1</Type>
@@ -302,7 +302,7 @@
               <OCR_RVCT9>
                 <Type>0</Type>
                 <StartAddress>0x20000000</StartAddress>
-                <Size>0x8000</Size>
+                <Size>0x57f0</Size>
               </OCR_RVCT9>
               <OCR_RVCT10>
                 <Type>0</Type>
@@ -338,7 +338,7 @@
             <v6Rtti>0</v6Rtti>
             <VariousControls>
               <MiscControls></MiscControls>
-              <Define>USE_HAL_DRIVER,STM32G431xx</Define>
+              <Define>USE_HAL_DRIVER,STM32G431xx,HSE_VALUE=8000000U</Define>
               <Undefine></Undefine>
               <IncludePath>../Core/Inc;../Drivers/STM32G4xx_HAL_Driver/Inc;../Drivers/STM32G4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32G4xx/Include;../Drivers/CMSIS/Include;../USB_Device/App;../USB_Device/Target;../Middlewares/ST/STM32_USB_Device_Library/Core/Inc;../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc;../../src/config;../../src/app;../../src/hal;../../src/hal/bsp;../../src/hal/encoder;../../src;../../src/motor;../../src/safety;../../src/foc;../../src/foc;../../src/comm;../../src/config;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F</IncludePath>
             </VariousControls>
@@ -2263,6 +2263,86 @@
               <FileName>motor_sampling.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\..\src\hal\motor_sampling.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Integration modules</GroupName>
+          <Files>
+            <File>
+              <FileName>application_header.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/app/application_header.c</FilePath>
+            </File>
+            <File>
+              <FileName>bootloader.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/boot/bootloader.c</FilePath>
+            </File>
+            <File>
+              <FileName>encoder_calibration_settings.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/config/encoder_calibration_settings.c</FilePath>
+            </File>
+            <File>
+              <FileName>encoder_calibration_storage.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/config/encoder_calibration_storage.c</FilePath>
+            </File>
+            <File>
+              <FileName>parameter_bindings.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/config/parameter_bindings.c</FilePath>
+            </File>
+            <File>
+              <FileName>runtime_settings.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/config/runtime_settings.c</FilePath>
+            </File>
+            <File>
+              <FileName>position_sensor_mt6816.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/hal/encoder/position_sensor_mt6816.c</FilePath>
+            </File>
+            <File>
+              <FileName>position_sensor_selection.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/hal/encoder/position_sensor_selection.c</FilePath>
+            </File>
+            <File>
+              <FileName>position_sensor_tmr3109.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/hal/encoder/position_sensor_tmr3109.c</FilePath>
+            </File>
+            <File>
+              <FileName>position_sensor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/hal/encoder/position_sensor.c</FilePath>
+            </File>
+            <File>
+              <FileName>tmr3109_encoder.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/hal/encoder/tmr3109_encoder.c</FilePath>
+            </File>
+            <File>
+              <FileName>system_calls.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/hal/system_calls.c</FilePath>
+            </File>
+            <File>
+              <FileName>adc_sample_guard.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/safety/adc_sample_guard.c</FilePath>
+            </File>
+            <File>
+              <FileName>encoder_failure_guard.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/safety/encoder_failure_guard.c</FilePath>
+            </File>
+            <File>
+              <FileName>watchdog_supervisor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../src/safety/watchdog_supervisor.c</FilePath>
             </File>
           </Files>
         </Group>

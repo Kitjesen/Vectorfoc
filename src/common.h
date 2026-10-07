@@ -26,8 +26,12 @@ typedef unsigned char bool_t; //
 #ifndef M_PI
 #define M_PI (3.14159265358979323846f) // M_PI
 #endif
-#define M_2PI (6.28318530717958647692f)    // 2
-#define M_3PI_2 (4.71238898038469f)        // 3/2
+#ifndef M_2PI
+#define M_2PI (6.28318530717958647692f)
+#endif
+#ifndef M_3PI_2
+#define M_3PI_2 (4.71238898038469f)
+#endif
 #define _SQRT3 (1.7320508075688772935f)    // 3
 #define _SQRT3_2 (0.86602540378443864f)    // 3
 #define ONE_BY_SQRT2 (0.7071067811865475f) // 1/sqrt(2)
@@ -61,4 +65,14 @@ static inline float wrap_pm(float x, float pm_range) {
   return fmodf_pos(x + pm_range, 2.0f * pm_range) - pm_range;
 }
 static inline float wrap_pm_pi(float theta) { return wrap_pm(theta, M_PI); }
+/* Save and restore the previous interrupt mask, including nested callers. */
+#ifndef CRITICAL_SECTION_BEGIN
+#ifdef TEST_ENV
+#define CRITICAL_SECTION_BEGIN() do {
+#define CRITICAL_SECTION_END() } while (0)
+#else
+#define CRITICAL_SECTION_BEGIN() do { uint32_t critical_primask = __get_PRIMASK(); __disable_irq()
+#define CRITICAL_SECTION_END() __set_PRIMASK(critical_primask); } while (0)
+#endif
+#endif
 #endif // !COMMON_H

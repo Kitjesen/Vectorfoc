@@ -25,6 +25,19 @@ static bool trace_enabled;
 static unsigned injections, brakes, gain_updates, events, encoder_steps;
 static unsigned last_injection, last_brake, last_gain;
 static float voltage_d, voltage_q, voltage_angle, gain_rs, gain_ls;
+static unsigned sensor_prepare_calls;
+
+const PositionSensorDescriptor_t *PositionSensor_GetDescriptor(void) {
+  static const PositionSensorDescriptor_t descriptor = {
+      .name = "electrical-calibration-test",
+      .capabilities = POSITION_SENSOR_CAP_RAW_DIRECTION_POLE,
+  };
+  return &descriptor;
+}
+PositionSensorStatus_t PositionSensor_RawCalibrationPrepareClockwise(void) {
+  ++sensor_prepare_calls;
+  return POSITION_SENSOR_STATUS_OK;
+}
 
 void Control_InjectVoltage(MOTOR_DATA *motor, float vd, float vq, float angle) {
   CHECK(motor);
@@ -57,9 +70,16 @@ static void TraceFloat(const char *name, float value) {
 static unsigned RunScenario(unsigned scenario) {
   MOTOR_DATA motor = {0};
   CalibrationContext ctx = {0};
+  int error_workspace[SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS];
+  int16_t lut_workspace[POSITION_SENSOR_CALIBRATION_LUT_SIZE];
+  ctx.encoder.error_array = error_workspace;
+  ctx.encoder.error_array_size = sizeof(error_workspace) / sizeof(error_workspace[0]);
+  ctx.encoder.offset_lut = lut_workspace;
+  ctx.encoder.offset_lut_size = sizeof(lut_workspace) / sizeof(lut_workspace[0]);
   MT6816_Handle_t encoder = {0};
   motor.components.encoder = &encoder;
   injections = brakes = gain_updates = events = encoder_steps = 0;
+  sensor_prepare_calls = 0;
   last_injection = last_brake = last_gain = 0;
   voltage_d = voltage_q = voltage_angle = gain_rs = gain_ls = 0.0f;
   float dt = scenario == 2 ? 0.0001f : CURRENT_SAMPLE_PERIOD_S;
@@ -76,6 +96,11 @@ static unsigned RunScenario(unsigned scenario) {
   } else {
     CHECK(RSLSCalib_Start(&motor, &ctx) == CALIB_IN_PROGRESS);
     CHECK(motor.state.Cs_State == CS_MOTOR_R_START);
+    CHECK(ctx.encoder.error_array == error_workspace);
+    CHECK(ctx.encoder.error_array_size == sizeof(error_workspace) / sizeof(error_workspace[0]));
+    CHECK(ctx.encoder.offset_lut == lut_workspace);
+    CHECK(ctx.encoder.offset_lut_size == sizeof(lut_workspace) / sizeof(lut_workspace[0]));
+    CHECK(sensor_prepare_calls == 1);
   }
 
   unsigned cycles = 0;

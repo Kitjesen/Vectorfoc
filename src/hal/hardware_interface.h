@@ -24,4 +24,7 @@ void HAL_Delay(uint32_t ms);
 uint32_t HAL_EnterCritical(void);
 void HAL_ExitCritical(uint32_t prev_state);
 void HAL_WatchdogFeed(void);
+/* Immediate gate shutdown, also usable from fault handlers. */
+void Emergency_DisableBridgeOutputs(void);
+void Emergency_Shutdown(void);
 #endif /* HAL_ABSTRACTION_H */

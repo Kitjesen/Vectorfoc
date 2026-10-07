@@ -12,17 +12,128 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/** VectorStudio USB interface. Wire formats stay in telemetry_vofa.c. */
+/**
+ * @file    vofa.h
+ * @brief   VectorStudio
+ *
+ * @details  VectorStudio :
+ *
+ *   ┌────────────────────────────────────────────────────┐
+ *   │          USB-CDC  ()                 │
+ *   ├────────────────  → PC ─────────────────────────┤
+ *   │  1. : FireWater  (12ch × float)     │
+ *   │  2. state: "key=value\n" (calibration/fault/)       │
+ *   ├──────────────── PC →  ─────────────────────────┤
+ *   │  3. : "key=value\n" (//)         │
+ *   └────────────────────────────────────────────────────┘
+ *
+ *    ( VOFA+ FireWater):
+ *     [float0][float1]...[float11][0x00 0x00 0x80 0x7F]
+ *     48  (Little-Endian IEEE754) + 4  = 52
+ *
+ * @note  vofa.h  include，actual VectorStudio
+ */
 #ifndef VOFA_H
 #define VOFA_H
-#include <stdint.h>
-
-/** Capture one 12-channel sample in the FOC ISR. */
+#include "common.h"
+#include "motor_runtime.h"
+#include "motor_sampling.h"
+#include "usart.h"
+#include "usbd_cdc_if.h"
+/* ============================================================================
+ *   ( float → byte )
+ * ============================================================================
+ */
+#define byte0(dw_temp) (*(char *)(&dw_temp))
+#define byte1(dw_temp) (*((char *)(&dw_temp) + 1))
+#define byte2(dw_temp) (*((char *)(&dw_temp) + 2))
+#define byte3(dw_temp) (*((char *)(&dw_temp) + 3))
+/* ============================================================================
+ *  Scope  (ISR → Task )
+ * ============================================================================
+ */
+#ifndef SCOPE_BUFFER_SIZE
+#define SCOPE_BUFFER_SIZE 16 // 16 ms backlog at the 1 kHz producer rate
+#endif
+#define SCOPE_CHANNELS 12
+typedef struct {
+  float data[SCOPE_BUFFER_SIZE][SCOPE_CHANNELS];
+  volatile uint16_t head;
+  volatile uint16_t tail;
+} ScopeBuffer_t;
+/* ============================================================================
+ *   API (FireWater )
+ * ============================================================================
+ */
+/** @brief ISR sample ( isr_foc.c , 1kHz) */
+void Scope_Init(void);
 void Scope_Update(void);
-/** Transmit queued samples from the USB task. */
+/** @brief Task  ( task_debug.c , 1kHz) */
 void Scope_Process(void);
-/** Publish the existing periodic state, calibration and fault reports. */
+/** @brief Retry a queued USB transmission after a transient BUSY response. */
+void Vofa_Service(void);
+/** @brief Copy one USB OUT packet into the ISR-to-task receive queue. */
+bool Vofa_QueueReceive(const uint8_t *buf, uint16_t len);
+/** @brief Number of packets dropped because the receive queue was full. */
+uint32_t Vofa_GetReceiveOverflowCount(void);
+/**
+ * @brief Publish the result of a previously queued Flash save.
+ *
+ * The command service owns the actual write because it first obtains the
+ * motor-state maintenance lease.  This function only emits the corresponding
+ * asynchronous USB acknowledgement.
+ */
+void Vofa_ReportScheduledSaveResult(bool succeeded);
+/** @brief Publish terminal failure after bounded command-service retries. */
+void Vofa_ReportScheduledSaveFailed(void);
+/** @brief Release the in-flight queue slot from the USB TX-complete callback.
+ */
+void Vofa_OnTransmitComplete(void);
+/*  (mode) */
+void vofa_start(void);
+void vofa_send_data(uint8_t num, float data);
+void vofa_sendframetail(void);
+void Vofa_Packet(void);
+/* ============================================================================
+ *  state API ( → VectorStudio)
+ * ============================================================================
+ */
+/**
+ * @brief   ( '\n')
+ * @param  text   ()
+ */
+bool Studio_SendText(const char *text);
+/**
+ * @brief   ( printf,  '\n')
+ * @param  fmt
+ * @param  ...  param
+ */
+bool Studio_SendTextf(const char *fmt, ...);
+/** @brief : "fw_version=X.Y.Z" */
+void Studio_ReportVersion(void);
+/** @brief  ( set_scope_enable ) */
+bool Studio_IsScopeEnabled(void);
+/** @brief calibration: "calib_step=N" / "calib_done=1" / "calib_error=MSG" */
+void Studio_ReportCalibStatus(void);
+/** @brief fault: "fault=CODE,SEVERITY"  "fault_clear=all" */
+void Studio_ReportFaults(void);
+/**
+ * @brief  periodstate ( task_debug.c  ~10Hz )
+ * @details state:
+ *   - calibration → calib_step=N
+ *   - calibrationdone → calib_done=1
+ *   - fault → fault=CODE,SEVERITY
+ *   - fault → fault_clear=all
+ */
 void Studio_PeriodicUpdate(void);
-/** Handle the existing text commands from the USB CDC receive callback. */
+/* ============================================================================
+ *   API (VectorStudio → )
+ * ============================================================================
+ */
+/**
+ * @brief   ( usbd_cdc_if.c )
+ * @param  buf
+ * @param  len
+ */
 void vofa_Receive(uint8_t *buf, uint16_t len);
-#endif /* VOFA_H */
+#endif // VOFA_H

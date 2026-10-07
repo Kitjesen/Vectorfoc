@@ -17,13 +17,11 @@
 #include "current_calibration.h"
 #include "motor_runtime.h"
 #include "motor_configuration.h"   // 间接包含 board_configuration.h → HW_POSITION_SENSOR_MODE
-#include "mt6816_encoder.h"
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-#include "tmr3109_encoder.h"
-#endif
+#include "position_sensor.h"
 #include <math.h>
 DetectionConfig s_config; // Exported for param_table
 static DetectionState s_state = {0};
+static bool s_can_timeout_armed;
 void Detection_Init(const DetectionConfig *config) {
   if (config != NULL) {
     s_config = *config;
@@ -34,6 +32,8 @@ void Detection_Init(const DetectionConfig *config) {
 }
 void Detection_Reset(void) {
   s_state.stall_counter = 0;
+  s_state.stall_start_time_ms = 0;
+  s_state.stall_tracking = false;
   s_state.is_stall = false;
   s_state.is_can_timeout = false;
   s_state.vbus_filtered = 0.0f;
@@ -42,6 +42,8 @@ void Detection_Reset(void) {
   s_state.encoder_err_count = 0;
   s_state.voltage_filter_initialized = false;
   s_state.temp_filter_initialized = false;
+  s_state.last_can_time = HAL_GetSystemTick();
+  s_can_timeout_armed = false;
 }
 /**
  * @brief voltageprotection
@@ -54,14 +56,14 @@ static inline uint32_t Detection_CheckVoltage(MOTOR_DATA *m, float vbus) {
   if (!s_config.enable_voltage_protection)
     return fault;
   (void)m;
-  if (!isfinite(vbus)) return FAULT_DRIVER_CHIP;
+  if (!isfinite(vbus)) return FAULT_OVER_VOLTAGE | FAULT_UNDER_VOLTAGE;
   if (!s_state.voltage_filter_initialized) {
     s_state.vbus_filtered = vbus;
     s_state.voltage_filter_initialized = true;
+  } else {
+    s_state.vbus_filtered = s_state.vbus_filtered * FAULT_FILTER_ALPHA_SLOW +
+                            vbus * FAULT_FILTER_ALPHA_FAST;
   }
-  // filter
-  s_state.vbus_filtered = s_state.vbus_filtered * FAULT_FILTER_ALPHA_SLOW +
-                          vbus * FAULT_FILTER_ALPHA_FAST;
   //
   if (s_state.vbus_filtered > s_config.over_voltage_threshold)
     fault |= FAULT_OVER_VOLTAGE;
@@ -84,7 +86,10 @@ static inline uint32_t Detection_CheckCurrent(MOTOR_DATA *m, float i_a,
     return fault;
   (void)m;
   if (!CurrentCalib_IsReady()) return fault;
-  if (!isfinite(i_a) || !isfinite(i_b) || !isfinite(i_c)) return FAULT_OVER_CURRENT;
+  if (!isfinite(i_a)) fault |= FAULT_CURRENT_A;
+  if (!isfinite(i_b)) fault |= FAULT_CURRENT_B;
+  if (!isfinite(i_c)) fault |= FAULT_CURRENT_C;
+  if (fault != FAULT_NONE) return fault;
   // phasecurrent
   float i_mag = fmaxf(fabsf(i_a), fmaxf(fabsf(i_b), fabsf(i_c)));
   s_state.current_peak = i_mag;
@@ -111,14 +116,14 @@ static inline uint32_t Detection_CheckTemperature(MOTOR_DATA *m, float temp) {
   if (!s_config.enable_temp_protection)
     return fault;
   (void)m;
-  if (!isfinite(temp)) return FAULT_DRIVER_CHIP;
+  if (!isfinite(temp)) return FAULT_OVER_TEMP;
   if (!s_state.temp_filter_initialized) {
     s_state.temp_filtered = temp;
     s_state.temp_filter_initialized = true;
+  } else {
+    s_state.temp_filtered = s_state.temp_filtered * FAULT_FILTER_ALPHA_SLOW +
+                            temp * FAULT_FILTER_ALPHA_FAST;
   }
-  // filter
-  s_state.temp_filtered = s_state.temp_filtered * FAULT_FILTER_ALPHA_SLOW +
-                          temp * FAULT_FILTER_ALPHA_FAST;
   //
   if (s_state.temp_filtered > s_config.over_temp_threshold)
     fault |= FAULT_OVER_TEMP;
@@ -138,7 +143,7 @@ static inline uint32_t Detection_CheckStall(MOTOR_DATA *m, float i_a, float i_b,
   uint32_t fault = FAULT_NONE;
   if (!s_config.enable_stall_protection)
     return fault;
-  (void)m;
+  if (m != NULL && m->state.Control_Mode == CONTROL_MODE_OPEN) return fault;
   if (!CurrentCalib_IsReady()) return fault;
   
   // [FIX] 添加电流有效性检查，避免 NaN 或 Inf 导致的误判
@@ -155,15 +160,20 @@ static inline uint32_t Detection_CheckStall(MOTOR_DATA *m, float i_a, float i_b,
   
   if (i_rms > s_config.stall_current_threshold &&
       fabsf(velocity) < s_config.stall_velocity_threshold) {
-    s_state.stall_counter++;
-    // frequency
-    if (s_state.stall_counter >
-        s_config.stall_detect_time_ms * STALL_DETECT_COUNT_PER_MS) {
+    uint32_t now = HAL_GetSystemTick();
+    if (!s_state.stall_tracking) {
+      s_state.stall_tracking = true;
+      s_state.stall_start_time_ms = now;
+    }
+    s_state.stall_counter = now - s_state.stall_start_time_ms;
+    if (s_state.stall_counter >= s_config.stall_detect_time_ms) {
       fault |= FAULT_STALL_OVERLOAD;
       s_state.is_stall = true;
     }
   } else {
     s_state.stall_counter = 0;
+    s_state.stall_start_time_ms = 0;
+    s_state.stall_tracking = false;
     s_state.is_stall = false;
   }
   return fault;
@@ -174,8 +184,10 @@ static inline uint32_t Detection_CheckStall(MOTOR_DATA *m, float i_a, float i_b,
  * @return fault（）
  */
 static inline uint32_t Detection_CheckCANTimeout(MOTOR_DATA *m) {
-  (void)m;
-  if (!s_config.enable_can_timeout || s_config.can_timeout_ms == 0) {
+  if (!s_config.enable_can_timeout || s_config.can_timeout_ms == 0 ||
+      !s_can_timeout_armed || m == NULL ||
+      m->state.State_Mode != STATE_MODE_RUNNING) {
+    s_state.is_can_timeout = false;
     return FAULT_NONE;
   }
   uint32_t elapsed = HAL_GetSystemTick() - s_state.last_can_time;
@@ -196,7 +208,10 @@ static inline uint32_t Detection_CheckCANTimeout(MOTOR_DATA *m) {
  * @return fault（）
  */
 static inline uint32_t Detection_CheckEncoder(MOTOR_DATA *m) {
-  if (m == NULL || m->components.encoder == NULL) {
+  PositionSensorHealth_t health;
+  PositionSensorStatus_t status;
+
+  if (m == NULL) {
     return FAULT_NONE;
   }
   /* Open-loop mode does not use encoder — suppress encoder fault */
@@ -204,33 +219,54 @@ static inline uint32_t Detection_CheckEncoder(MOTOR_DATA *m) {
     s_state.encoder_err_consecutive = 0;
     return FAULT_NONE;
   }
-#if HW_POSITION_SENSOR_MODE == HW_POSITION_SENSOR_TMR3109
-  TMR3109_Handle_t *enc = ENC(m);
-  if (enc->last_status != TMR3109_OK) {
-    if (s_state.encoder_err_consecutive < 0xFFFFFFFFu) s_state.encoder_err_consecutive++;
+
+  /* PositionSensor already counts failed real-time updates.  Consume its
+   * snapshot directly so the 200 Hz safety poll cannot count the same failed
+   * frame again.  total_failures and the driver-specific transport score can
+   * overlap, therefore use the larger value rather than summing them. */
+  status = (PositionSensor_GetDescriptor() != NULL &&
+            PositionSensor_IsInitialized())
+               ? PositionSensor_GetHealth(&health)
+               : POSITION_SENSOR_STATUS_NOT_INITIALIZED;
+  if (status == POSITION_SENSOR_STATUS_OK) {
+    uint32_t reported_total =
+        health.total_failures > health.transport_error_score
+            ? health.total_failures
+            : health.transport_error_score;
+    if (health.valid) {
+      s_state.encoder_err_consecutive = 0u;
+    } else if (health.consecutive_failures > 0u) {
+      s_state.encoder_err_consecutive = health.consecutive_failures;
+    } else {
+      /* A commutation/signal-validity failure (notably Hall) may have no
+       * transport counter. In that case each slow health sample is the only
+       * observable failure event, so retain the legacy debounce locally. */
+      if (s_state.encoder_err_consecutive < UINT32_MAX) {
+        s_state.encoder_err_consecutive++;
+      }
+      if (s_state.encoder_err_count < UINT32_MAX) {
+        s_state.encoder_err_count++;
+      }
+    }
+    if (reported_total > s_state.encoder_err_count) {
+      s_state.encoder_err_count = reported_total;
+    }
   } else {
-    s_state.encoder_err_consecutive = 0;
-  }
-  s_state.encoder_err_count = (enc->spi_err_count + enc->crc_err_count + enc->chip_err_count);
-  return s_state.encoder_err_consecutive >= FAULT_ENCODER_ERR_CONSECUTIVE_MAX ||
-         (enc->spi_err_count + enc->crc_err_count + enc->chip_err_count) >= FAULT_ENCODER_ERR_COUNT_MAX ? FAULT_ENCODER_LOSS : FAULT_NONE;
-#else  /* HW_POSITION_SENSOR_MT6816 */
-  MT6816_Handle_t *enc = ENC(m);
-  if (enc->last_status != MT6816_OK) {
+    /* A missing/uninitialized adapter has no module-owned counter to consume.
+     * Count one unavailable health sample per slow safety cycle, preserving the
+     * existing consecutive threshold and recovery behavior. */
     if (s_state.encoder_err_consecutive < 0xFFFFFFFFu) {
       s_state.encoder_err_consecutive++;
     }
-  } else {
-    s_state.encoder_err_consecutive = 0;
+    if (s_state.encoder_err_count < 0xFFFFFFFFu) {
+      s_state.encoder_err_count++;
+    }
   }
-  s_state.encoder_err_count = enc->rx_err_count + enc->check_err_count;
-  if (s_state.encoder_err_consecutive >= FAULT_ENCODER_ERR_CONSECUTIVE_MAX ||
-      enc->rx_err_count >= FAULT_ENCODER_ERR_COUNT_MAX ||
-      enc->check_err_count >= FAULT_ENCODER_ERR_COUNT_MAX) {
+
+  if (s_state.encoder_err_consecutive >= FAULT_ENCODER_ERR_CONSECUTIVE_MAX) {
     return FAULT_ENCODER_LOSS;
   }
   return FAULT_NONE;
-#endif
 }
 /**
  * @brief fault
@@ -297,5 +333,18 @@ uint32_t Detection_PreviewFaults(void *motor) {
 const DetectionState *Detection_GetState(void) { return &s_state; }
 void Detection_FeedWatchdog(uint32_t timestamp) {
   s_state.last_can_time = timestamp;
+  if (s_config.enable_can_timeout && s_config.can_timeout_ms > 0u)
+    s_can_timeout_armed = true;
+}
+void Detection_SetCANTimeout(uint32_t timeout_ms) {
+  uint32_t now_ms = HAL_GetSystemTick();
+  uint32_t irq_state = HAL_EnterCritical();
+  s_config.enable_can_timeout = false;
+  s_config.can_timeout_ms = timeout_ms;
+  s_can_timeout_armed = false;
+  s_state.is_can_timeout = false;
+  s_state.last_can_time = now_ms;
+  s_config.enable_can_timeout = timeout_ms > 0u;
+  HAL_ExitCritical(irq_state);
 }
 DetectionConfig *Detection_GetConfig(void) { return &s_config; }

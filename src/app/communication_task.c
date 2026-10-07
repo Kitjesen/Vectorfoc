@@ -14,27 +14,41 @@
 
 /**
  * @file communication_task.c
- * @brief CAN receive processing, deferred saves and periodic reports (500 Hz).
+ * @brief CAN task processing, deferred saves and periodic reporting.
  */
 #include "communication_task.h"
-#include "cmsis_os.h"
-#include "application.h"
 #include "board_log.h"
 #include "calibration_state.h"
+#include "board_can.h"
+#include "error_manager.h"
 #include "protocol_dispatcher.h"
 #include "motor_runtime.h"
 #include "motor_configuration.h"
 #include "safety_manager.h"
 #include "parameter_access.h"
+#include "common.h"
 #include "stm32g4xx_hal.h"
+#include "cmsis_os.h"
+#include "telemetry_vofa.h"
+#include "watchdog_supervisor.h"
+#include <string.h>
+#define CMD_SERVICE_SAVE_RETRY_LIMIT 3U
+
 static bool s_report_enabled = false;
+static bool s_param_save_maintenance_reserved = false;
+static bool s_param_save_maintenance_held = false;
+static uint8_t s_param_save_attempts = 0U;
+static uint32_t s_param_save_generation = 0U;
+
 static inline void CommTask_SnapshotStatus(MotorStatus *status) {
   if (status == NULL)
     return;
-  __disable_irq();
+  /* Safety owns its own critical section, so query it before taking ours. */
+  uint32_t active_fault_bits = Safety_GetActiveFaultBits();
+  CRITICAL_SECTION_BEGIN();
   status->can_id = g_can_id;
-  status->position = motor_data.feedback.position;
-  status->velocity = motor_data.feedback.velocity;
+  status->position = Protocol_TurnsToRadians(motor_data.feedback.position);
+  status->velocity = Protocol_TurnsToRadians(motor_data.feedback.velocity);
   status->current = motor_data.algo_output.Iq;
   status->torque =
       motor_data.algo_output.Iq * motor_data.Controller.torque_const;
@@ -42,7 +56,7 @@ static inline void CommTask_SnapshotStatus(MotorStatus *status) {
   status->voltage = motor_data.algo_input.Vbus;
   status->motor_state = motor_data.state.State_Mode;
   status->control_mode = motor_data.state.Control_Mode;
-  status->fault_code = Safety_GetActiveFaultBits();
+  status->fault_code = active_fault_bits;
   // Calibration status fields
   status->calib_stage = motor_data.state.Sub_State;
   status->calib_sub_stage = motor_data.state.Cs_State;
@@ -50,12 +64,68 @@ static inline void CommTask_SnapshotStatus(MotorStatus *status) {
       motor_data.state.Sub_State, motor_data.state.Cs_State,
       &motor_data.calib_ctx);
   status->calib_result = motor_data.last_calib_result;
-  __enable_irq();
+  CRITICAL_SECTION_END();
+}
+
+static void CommTask_ReceiveCanFrame(const BSP_CAN_Frame *source) {
+  if (source == NULL) return;
+  CAN_Frame frame = {0};
+  frame.id = source->id;
+  frame.dlc = source->dlc;
+  frame.is_extended = source->is_extended;
+  frame.is_rtr = source->is_rtr;
+  if (frame.dlc <= sizeof(frame.data)) {
+    memcpy(frame.data, source->data, frame.dlc);
+    (void)Protocol_QueueRxFrame(&frame);
+  }
+}
+
+void CommTask_Init(void) {
+  (void)BSP_CAN_SetRxCallback(CommTask_ReceiveCanFrame);
+  LOGINFO("[CMD] Command service initialized");
 }
 void CommTask_SetReportEnabled(bool enable) { s_report_enabled = enable; }
+
+bool CommTask_BeginScheduledSave(void) {
+  if (!StateMachine_BeginMaintenance(&g_ds402_state_machine)) {
+    return false;
+  }
+  CRITICAL_SECTION_BEGIN();
+  s_param_save_maintenance_reserved = true;
+  s_param_save_attempts = 0U;
+  CRITICAL_SECTION_END();
+  return true;
+}
+
+void CommTask_CommitScheduledSave(void) {
+  Param_ScheduleSave();
+  uint32_t generation = Param_GetScheduledSaveGeneration();
+  CRITICAL_SECTION_BEGIN();
+  s_param_save_maintenance_reserved = false;
+  s_param_save_maintenance_held = true;
+  s_param_save_generation = generation;
+  CRITICAL_SECTION_END();
+}
+
+void CommTask_CancelScheduledSave(void) {
+  CRITICAL_SECTION_BEGIN();
+  s_param_save_maintenance_reserved = false;
+  s_param_save_maintenance_held = false;
+  s_param_save_attempts = 0U;
+  s_param_save_generation = 0U;
+  CRITICAL_SECTION_END();
+  StateMachine_EndMaintenance(&g_ds402_state_machine);
+}
+
+bool CommTask_RequestScheduledSave(void) {
+  if (!CommTask_BeginScheduledSave()) {
+    return false;
+  }
+  CommTask_CommitScheduledSave();
+  return true;
+}
+
 void CommTask_Process(void) {
-  /* Apply received commands before saving parameters or publishing reports. */
-  Protocol_ProcessQueuedFrames();
   static uint32_t last_report_time = 0;
   static uint32_t last_calib_report_time = 0; // 1Hz progress report during calibration
   static bool last_fault_state = false;
@@ -63,17 +133,69 @@ void CommTask_Process(void) {
   static float report_id_filt = 0.0f;
   static bool report_current_init = false;
   static uint8_t prev_calib_stage = 0; // SUB_STATE_IDLE
+  static uint32_t next_param_save_attempt = 0;
   uint32_t now = HAL_GetTick();
-  // Flash writes are deferred from command handlers to this task.
-  Param_ProcessScheduledSave();
-  // Snapshot control-loop data before building protocol frames.
+  Protocol_ProcessQueuedFrames();
+  // param
+  bool held_save = s_param_save_maintenance_held;
+  bool process_save = held_save;
+  bool release_maintenance = false;
+  /* A newly committed external save already owns the maintenance lease.  Do
+   * not make that lease wait behind the throttle from an unrelated previous
+   * save; only retry attempts are rate limited. */
+  bool initial_held_attempt = held_save && s_param_save_attempts == 0U;
+  if (!process_save && Param_HasScheduledSave() &&
+      (int32_t)(now - next_param_save_attempt) >= 0) {
+    process_save = StateMachine_BeginMaintenance(&g_ds402_state_machine);
+    release_maintenance = process_save;
+    if (process_save) {
+      uint32_t generation = Param_GetScheduledSaveGeneration();
+      if (generation != s_param_save_generation) {
+        s_param_save_attempts = 0U;
+        s_param_save_generation = generation;
+      }
+    }
+  }
+  if (process_save &&
+      (initial_held_attempt ||
+       (int32_t)(now - next_param_save_attempt) >= 0)) {
+    uint32_t generation = s_param_save_generation;
+    bool save_succeeded = Param_ProcessScheduledSave();
+    if (held_save) {
+      Vofa_ReportScheduledSaveResult(save_succeeded);
+    }
+    if (save_succeeded ||
+        ++s_param_save_attempts >= CMD_SERVICE_SAVE_RETRY_LIMIT) {
+      if (!save_succeeded) {
+        bool discarded = Param_DiscardScheduledSaveIfGeneration(generation);
+        if (discarded && Param_RollbackScheduledSave() != PARAM_OK) {
+          ErrorManager_Report(ERROR_PARAM_FLASH_WRITE,
+                              "Scheduled save rollback failed");
+        }
+        if (held_save) {
+          Vofa_ReportScheduledSaveFailed();
+        }
+      }
+      CRITICAL_SECTION_BEGIN();
+      s_param_save_maintenance_reserved = false;
+      s_param_save_maintenance_held = false;
+      s_param_save_attempts = 0U;
+      s_param_save_generation = 0U;
+      CRITICAL_SECTION_END();
+      StateMachine_EndMaintenance(&g_ds402_state_machine);
+    } else if (release_maintenance) {
+      StateMachine_EndMaintenance(&g_ds402_state_machine);
+    }
+    next_param_save_attempt = now + 250U;
+  }
+  // motorstate
   MotorStatus status;
   CommTask_SnapshotStatus(&status);
   Protocol_PeriodicUpdate(now, &status);
   bool has_fault = (status.fault_code != FAULT_NONE);
-  // Publish once when a fault first becomes active.
+  // fault: fault
   if (has_fault && !last_fault_state) {
-    CAN_Frame fault_frame;
+    CAN_Frame fault_frame = {0};
     if (Protocol_BuildFault(status.fault_code, &fault_frame)) {
       Protocol_SendFrame(&fault_frame);
     }
@@ -83,7 +205,7 @@ void CommTask_Process(void) {
   if (status.calib_stage != prev_calib_stage) {
     prev_calib_stage = status.calib_stage;
     last_calib_report_time = now; // align periodic timer to stage change
-    CAN_Frame calib_frame;
+    CAN_Frame calib_frame = {0};
     if (Protocol_BuildCalibStatus(&status, &calib_frame)) {
       Protocol_SendFrame(&calib_frame);
     }
@@ -93,7 +215,7 @@ void CommTask_Process(void) {
   if (status.calib_stage != 0) {
     if (now - last_calib_report_time >= 1000u) { // 1 Hz
       last_calib_report_time = now;
-      CAN_Frame calib_frame;
+      CAN_Frame calib_frame = {0};
       if (Protocol_BuildCalibStatus(&status, &calib_frame)) {
         Protocol_SendFrame(&calib_frame);
       }
@@ -101,7 +223,7 @@ void CommTask_Process(void) {
   } else {
     last_calib_report_time = 0u; // reset when idle so next calib starts fresh
   }
-  // Optional 100 Hz motor feedback is suspended while a fault is active.
+  // statefeedback: fault (100Hz)
   if (s_report_enabled && !has_fault) {
     if (now - last_report_time >= 10) { // 100Hz
       float dt =
@@ -124,19 +246,20 @@ void CommTask_Process(void) {
       }
       status.current = report_iq_filt;
       status.torque = report_iq_filt * motor_data.Controller.torque_const;
-      CAN_Frame tx_frame;
+      CAN_Frame tx_frame = {0};
       if (Protocol_BuildFeedback(&status, &tx_frame)) {
         Protocol_SendFrame(&tx_frame);
       }
     }
   }
+  WatchdogSupervisor_MarkComm();
 }
 
 __attribute__((noreturn)) void StartCustomTask(void const *argument) {
   (void)argument;
-  LOGINFO("[CMD] Communication task initialized");
+  CommTask_Init();
   for (;;) {
     CommTask_Process();
-    osDelay(2);
+    osDelay(2u);
   }
 }

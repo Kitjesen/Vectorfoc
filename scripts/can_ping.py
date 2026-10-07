@@ -1,5 +1,5 @@
 """
-CAN ping test for VectorFOC (inovxio protocol)
+CAN ping test for VectorFOC (vector protocol)
 
 CAN ID format (29-bit extended):
   bits[28:24] = cmd_type
@@ -10,11 +10,10 @@ Commands used:
   GET_ID  (0)  -> send to device 0x01; firmware replies with:
                   cmd=0, data=node_id (0x01), target=0xFE (broadcast)
                   payload: 8 bytes of STM32 hardware UID
-  GET_VER (26) -> ask firmware firmware_version
+  GET_VER (26) -> ask firmware version
 """
 
 import can
-import struct
 import time
 
 DEVICE_ID   = 0x01      # default CAN ID on firmware

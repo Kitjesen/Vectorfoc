@@ -52,7 +52,7 @@ FOC_Algorithm_CurrentLoop(&input, &config, &state, &output);
 
 `SVPWM_Modulate` 的 `Valpha/Vbeta` 与 `Vbus` 都使用伏特，调制时直接用
 `Vphase / Vbus` 归一化。返回值为 `0`（线性区）、`1`（超出线性区后已缩放）或
-`-1`（母线电压无效）；电流环据此记录 `overmodulation`。
+`-1`（非有限值、无效母线或无效输出指针）；电流环据此记录 `overmodulation`。
 
 ## 单独验证
 
@@ -63,3 +63,5 @@ ctest --test-dir build/host --output-on-failure
 ```
 
 具体芯片、传感器和功率级只在 `src/hal` 及其上层固件适配中出现。
+
+速度、位置和轨迹使用圈与圈/秒；惯量补偿把加速度乘以 2π 后得到 Nm，再通过力矩常数换算为 A。轨迹模式已有惯量前馈，运行时补偿只追加摩擦项。补偿保存在独立状态中，不回写用户命令。

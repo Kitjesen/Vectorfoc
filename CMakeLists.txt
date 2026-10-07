@@ -5,6 +5,12 @@ project(VectorFoc C CXX ASM)
 
 # Toolchain setup is expected to be passed via -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
 
+set(POSITION_SENSOR "MT6816" CACHE STRING "Position sensor: MT6816 or TMR3109")
+set_property(CACHE POSITION_SENSOR PROPERTY STRINGS MT6816 TMR3109)
+if(NOT POSITION_SENSOR MATCHES "^(MT6816|TMR3109)$")
+    message(FATAL_ERROR "POSITION_SENSOR must be MT6816 or TMR3109")
+endif()
+
 set(FW_VERSION_FALLBACK "1.0.0" CACHE STRING
     "Fallback firmware version when git tags are unavailable")
 
@@ -154,7 +160,7 @@ target_compile_options(vector_algorithm PRIVATE
     -ffunction-sections
 )
 if(CMAKE_CROSSCOMPILING)
-    target_compile_options(vector_algorithm PRIVATE ${MCU_FLAG_LIST})
+    target_compile_options(vector_algorithm PRIVATE ${MCU_FLAG_LIST} -Os)
 endif()
 
 # Source files
@@ -203,6 +209,9 @@ list(APPEND SOURCES
     "src/safety/fault_definition.c"
     "src/safety/fault_monitor.c"
     "src/safety/safety_manager.c"
+    "src/safety/adc_sample_guard.c"
+    "src/safety/encoder_failure_guard.c"
+    "src/safety/watchdog_supervisor.c"
     # comm
     "src/comm/protocol_canopen.c"
     "src/comm/command_executor.c"
@@ -214,6 +223,10 @@ list(APPEND SOURCES
     "src/config/parameter_access.c"
     "src/config/parameter_storage.c"
     "src/config/parameter_registry.c"
+    "src/config/encoder_calibration_storage.c"
+    "src/config/encoder_calibration_settings.c"
+    "src/config/parameter_bindings.c"
+    "src/config/runtime_settings.c"
     # hal
     "src/hal/bsp/board_adc.c"
     "src/hal/bsp/board_can.c"
@@ -222,6 +235,10 @@ list(APPEND SOURCES
     "src/hal/bsp/board_log.c"
     "src/hal/encoder/mt6816_encoder.c"
     "src/hal/encoder/tmr3109_encoder.c"
+    "src/hal/encoder/position_sensor.c"
+    "src/hal/encoder/position_sensor_selection.c"
+    "src/hal/encoder/position_sensor_mt6816.c"
+    "src/hal/encoder/position_sensor_tmr3109.c"
     "src/hal/hardware_interface.c"
     "src/hal/encoder_interface.c"
     "src/hal/pwm_interface.c"
@@ -259,12 +276,30 @@ target_compile_definitions(${CMAKE_PROJECT_NAME}.elf PRIVATE
     STM32G431xx
     USE_HAL_DRIVER
     STM32G4xx
+    HSE_VALUE=8000000U
+    "HW_POSITION_SENSOR_MODE=HW_POSITION_SENSOR_${POSITION_SENSOR}"
 )
 target_link_libraries(${CMAKE_PROJECT_NAME}.elf PRIVATE vector_algorithm)
 
-# Hex and Bin generation
+# Package a real payload length and CRC at the fixed application-header slot.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(APP_RAW_BIN "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.raw.bin")
+set(APP_HEADER_BIN "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.app_header.bin")
+set(APP_PATCHED_ELF "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.patched.elf")
+set(APP_VERSION "${FW_VERSION_MAJOR}.${FW_VERSION_MINOR}.${FW_VERSION_PATCH}")
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} -O ihex ${CMAKE_PROJECT_NAME}.elf ${CMAKE_PROJECT_NAME}.hex
-    COMMAND ${CMAKE_OBJCOPY} -O binary ${CMAKE_PROJECT_NAME}.elf ${CMAKE_PROJECT_NAME}.bin
-    COMMENT "Building ${CMAKE_PROJECT_NAME}.hex and ${CMAKE_PROJECT_NAME}.bin"
+    COMMAND ${CMAKE_OBJCOPY} -O binary "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>" "${APP_RAW_BIN}"
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/patch_app_header.py"
+            generate --image "${APP_RAW_BIN}" --header-out "${APP_HEADER_BIN}"
+            --version "${APP_VERSION}"
+    COMMAND ${CMAKE_OBJCOPY} --update-section ".app_header=${APP_HEADER_BIN}"
+            "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>" "${APP_PATCHED_ELF}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${APP_PATCHED_ELF}" "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>"
+    COMMAND ${CMAKE_OBJCOPY} -O ihex "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>" "${CMAKE_PROJECT_NAME}.hex"
+    COMMAND ${CMAKE_OBJCOPY} -O binary "$<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>" "${CMAKE_PROJECT_NAME}.bin"
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/patch_app_header.py"
+            verify --image "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin"
+    COMMENT "Packaging bootloader-compatible ${CMAKE_PROJECT_NAME} image"
+    VERBATIM
 )

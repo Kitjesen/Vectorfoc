@@ -131,7 +131,7 @@ typedef struct {
   float Rs;       /**<  [Ohm] */
   float Ls;       /**<  [H] */
   float flux;     /**< flux [V·s] */
-  int pole_pairs; /**< pole pairs */
+  uint8_t pole_pairs; /**< pole pairs */
 } MOTOR_PARAMETERS;
 /**
  * @brief motorparam
@@ -264,7 +264,7 @@ void Motor_RequestCalibration(MOTOR_DATA *motor, uint8_t calibration_type);
  * @brief motorfaultstate
  * @param motor motor
  */
-void Motor_ClearFaults(MOTOR_DATA *motor);
+bool Motor_ClearFaults(MOTOR_DATA *motor);
 /**
  * @brief  Abort any ongoing calibration and return motor to IDLE
  * @param motor motor instance

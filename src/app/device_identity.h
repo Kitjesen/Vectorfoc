@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /**
- * @file    device_identity.h
+ * @file    device_id.h
  * @brief   Device unique identification
  * @note    Uses STM32 built-in 96-bit UID (factory programmed, read-only)
  *

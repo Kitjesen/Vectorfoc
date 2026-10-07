@@ -1,16 +1,18 @@
 /* Application Linker Script for STM32G431xx (with Bootloader) */
-/* Application: 0x08004000 - 0x0803BFFF (224KB) */
+/* Application: 0x08004000 - 0x0801EFFF (108KB, pages 8..61) */
 
 ENTRY(Reset_Handler)
 
 _estack = ORIGIN(RAM) + LENGTH(RAM);
-_Min_Heap_Size = 0x200;
+_Min_Heap_Size = 0;
 _Min_Stack_Size = 0x400;
 
 MEMORY
 {
-  RAM (xrw)    : ORIGIN = 0x20000000, LENGTH = 32K - 16  /* 保留末尾 16 bytes 给 boot flag */
-  FLASH (rx)   : ORIGIN = 0x08004000, LENGTH = 224K      /* Application 区域 */
+  RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 0x57F0
+  BOOTFLAG (rw)  : ORIGIN = 0x200057F0, LENGTH = 0x10
+  CCMRAM (xrw)   : ORIGIN = 0x10000000, LENGTH = 10K
+  FLASH (rx)     : ORIGIN = 0x08004000, LENGTH = 108K
 }
 
 SECTIONS
@@ -24,9 +26,9 @@ SECTIONS
   } >FLASH
 
   /* App Header (位于向量表后 0x200 偏移处) */
-  .application_header 0x08004200 :
+  .app_header 0x08004200 :
   {
-    KEEP(*(.application_header))
+    KEEP(*(.app_header))
     . = ALIGN(4);
   } >FLASH
 
@@ -99,8 +101,19 @@ SECTIONS
   {
     . = ALIGN(4);
     *(.noinit)
+    *(.noinit*)
     . = ALIGN(4);
   } >RAM
+
+  .ccm_bss (NOLOAD) :
+  {
+    . = ALIGN(8);
+    _sccm_bss = .;
+    *(.ccm_bss)
+    *(.ccm_bss*)
+    . = ALIGN(8);
+    _eccm_bss = .;
+  } >CCMRAM
 
   . = ALIGN(4);
   .bss :
@@ -114,6 +127,13 @@ SECTIONS
     _ebss = .;
     __bss_end__ = _ebss;
   } >RAM
+
+  .boot_flag (NOLOAD) :
+  {
+    . = ALIGN(4);
+    KEEP(*(.boot_flag))
+    . = ALIGN(4);
+  } >BOOTFLAG
 
   ._user_heap_stack :
   {
@@ -133,4 +153,11 @@ SECTIONS
   }
 
   .ARM.attributes 0 : { *(.ARM.attributes) }
+
+  ASSERT(SIZEOF(.boot_flag) == 16, "boot flag must occupy exactly 16 bytes")
+  ASSERT(ADDR(.boot_flag) == ORIGIN(BOOTFLAG), "boot flag address mismatch")
+  ASSERT(SIZEOF(.isr_vector) <= 0x200, "vector table overlaps app header")
+  ASSERT(SIZEOF(.app_header) == 32, "app header must occupy exactly 32 bytes")
+  ASSERT(ADDR(.app_header) == ORIGIN(FLASH) + 0x200, "app header address mismatch")
+  ASSERT(SIZEOF(.ccm_bss) <= LENGTH(CCMRAM), "CCM RAM overflow")
 }

@@ -23,10 +23,11 @@ void Control_Initialize(MOTOR_DATA *motor);
 /* One current-control cycle: limit commands, select mode, and run the due
  * position/velocity loops before the inner current loop. OPEN and VF inject
  * voltage directly and skip the closed loops. */
-void Control_RunCurrentCycle(MOTOR_DATA *motor);
+bool Control_RunCurrentCycle(MOTOR_DATA *motor);
 
 /* Recompute current gains and controller limits after parameter changes. */
 void Control_UpdateCurrentGains(MOTOR_DATA *motor);
+void Control_ApplyConfiguredCurrentGains(MOTOR_DATA *motor);
 
 /* Calibration/open-loop voltage injection, in volts and electrical radians. */
 void Control_InjectVoltage(MOTOR_DATA *motor, float Vd, float Vq, float angle);

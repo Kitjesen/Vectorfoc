@@ -14,6 +14,7 @@
 
 #include "control_context.h"
 #include "motor_configuration.h"
+#include "algorithm/torque_feedforward.h"
 
 #define VEL_FEEDBACK_FILTER_FC 100.0f
 
@@ -37,14 +38,14 @@ void Control_UpdatePositionLoop(const OuterLoopInput *input, MotorControlCtx *ct
   if (input->mode == CONTROL_MODE_POSITION) {
     ctx->vel_set = PID_CalcDt(input->position_pid, input->feedback_position,
                               input->input_position, POSITION_LOOP_PERIOD_S);
-    ctx->vel_set = CLAMP(ctx->vel_set, -input->input_velocity,
-                         +input->input_velocity);
+    float limit = Control_PositionVelocityLimit(input->input_velocity, input->vel_limit);
+    ctx->vel_set = CLAMP(ctx->vel_set, -limit, limit);
   } else if (input->mode == CONTROL_MODE_POSITION_RAMP) {
     ctx->vel_set = PID_CalcDt(input->position_pid, input->feedback_position,
                               input->pos_setpoint, POSITION_LOOP_PERIOD_S) +
                    input->vel_setpoint;
-    ctx->vel_set = CLAMP(ctx->vel_set, -input->input_velocity,
-                         +input->input_velocity);
+    float limit = Control_PositionVelocityLimit(input->input_velocity, input->vel_limit);
+    ctx->vel_set = CLAMP(ctx->vel_set, -limit, limit);
   }
 }
 
@@ -73,7 +74,8 @@ void Control_UpdateVelocityLoop(const OuterLoopInput *input,
       ctx->vel_set = CLAMP(ctx->vel_set, -input->vel_limit,
                            +input->vel_limit);
     }
-    output->iq_ref = Control_CalculateVelocityOutput(input, ctx->vel_set, vel_fdb);
+    output->iq_ref = Control_CalculateVelocityOutput(input, ctx->vel_set, vel_fdb) +
+                     input->feedforward_current;
     output->id_ref = 0.0f;
   } else if (input->mode >= CONTROL_MODE_VELOCITY_RAMP &&
              input->mode <= CONTROL_MODE_POSITION_RAMP) {
@@ -83,8 +85,11 @@ void Control_UpdateVelocityLoop(const OuterLoopInput *input,
                            +input->vel_limit);
     }
     vel_fdb = CLAMP(vel_fdb, -input->vel_limit, +input->vel_limit);
+    float trajectory_current = 0.0f;
+    (void)Control_TorqueToCurrent(input->torque_setpoint, input->torque_const,
+                                  &trajectory_current);
     output->iq_ref = Control_CalculateVelocityOutput(input, ctx->vel_set, vel_fdb) +
-                     input->torque_setpoint;
+                     trajectory_current + input->feedforward_current;
     output->id_ref = 0.0f;
   }
 

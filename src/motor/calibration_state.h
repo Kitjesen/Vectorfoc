@@ -17,6 +17,7 @@
 
 #include "common.h"
 #include "motor_configuration.h"
+#include "position_sensor.h"
 
 /**
  * @file calibration_state.h
@@ -98,9 +99,14 @@ typedef struct {
   float phase_set;         // Current electrical angle
   int16_t sample_count;    // Sample counter
   float next_sample_time;  // Next sampling timestamp
-  int16_t error_array_storage[SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS];
-  int16_t *error_array;    // Error array (preallocated storage)
+#ifdef TEST_ENV
+  int error_array_storage[SAMPLES_PER_POLE_PAIR * MAX_POLE_PAIRS];
+  int16_t offset_lut_storage[POSITION_SENSOR_CALIBRATION_LUT_SIZE];
+#endif
+  int *error_array;        // Shared hardware calibration workspace
   size_t error_array_size; // Array size
+  int16_t *offset_lut;
+  size_t offset_lut_size;
 } EncoderCalibContext;
 
 //=============================================================================

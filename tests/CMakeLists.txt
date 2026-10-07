@@ -2,10 +2,14 @@ cmake_minimum_required(VERSION 3.10)
 
 project(VectorFOC_Test C)
 
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
 set(CMAKE_C_STANDARD 99)
 enable_testing()
 add_test(NAME test_pwm_configuration
     COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_pwm_configuration.cmake)
+add_test(NAME test_app_header_tools
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_app_header_tools.py)
 
 # Define project root relative to test dir
 set(PROJ_ROOT "${CMAKE_SOURCE_DIR}/..")
@@ -25,7 +29,9 @@ include_directories(
     ${PROJ_ROOT}/src/config
     ${PROJ_ROOT}/src/comm
     ${PROJ_ROOT}/src/app
+    ${PROJ_ROOT}/src/boot
     ${PROJ_ROOT}/src/hal
+    ${PROJ_ROOT}/src/hal/encoder
     ${PROJ_ROOT}/src/hal/bsp
     ${PROJ_ROOT}/algorithm
 )
@@ -222,14 +228,17 @@ add_executable(test_runner_electrical_calibration
     ${PROJ_ROOT}/src/motor/resistance_inductance_calibration.c
 )
 register_test_target(test_runner_electrical_calibration)
-add_executable(test_runner_param_compat
-    test_param_compat.c
-    ${PROJ_ROOT}/src/config/parameter_access.c
+add_executable(test_runner_parameter_bindings
+    test_parameter_bindings.c
     ${PROJ_ROOT}/src/config/parameter_registry.c
-    ${PROJ_ROOT}/src/config/parameter_storage.c
 )
-target_include_directories(test_runner_param_compat PRIVATE ${PROJ_ROOT}/src/hal/bsp)
-register_test_target(test_runner_param_compat)
+register_test_target(test_runner_parameter_bindings)
+
+add_executable(test_runner_parameter_typed_access
+    test_parameter_typed_access.c
+    ${PROJ_ROOT}/src/config/parameter_access.c
+)
+register_test_target(test_runner_parameter_typed_access)
 
 
 # LED logic tests (pure logic, no HAL)
@@ -266,6 +275,7 @@ add_executable(test_runner_comm_simplify
 )
 target_include_directories(test_runner_comm_simplify BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/comm_support
+    ${CMAKE_SOURCE_DIR}/safety_support
 )
 target_include_directories(test_runner_comm_simplify PRIVATE
     ${PROJ_ROOT}/src/hal/bsp
@@ -320,7 +330,69 @@ endif()
 target_link_libraries(test_runner_startup PRIVATE vector_algorithm_host)
 register_test_target(test_runner_startup)
 
+# Small deterministic guards used directly from interrupt/supervision paths.
+add_executable(test_runner_adc_sample_guard
+    test_adc_sample_guard.c
+    ${PROJ_ROOT}/src/safety/adc_sample_guard.c
+)
+register_test_target(test_runner_adc_sample_guard)
+
+add_executable(test_runner_encoder_failure_guard
+    test_encoder_failure_guard.c
+    ${PROJ_ROOT}/src/safety/encoder_failure_guard.c
+)
+register_test_target(test_runner_encoder_failure_guard)
+
+add_executable(test_runner_watchdog_supervisor
+    test_watchdog_supervisor.c
+    ${PROJ_ROOT}/src/safety/watchdog_supervisor.c
+)
+register_test_target(test_runner_watchdog_supervisor)
+
+# Encoder math is header-only so sensor drivers can share one exact wrapping
+# and multi-turn contract without introducing another runtime layer.
+add_executable(test_runner_encoder_angle_math
+    test_encoder_angle_math.c
+)
+target_include_directories(test_runner_encoder_angle_math PRIVATE
+    ${PROJ_ROOT}/src/hal/encoder
+)
+register_test_target(test_runner_encoder_angle_math)
+
+add_executable(test_runner_encoder_position_tracker
+    test_encoder_position_tracker.c
+)
+target_include_directories(test_runner_encoder_position_tracker PRIVATE
+    ${PROJ_ROOT}/src/hal/encoder
+)
+register_test_target(test_runner_encoder_position_tracker)
+
+add_executable(test_runner_position_sensor_runtime
+    test_position_sensor_runtime.c
+    ${PROJ_ROOT}/src/hal/encoder/position_sensor.c
+)
+target_include_directories(test_runner_position_sensor_runtime BEFORE PRIVATE
+    ${PROJ_ROOT}/src/hal/encoder
+)
+register_test_target(test_runner_position_sensor_runtime)
+
+add_executable(test_runner_position_sensor_selection
+    test_position_sensor_selection.c
+    ${PROJ_ROOT}/src/hal/encoder/position_sensor_selection.c
+)
+register_test_target(test_runner_position_sensor_selection)
+
+add_executable(test_runner_boot_protocol
+    test_boot_protocol.c
+    ${PROJ_ROOT}/src/boot/boot_protocol.c
+)
+target_include_directories(test_runner_boot_protocol BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/boot_support
+    ${PROJ_ROOT}/src/boot
+)
+register_test_target(test_runner_boot_protocol)
+
 # ===========================================================================
 # Summary
 # ===========================================================================
-message(STATUS "VectorFOC: 18 C tests, 1 CubeMX consistency test and 16 timing compilation checks")
+message(STATUS "VectorFOC: 27 C tests, 2 tooling/configuration tests and 16 timing compilation checks")

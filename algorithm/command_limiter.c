@@ -30,6 +30,12 @@ void RateLimiter_Reset(RateLimiterTypeDef *limiter, float initial_value) {
   limiter->last_value = initial_value;
   limiter->initialized = true;
 }
+
+void RateLimiter_SetMaxRate(RateLimiterTypeDef *limiter, float max_rate) {
+  if (limiter == NULL)
+    return;
+  limiter->max_rate = fabsf(max_rate);
+}
 //
 float RateLimiter_Apply(RateLimiterTypeDef *limiter, float input, float dt) {
   if (limiter == NULL)

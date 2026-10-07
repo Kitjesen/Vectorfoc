@@ -12,6 +12,6 @@ void ControlTest_ReadSnapshot(ControlTestSnapshot *snapshot) {
   snapshot->position_loop_count = s_ctx.position_loop_tick_count;
   snapshot->vel_set = s_ctx.vel_set;
   snapshot->traj = s_ctx.traj;
-  snapshot->velocity = s_vel_limiter;
-  snapshot->torque = s_torque_limiter;
+  snapshot->velocity = s_ctx.velocity_limiter;
+  snapshot->torque = s_ctx.torque_limiter;
 }

@@ -1,15 +1,9 @@
 name: VectorFOC CI
 
-on:
-  push:
-    paths:
-      - "**"
-  pull_request:
-    paths:
-      - "**"
+on: [push, pull_request]
 
 jobs:
-  build:
+  host:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -18,34 +12,58 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-arm-none-eabi cmake make
-
-      - name: Build firmware (CMake + arm-none-eabi)
-        run: |
-          mkdir -p build/arm
-          cmake -S . -B build/arm -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
-          cmake --build build/arm -j2
-
       - name: Build tests (host)
         run: |
-          mkdir -p build/host
-          cmake -S tests -B build/host
-          cmake --build build/host -j2
+          cmake -S tests -B build/host -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/host --parallel 2
 
       - name: Run tests (host)
         run: |
           ctest --test-dir build/host --output-on-failure
 
+  firmware:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sensor: [MT6816, TMR3109]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi
+      - name: Build and verify firmware image
+        run: |
+          cmake -S . -B build/arm --toolchain cmake/gcc-arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Release -DPOSITION_SENSOR=${{ matrix.sensor }}
+          cmake --build build/arm --parallel 2
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
-        if: success()
         with:
-          name: firmware-binaries
+          name: firmware-${{ matrix.sensor }}
           path: |
             build/arm/VectorFoc.elf
             build/arm/VectorFoc.bin
             build/arm/VectorFoc.hex
+          retention-days: 30
+
+  bootloader:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi
+      - name: Build bootloader
+        run: |
+          cmake -S cmake/bootloader -B build/boot --toolchain "$GITHUB_WORKSPACE/cmake/gcc-arm-none-eabi.cmake"
+          cmake --build build/boot --parallel 2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bootloader
+          path: |
+            build/boot/VectorFoc_Bootloader.elf
+            build/boot/VectorFoc_Bootloader.bin
+            build/boot/VectorFoc_Bootloader.hex
           retention-days: 30

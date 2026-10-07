@@ -103,6 +103,8 @@ static MOTOR_DATA make_motor(float vel_setpoint, float input_torque)
     memset(&m, 0, sizeof(m));
     m.Controller.vel_setpoint = vel_setpoint;
     m.Controller.input_torque = input_torque;
+    m.Controller.torque_const = 1.0f;
+    m.state.Control_Mode = CONTROL_MODE_VELOCITY;
     return m;
 }
 
@@ -123,14 +125,16 @@ static int test_ff_zero_params_no_torque_change(void)
 {
 
     MOTOR_DATA m = make_motor(5.0f, 3.0f);
+    Feedforward_Reset();
     float before = m.Controller.input_torque;
     UpdateFeedforward(&m);
-    float after = m.Controller.input_torque;
+    float after = Feedforward_GetCurrent(&m);
 
     /* 参数全零：只有 friction*vel=0，惯量*accel=? */
     /* 因为上次vel_ref是静态的，第二次调用才有 accel 非零 */
     /* 但 inertia=0 → total_ff = 0，不改变 input_torque */
-    CHECK_NEAR(after, before, 1e-6f);
+    CHECK_NEAR(after, 0.0f, 1e-6f);
+    CHECK_NEAR(m.Controller.input_torque, before, 1e-6f);
 
     printf("PASS test_ff_zero_params_no_torque_change (before=%.4f after=%.4f)\n",
            (double)before, (double)after);
@@ -143,6 +147,7 @@ static int test_ff_viscous_friction_direction(void)
     /* 正向速度 */
     MOTOR_DATA m_pos = make_motor(10.0f, 0.0f);
     m_pos.advanced.ff_friction = 0.1f;
+    Feedforward_Reset();
     /* 先调一次让 has_last = true，accel 有值 */
     UpdateFeedforward(&m_pos);
     m_pos.Controller.input_torque = 0.0f;
@@ -150,19 +155,35 @@ static int test_ff_viscous_friction_direction(void)
     UpdateFeedforward(&m_pos);
 
     /* viscous = 0.1 * 10 = 1.0，正向 */
-    CHECK(m_pos.Controller.input_torque > 0.0f);
+    CHECK(Feedforward_GetCurrent(&m_pos) > 0.0f);
 
     /* 负向速度 */
     MOTOR_DATA m_neg = make_motor(-10.0f, 0.0f);
     m_neg.advanced.ff_friction = 0.1f;
+    Feedforward_Reset();
     UpdateFeedforward(&m_neg); /* has_last */
     m_neg.Controller.input_torque = 0.0f;
     m_neg.Controller.vel_setpoint = -10.0f;
     UpdateFeedforward(&m_neg);
 
-    CHECK(m_neg.Controller.input_torque < 0.0f);
+    CHECK(Feedforward_GetCurrent(&m_neg) < 0.0f);
 
     printf("PASS test_ff_viscous_friction_direction\n");
+    return 0;
+}
+
+static int test_ff_ramp_mode_does_not_repeat_trajectory_inertia(void)
+{
+    MOTOR_DATA m = make_motor(0.0f, 0.0f);
+    m.Controller.inertia = 0.01f;
+    m.state.Control_Mode = CONTROL_MODE_VELOCITY_RAMP;
+    Feedforward_Reset();
+    UpdateFeedforward(&m);
+    m.Controller.vel_setpoint = 10.0f;
+    UpdateFeedforward(&m);
+    CHECK_NEAR(Feedforward_GetCurrent(&m), 0.0f, 1e-6f);
+
+    printf("PASS test_ff_ramp_mode_does_not_repeat_trajectory_inertia\n");
     return 0;
 }
 
@@ -231,6 +252,7 @@ int main(int argc, char **argv)
     f += test_ff_null_safe();
     f += test_ff_zero_params_no_torque_change();
     f += test_ff_viscous_friction_direction();
+    f += test_ff_ramp_mode_does_not_repeat_trajectory_inertia();
 
     printf("-- CoggingComp --\n");
     f += test_cogging_not_valid_initially();

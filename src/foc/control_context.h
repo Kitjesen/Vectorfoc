@@ -18,6 +18,7 @@
 #include "control_mode.h"
 #include "algorithm/ladrc_controller.h"
 #include "algorithm/pid_controller.h"
+#include "algorithm/command_limiter.h"
 #include "algorithm/trapezoid_trajectory.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -28,6 +29,11 @@ typedef struct {
   uint16_t velocity_loop_tick_count;
   uint16_t position_loop_tick_count;
   float vel_set;
+  float limited_velocity;
+  float limited_torque;
+  CONTROL_MODE last_mode;
+  RateLimiterTypeDef velocity_limiter;
+  RateLimiterTypeDef torque_limiter;
   TrajTypeDef traj;
 } MotorControlCtx;
 
@@ -43,6 +49,8 @@ typedef struct {
   float pos_setpoint;
   float vel_setpoint;
   float torque_setpoint;
+  float torque_const;
+  float feedforward_current;
   PidTypeDef *position_pid;
   PidTypeDef *velocity_pid;
   LADRC_Config_t *ladrc_config;

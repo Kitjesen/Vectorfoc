@@ -32,6 +32,7 @@
 #include "protocol_messages.h"
 #include "motor_runtime.h"         /* CONTROL_MODE_MIT, MOTOR_DATA */
 #include "protocol_vector.h"
+#include "protocol_dispatcher.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -408,22 +409,47 @@ int main(void)
    ════════════════════════════════════════════════════════════════ */
 #include "motor_runtime.h"
 #include "calibration_state.h"
+#include "drive_state_machine.h"
+#include "parameter_access.h"
+#include "error_manager.h"
 
 uint8_t g_can_id = 1;
 uint8_t g_protocol_type = 0;
 MOTOR_DATA motor_data;
+StateMachine g_ds402_state_machine;
 
 void Motor_RequestCalibration(MOTOR_DATA *m, uint8_t type) { (void)m; (void)type; }
 void Motor_AbortCalibration(MOTOR_DATA *m) { (void)m; }
-void Motor_ClearFaults(MOTOR_DATA *m) { (void)m; }
+bool Motor_ClearFaults(MOTOR_DATA *m) { (void)m; return true; }
 uint8_t Motor_PreCalibCheck(MOTOR_DATA *m, uint8_t *fail) {
     (void)m; if (fail) *fail = 0; return 0xFF;
 }
-void Param_WriteFloat(uint16_t idx, float v) { (void)idx; (void)v; }
-void Param_WriteUint8(uint16_t idx, uint8_t v) { (void)idx; (void)v; }
+ParamResult Param_WriteFloat(uint16_t idx, float v) { (void)idx; (void)v; return PARAM_OK; }
+ParamResult Param_WriteUint8(uint16_t idx, uint8_t v) { (void)idx; (void)v; return PARAM_OK; }
 void Param_ScheduleSave(void) {}
 void CommTask_SetReportEnabled(bool en) { (void)en; }
-void Protocol_SendFrame(const CAN_Frame *f) { (void)f; }
+bool CommTask_BeginScheduledSave(void) { return true; }
+void CommTask_CommitScheduledSave(void) {}
+void CommTask_CancelScheduledSave(void) {}
+bool CommTask_RequestScheduledSave(void) { return true; }
+bool Protocol_SendFrame(const CAN_Frame *f) { (void)f; return true; }
+bool Protocol_SendTrackedFrame(const CAN_Frame *f, BSP_CAN_TxTicket *ticket) {
+    (void)f; if (ticket) ticket->marker = 1u; return ticket != NULL;
+}
+bool Protocol_TxTicketIsComplete(const BSP_CAN_TxTicket *ticket) {
+    return ticket != NULL && ticket->marker != 0u;
+}
+void Protocol_CancelTrackedSend(const BSP_CAN_TxTicket *ticket) { (void)ticket; }
+void Emergency_DisableBridgeOutputs(void) {}
+void Emergency_Shutdown(void) {}
+bool StateMachine_RequestState(StateMachine *sm, MotorState target) {
+    (void)sm; (void)target; return true;
+}
+uint32_t HAL_GetTick(void) { return 0u; }
+void Boot_RequestUpgrade(void) {}
+void ErrorManager_Report(uint32_t code, const char *message) {
+    (void)code; (void)message;
+}
 uint8_t CalibContext_GetProgress(uint8_t a, uint8_t b,
                                   const CalibrationContext *c) {
     (void)a; (void)b; (void)c; return 0;

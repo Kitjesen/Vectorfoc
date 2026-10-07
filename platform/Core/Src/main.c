@@ -21,6 +21,7 @@
 void SystemClock_Config(void);
 
 void MX_FREERTOS_Init(void);
+void MX_IWDG_Init(void);
 
 /**
  * @brief  Application entry point.
@@ -40,7 +41,6 @@ int main(void) {
   MX_TIM1_Init();
   MX_ADC2_Init();
   MX_USART1_UART_Init();
-  void MX_IWDG_Init(void);
   MX_IWDG_Init();
 
   /* Application-level initialization (motor_runtime, comm, safety, etc.) */
@@ -57,13 +57,13 @@ int main(void) {
 
 /**
  * @brief  IWDG initialization (register-based, no HAL).
- *         Prescaler=32, Reload=20 => ~20ms timeout at 32kHz LSI.
+ *         Prescaler=32, Reload=100 => ~100ms timeout at 32kHz LSI.
  */
 void MX_IWDG_Init(void) {
   IWDG->KR = 0xCCCC;  /* Enable IWDG */
   IWDG->KR = 0x5555;  /* Enable write access */
   IWDG->PR = 0x03;    /* Prescaler /32 */
-  IWDG->RLR = 20;     /* Reload value for ~20ms */
+  IWDG->RLR = 100;    /* Reload value for ~100ms */
   while (IWDG->SR != 0)
     ;                  /* Wait for register update */
   IWDG->KR = 0xAAAA;  /* Reload counter */
@@ -71,7 +71,7 @@ void MX_IWDG_Init(void) {
 
 /**
  * @brief  System clock configuration.
- *         HSE 24MHz -> PLL -> 168MHz SYSCLK
+ *         HSE 8MHz -> PLL -> 168MHz SYSCLK
  */
 void SystemClock_Config(void) {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -120,7 +120,20 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 /**
  * @brief  Global error handler. Disables IRQ and waits for watchdog reset.
  */
+void Emergency_DisableBridgeOutputs(void) {
+  TIM1->BDTR &= ~TIM_BDTR_MOE;
+  TIM1->CCER &= ~(TIM_CCER_CC1E | TIM_CCER_CC1NE |
+                  TIM_CCER_CC2E | TIM_CCER_CC2NE |
+                  TIM_CCER_CC3E | TIM_CCER_CC3NE);
+  __DSB();
+  __ISB();
+}
+void Emergency_Shutdown(void) {
+  __disable_irq();
+  Emergency_DisableBridgeOutputs();
+}
 void Error_Handler(void) {
+  Emergency_Shutdown();
   #include "error_configuration.h"
   #ifdef USE_ERROR_MANAGER
     #include "error_manager.h"

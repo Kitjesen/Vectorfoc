@@ -212,9 +212,14 @@ static void assert_detection_unchanged(const DetectionState *before) {
 }
 static void test_enable_preview_preserves_periodic_detection_state(void) {
   reset(); ready(); enable();
-  MT6816_Handle_t encoder = {0};
-  encoder.last_status = MT6816_ERR_SPI;
-  motor_data.components.encoder = &encoder;
+  test_sensor_health = (PositionSensorHealth_t){
+      .valid = false,
+      .consecutive_failures = 1,
+      .total_failures = 1,
+      .diagnostic_flags = POSITION_SENSOR_DIAGNOSTIC_TRANSPORT,
+      .transport_error_score = 1,
+      .calibrated = true,
+  };
   motor_data.state.Control_Mode = CONTROL_MODE_TORQUE;
   motor_data.algo_input.Vbus = 50.0f;
   motor_data.feedback.temperature = 30.0f;
@@ -222,7 +227,7 @@ static void test_enable_preview_preserves_periodic_detection_state(void) {
       FAULT_STALL_CURRENT_A + 1.0f;
   Safety_Update_Slow(&motor_data, &g_ds402_state_machine);
   DetectionState before = *Detection_GetState();
-  assert(before.stall_counter == 1 && before.encoder_err_consecutive == 1);
+  assert(before.encoder_err_consecutive == 1);
   for (unsigned i = 0; i < 100; ++i) {
     assert(StateMachine_RequestState(&g_ds402_state_machine, STATE_OPERATION_ENABLED));
     StateMachine_SetControlword(&g_ds402_state_machine, 0x000f);
@@ -231,12 +236,28 @@ static void test_enable_preview_preserves_periodic_detection_state(void) {
   }
   assert_detection_unchanged(&before);
   /* A real periodic update still advances each filter/counter exactly once. */
+  test_sensor_health.consecutive_failures = 2;
+  test_sensor_health.total_failures = 2;
+  test_sensor_health.transport_error_score = 2;
   Safety_Update_Slow(&motor_data, &g_ds402_state_machine);
   const DetectionState *after = Detection_GetState();
-  assert(after->stall_counter == before.stall_counter + 1);
+  /* Stall debounce is elapsed-time based; the host tick need not advance
+   * between these two immediate safety polls. */
+  assert(after->stall_counter >= before.stall_counter);
   assert(after->encoder_err_consecutive == before.encoder_err_consecutive + 1);
   assert(after->vbus_filtered > before.vbus_filtered);
   assert(after->temp_filtered > before.temp_filtered);
+  /* Historical failures are diagnostic only. A valid recovered sample clears
+   * the consecutive loss debounce even when total_failures remains high. */
+  test_sensor_health.valid = true;
+  test_sensor_health.consecutive_failures = 0;
+  test_sensor_health.total_failures = 100;
+  test_sensor_health.transport_error_score = 100;
+  motor_data.algo_input.Ia = motor_data.algo_input.Ib = motor_data.algo_input.Ic = 0.0f;
+  Safety_Update_Slow(&motor_data, &g_ds402_state_machine);
+  after = Detection_GetState();
+  assert(after->encoder_err_consecutive == 0);
+  assert((Safety_GetActiveFaultBits() & FAULT_ENCODER_LOSS) == 0);
   before = *after;
   motor_data.algo_input.Ia = FAULT_OVER_CURRENT_A + 1;
   test_irq_mask = 1;
@@ -244,7 +265,6 @@ static void test_enable_preview_preserves_periodic_detection_state(void) {
   assert(test_irq_mask == 1);
   assert_detection_unchanged(&before);
   test_irq_mask = 0;
-  motor_data.components.encoder = NULL;
 }
 static void test_public_pwm_channels_and_failures(void) {
   reset(); ready();
@@ -279,6 +299,60 @@ static void test_public_pwm_channels_and_failures(void) {
   reset(); test_stop_fail_call=test_stop_calls+1;
   assert(!start() && !test_sampling_on); /* cannot arm after an incomplete power-off */
 }
+static void interrupt_enable_with_stop_and_fault(void) {
+  assert(g_ds402_state_machine.transition_in_progress);
+  assert(StateMachine_RequestState(&g_ds402_state_machine, STATE_SWITCH_ON_DISABLED));
+  /* State is stopped, but the interrupted multi-channel HAL enable still owns
+   * the transition. Flash must wait until that HAL call is fully unwound. */
+  assert(!StateMachine_BeginMaintenance(&g_ds402_state_machine));
+  StateMachine_EnterFault(&g_ds402_state_machine, FAULT_DRIVER_CHIP);
+}
+static void test_interrupted_enable_releases_lease_and_keeps_bridge_off(void) {
+  reset(); ready();
+  test_enable_hook = interrupt_enable_with_stop_and_fault;
+  assert(StateMachine_RequestState(&g_ds402_state_machine, STATE_OPERATION_ENABLED));
+  settle();
+  assert(!test_power_on && TestHardware_PhaseMask() == 0 && test_sampling_on);
+  assert(!g_ds402_state_machine.transition_in_progress);
+  assert(!g_ds402_state_machine.operation_power_enabled);
+  assert(StateMachine_GetState(&g_ds402_state_machine) == STATE_FAULT);
+  assert(StateMachine_BeginMaintenance(&g_ds402_state_machine));
+  StateMachine_EndMaintenance(&g_ds402_state_machine);
+}
+static void test_invalid_and_repeated_calibration_fail_closed(void) {
+  reset(); ready(); enable();
+  motor_data.calib_ctx.current.loop_count = 17;
+  Motor_RequestCalibration(&motor_data, 255);
+  assert(motor_data.last_calib_result == CALIB_FAILED_INVALID_PARAMS);
+  assert(motor_data.calib_ctx.current.loop_count == 17);
+  assert(StateMachine_GetState(&g_ds402_state_machine) == STATE_SWITCH_ON_DISABLED);
+  assert(!test_power_on);
+  settle(); assert(!test_power_on);
+
+  reset(); ready();
+  Motor_RequestCalibration(&motor_data, 3);
+  settle();
+  assert(StateMachine_GetState(&g_ds402_state_machine) == STATE_CALIBRATING);
+  assert(test_power_on);
+  assert(g_ds402_state_machine.calibration_power_enabled);
+  assert(StateMachine_GetStatusword(&g_ds402_state_machine) & 0x0010u);
+  unsigned samples = motor_data.calib_ctx.current.loop_count;
+  Motor_RequestCalibration(&motor_data, 3);
+  assert(motor_data.last_calib_result == CALIB_FAILED_INVALID_PARAMS);
+  assert(motor_data.calib_ctx.current.loop_count == samples);
+  assert(StateMachine_GetState(&g_ds402_state_machine) == STATE_SWITCH_ON_DISABLED);
+  settle(); assert(!test_power_on);
+}
+static void test_init_preserves_configured_current_gains(void) {
+  reset();
+  motor_data.Controller.current_ctrl_p_gain = 0.23f;
+  motor_data.Controller.current_ctrl_i_gain = 0.71f;
+  Init_Motor_No_Calib(&motor_data);
+  assert(test_configured_gain_calls == 1 && test_recomputed_gain_calls == 0);
+  assert(motor_data.Controller.current_ctrl_p_gain == 0.23f);
+  assert(motor_data.Controller.current_ctrl_i_gain == 0.71f);
+  assert(!test_power_on);
+}
 int main(void) {
   test_passive_startup();
   test_invalid_samples_and_init_failures();
@@ -289,6 +363,9 @@ int main(void) {
   test_explicit_cogging_survives_intermediate_states();
   test_enable_preview_preserves_periodic_detection_state();
   test_public_pwm_channels_and_failures();
-  puts("startup safety: 9 production-chain test groups passed (including six-channel PWM)");
+  test_interrupted_enable_releases_lease_and_keeps_bridge_off();
+  test_invalid_and_repeated_calibration_fail_closed();
+  test_init_preserves_configured_current_gains();
+  puts("startup safety: 12 production-chain test groups passed (including six-channel PWM)");
   return 0;
 }

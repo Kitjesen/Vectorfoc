@@ -45,6 +45,10 @@ int MHAL_PWM_SetDuty(float a, float b, float c) {
   RecordDuty(a, b, c);
   return 0;
 }
+int MHAL_PWM_Disable(void) {
+  ++brake_calls;
+  return 0;
+}
 #ifndef CONTROL_TEST_LEGACY_HAL
 int MHAL_PWM_Brake(void) {
   if (!hal_available) return -1;
@@ -56,6 +60,24 @@ void ErrorManager_ReportFull(uint32_t code, const char *message,
   CHECK(code == ERROR_MOTOR_ENCODER_LOSS);
   CHECK(message && file && line);
   ++error_calls;
+}
+
+StateMachine g_ds402_state_machine;
+static uint32_t triggered_faults;
+void Safety_TriggerFault(uint32_t fault_bits, MOTOR_DATA *motor,
+                         StateMachine *state_machine) {
+  (void)motor;
+  (void)state_machine;
+  triggered_faults |= fault_bits;
+  ++error_calls;
+}
+MotorState StateMachine_GetState(const StateMachine *sm) {
+  return sm != NULL ? sm->current_state : STATE_NOT_READY_TO_SWITCH_ON;
+}
+bool StateMachine_SetCalibrationPower(StateMachine *sm, bool enabled) {
+  (void)sm;
+  (void)enabled;
+  return true;
 }
 
 #if defined(CONTROL_TEST_LEGACY_VTABLE) || defined(CONTROL_TEST_LEGACY_HAL)
@@ -182,9 +204,10 @@ static void CheckConfiguredOuterLoopTiming(void) {
   motor.feedback.phase_angle = 0.0f;
   motor.feedback.velocity = 0.0f;
   motor.feedback.position = 0.0f;
-  motor.Controller.vel_limit = 100.0f;
+  motor.Controller.vel_limit = 100000.0f;
   motor.Controller.current_limit = 100.0f;
   motor.Controller.torque_limit = 100.0f;
+  motor.Controller.vel_ramp_rate = 100000.0f;
 
   const float integral_only[] = {0.0f, 1.0f, 0.0f};
   PID_Init(&motor.VelPID, PID_POSITION, integral_only, 100.0f, 100.0f);
@@ -285,26 +308,35 @@ int main(int argc, char **argv) {
         ControlTest_ReadSnapshot(&before);
         FOC_AlgorithmState_t previous_state = motor.algo_state;
         float previous_iq = motor.algo_input.Iq_ref;
+        float requested_velocity = motor.Controller.input_velocity;
+        float requested_torque = motor.Controller.input_torque;
         unsigned previous_pwm_calls = pwm_calls;
         unsigned previous_brakes = brake_calls, previous_errors = error_calls;
-        Control_RunCurrentCycle(&motor);
+        bool cycle_ok = Control_RunCurrentCycle(&motor);
+        CHECK(motor.Controller.input_velocity == requested_velocity);
+        CHECK(motor.Controller.input_torque == requested_torque);
         ControlTest_ReadSnapshot(&after);
         bool velocity_loop = mode >= CONTROL_MODE_VELOCITY && mode <= CONTROL_MODE_POSITION_RAMP;
         bool position_loop = mode == CONTROL_MODE_POSITION || mode == CONTROL_MODE_POSITION_RAMP;
+        unsigned velocity_before = i == 0u ? 0u : before.velocity_loop_count;
+        unsigned position_before = i == 0u ? 0u : before.position_loop_count;
         CHECK(after.velocity_loop_count ==
-              (velocity_loop ? (before.velocity_loop_count + 1) % VELOCITY_LOOP_DECIMATION : 0));
+              (velocity_loop ? (velocity_before + 1) % VELOCITY_LOOP_DECIMATION : 0));
         CHECK(after.position_loop_count ==
-              (position_loop ? (before.position_loop_count + 1) % POSITION_LOOP_DECIMATION : 0));
-        CHECK(pwm_calls == previous_pwm_calls + (hal_available ? 1 : 0));
+              (position_loop ? (position_before + 1) % POSITION_LOOP_DECIMATION : 0));
+        bool invalid_mode = mode == (CONTROL_MODE)7;
+        CHECK(cycle_ok == !invalid_mode);
+        CHECK(pwm_calls == previous_pwm_calls +
+                                  (!invalid_mode && hal_available ? 1u : 0u));
         bool voltage_only = mode == CONTROL_MODE_OPEN || mode == CONTROL_MODE_VF;
         if (voltage_only) CHECK(memcmp(&previous_state, &motor.algo_state, sizeof(previous_state)) == 0);
-        else CHECK(motor.algo_input.enabled);
+        else if (!invalid_mode) CHECK(motor.algo_input.enabled);
         if (voltage_only || mode == CONTROL_MODE_IF) {
           CHECK(motor.algo_input.theta_elec >= 0.0f && motor.algo_input.theta_elec < M_2PI);
         } else if (mode != (CONTROL_MODE)7) CHECK(motor.algo_input.theta_elec == motor.feedback.phase_angle);
-        if (mode == (CONTROL_MODE)7) {
+        if (invalid_mode) {
           CHECK(error_calls == previous_errors + 1);
-          CHECK(brake_calls == previous_brakes + (hal_available ? 1 : 0));
+          CHECK(brake_calls == previous_brakes + 1u);
         } else CHECK(error_calls == previous_errors && brake_calls == previous_brakes);
         if (mode == CONTROL_MODE_MIT && i < 20) CHECK(motor.algo_input.Iq_ref == 0.0f);
         if (mode == CONTROL_MODE_MIT && i >= 20 && i < 40) CHECK(motor.algo_input.Iq_ref == previous_iq * MIT_MODE_DECAY_FACTOR);

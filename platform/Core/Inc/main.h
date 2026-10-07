@@ -53,6 +53,8 @@ extern "C" {
 
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
+void Emergency_DisableBridgeOutputs(void);
+void Emergency_Shutdown(void);
 
 /* USER CODE BEGIN EFP */
 

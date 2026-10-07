@@ -16,13 +16,13 @@ VectorFOC 支持通过 USB-CDC 进行 OTA (Over-The-Air) 固件升级。系统�
 实际 MCU 核对。
 
 ```
-STM32G4 (256KB Flash)
+STM32G431CB (128KB Flash)
 ┌─────────────────────────────────────────────────────────┐
 │ 0x08000000 - 0x08003FFF │ Bootloader (16KB, 8 pages)    │
 ├─────────────────────────────────────────────────────────┤
-│ 0x08004000 - 0x0803BFFF │ Application (224KB, 112 pages)│
+│ 0x08004000 - 0x0801EFFF │ Application (108KB, 54 pages) │
 ├─────────────────────────────────────────────────────────┤
-│ 0x0803C000 - 0x0803FFFF │ Config/Params (16KB, 8 pages) │
+│ 0x0801F000 - 0x0801FFFF │ Config/Params (4KB, 2 pages)  │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -96,7 +96,7 @@ cmake -S cmake/bootloader -B build/boot -G Ninja \
 cmake --build build/boot --parallel 4
 ```
 
-2026-09-27 离线检查：上述入口可配置，源文件编译完成，但链接报告 Flash 使用 20032 B，超过当前 16 KiB 分区 3648 B。因此尚未生成可用于刷写的有效 bootloader 固件；需先解决容量与分区配置问题，再验证升级链路。
+2026-10-07 主线合并后，Bootloader 编译、链接通过，Flash 使用 13,704 B / 16 KiB，原有超限已解决。Application 打包时生成并校验实际镜像长度与 CRC；本轮未烧录，USB 升级与 App 跳转仍需上板验证。
 
 ### 2. 编译 Application
 

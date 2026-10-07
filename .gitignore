@@ -17,6 +17,8 @@ platform/keil/.vscode/
 
 # Tooling
 .omc/
+__pycache__/
+*.py[cod]
 
 # Compiled objects & intermediates
 *.o

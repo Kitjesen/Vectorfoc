@@ -28,6 +28,9 @@
 #include "hardware_interface.h"
 #include "pwm_interface.h"
 #include "safety_manager.h"
+#if !defined(TEST_ENV)
+#include "main.h"
+#endif
 #include <stddef.h>
 #include <string.h>
 /* ==========  ========== */
@@ -86,7 +89,7 @@ static const StateTransition transition_table[] = {
     /* calibration: Ready to Switch On -> Calibrating (Bit8 ) */
     {0x0100, 0x0100, STATE_READY_TO_SWITCH_ON, STATE_CALIBRATING},
     /* calibration Shutdown: Calibrating -> Ready to Switch On (safety) */
-    {0x0087, 0x0006, STATE_CALIBRATING, STATE_READY_TO_SWITCH_ON},
+    {0x0187, 0x0006, STATE_CALIBRATING, STATE_READY_TO_SWITCH_ON},
     /* calibration Disable Voltage: Calibrating -> Switch On Disabled */
     {0x0002, 0x0000, STATE_CALIBRATING, STATE_SWITCH_ON_DISABLED},
 };
@@ -103,9 +106,11 @@ static void UpdateStatusword(StateMachine *sm) {
   }
   sm->statusword.word = status;
   sm->statusword.bits.voltage_enabled =
-      sm->current_state == STATE_OPERATION_ENABLED ||
-      sm->current_state == STATE_CALIBRATING ||
-      sm->current_state == STATE_QUICK_STOP_ACTIVE;
+      (((sm->current_state == STATE_OPERATION_ENABLED ||
+         sm->current_state == STATE_QUICK_STOP_ACTIVE) &&
+        sm->operation_power_enabled) ||
+       (sm->current_state == STATE_CALIBRATING &&
+        sm->calibration_power_enabled));
 }
 static bool IsPoweredState(MotorState state) {
   return state == STATE_OPERATION_ENABLED || state == STATE_CALIBRATING;
@@ -124,7 +129,8 @@ static void RejectEnable(StateMachine *sm) {
   UpdateStatusword(sm);
 }
 static bool CanEnterPoweredState(StateMachine *sm, MotorState state) {
-  return sm->active_fault_code == 0 && sm->pre_check_callback &&
+  return !sm->maintenance_active && sm->active_fault_code == 0 &&
+         sm->pre_check_callback &&
          sm->pre_check_callback(state);
 }
 static bool ExecuteTransition(StateMachine *sm, MotorState new_state) {
@@ -136,18 +142,28 @@ static bool ExecuteTransition(StateMachine *sm, MotorState new_state) {
   }
   sm->current_state = new_state;
   sm->state_entry_time = HAL_GetSystemTick();
-  if (IsPoweredState(new_state) || new_state == STATE_QUICK_STOP_ACTIVE) {
-    int status = new_state == STATE_QUICK_STOP_ACTIVE ? MHAL_PWM_Brake() : MHAL_PWM_Enable();
-    if (status != 0) {
+  /* Entering a DS402 powered state grants permission only.  The bridge is
+   * enabled later, after the first valid duty has been written. */
+  sm->operation_power_enabled = false;
+  sm->calibration_power_enabled = false;
+  MHAL_PWM_Disable();
+  /* Quick Stop is an explicit active-braking command. Never apply a brake
+   * after a fault or before passive current-offset sampling is ready. */
+  if (new_state == STATE_QUICK_STOP_ACTIVE &&
+      CanEnterPoweredState(sm, STATE_OPERATION_ENABLED)) {
+    sm->transition_in_progress = true;
+    int result = MHAL_PWM_Brake();
+    uint32_t irq_state = HAL_EnterCritical();
+    bool allowed = result == 0 &&
+        sm->current_state == STATE_QUICK_STOP_ACTIVE &&
+        CanEnterPoweredState(sm, STATE_OPERATION_ENABLED);
+    sm->operation_power_enabled = allowed;
+    HAL_ExitCritical(irq_state);
+    if (!allowed) {
       MHAL_PWM_Disable();
-      sm->active_fault_code |= FAULT_DRIVER_CHIP;
-      sm->current_state = STATE_FAULT;
-      ClearIntent(sm);
-      UpdateStatusword(sm);
-      return false;
+      if (result != 0) StateMachine_EnterFault(sm, FAULT_DRIVER_CHIP);
     }
-  } else if (new_state != STATE_QUICK_STOP_ACTIVE) {
-    MHAL_PWM_Disable();
+    sm->transition_in_progress = false;
   }
   if (new_state == STATE_SWITCH_ON_DISABLED || new_state == STATE_FAULT ||
       new_state == STATE_FAULT_REACTION_ACTIVE) ClearIntent(sm);
@@ -279,6 +295,12 @@ void StateMachine_Init(StateMachine *sm) {
   UpdateStatusword(sm);
 }
 void StateMachine_Update(StateMachine *sm) {
+  if (sm == NULL) return;
+  uint32_t irq_state = HAL_EnterCritical();
+  if (sm->transition_in_progress) {
+    HAL_ExitCritical(irq_state);
+    return;
+  }
   /* init */
   if (sm->current_state == STATE_NOT_READY_TO_SWITCH_ON) {
     ExecuteTransition(sm, STATE_SWITCH_ON_DISABLED);
@@ -287,9 +309,10 @@ void StateMachine_Update(StateMachine *sm) {
   AutoAdvanceToTarget(sm);
   ProcessStateTransitions(sm);
   UpdateStatusword(sm);
+  HAL_ExitCritical(irq_state);
 }
 bool StateMachine_RequestState(StateMachine *sm, MotorState target_state) {
-  if ((uint32_t)target_state >= STATE_COUNT) return false;
+  if (sm == NULL || (uint32_t)target_state >= STATE_COUNT) return false;
   uint32_t irq_state = HAL_EnterCritical();
   bool accepted = true;
   if (target_state == STATE_SWITCH_ON_DISABLED) {
@@ -300,7 +323,7 @@ bool StateMachine_RequestState(StateMachine *sm, MotorState target_state) {
       ExecuteTransition(sm, target_state);
   } else if (IsPoweredState(target_state) &&
              (sm->current_state == STATE_FAULT || sm->current_state == STATE_FAULT_REACTION_ACTIVE ||
-              !CanEnterPoweredState(sm, target_state))) {
+              sm->transition_in_progress || !CanEnterPoweredState(sm, target_state))) {
     RejectEnable(sm);
     accepted = false;
   } else {
@@ -316,7 +339,8 @@ void StateMachine_SetControlword(StateMachine *sm, uint16_t controlword) {
   bool wants_calibration = (controlword & 0x0100U) != 0;
   bool wants_operation = (controlword & 0x000FU) == 0x000FU;
   if ((wants_calibration || wants_operation) &&
-      !CanEnterPoweredState(sm, wants_calibration ? STATE_CALIBRATING : STATE_OPERATION_ENABLED)) {
+      (sm->transition_in_progress || !CanEnterPoweredState(sm,
+          wants_calibration ? STATE_CALIBRATING : STATE_OPERATION_ENABLED))) {
     RejectEnable(sm);
   } else {
     sm->controlword.word = controlword;
@@ -331,31 +355,158 @@ MotorState StateMachine_GetState(const StateMachine *sm) {
   return sm->current_state;
 }
 void StateMachine_EnterFault(StateMachine *sm, uint32_t fault_code) {
+  if (sm == NULL) return;
+  uint32_t irq_state = HAL_EnterCritical();
+#if !defined(TEST_ENV)
+  /* Bypass the multi-call HAL path first so a fault interrupt cannot be
+   * followed by a resumed enable sequence that reasserts timer outputs. */
+  Emergency_DisableBridgeOutputs();
+#endif
   /* fault (per-instance) */
   sm->fault_history[sm->fault_history_index] = fault_code;
   sm->fault_history_index = (sm->fault_history_index + 1) % FAULT_HISTORY_SIZE;
   sm->active_fault_code = fault_code;
   /* stop */
   ClearIntent(sm);
-  MHAL_PWM_Disable();
+  sm->operation_power_enabled = false;
+  sm->calibration_power_enabled = false;
   /* [FIX] DS402:  FAULT_REACTION_ACTIVE safety，
    *  ProcessStateTransitions  FAULT */
   if (sm->current_state != STATE_FAULT &&
       sm->current_state != STATE_FAULT_REACTION_ACTIVE) {
-    ExecuteTransition(sm, STATE_FAULT_REACTION_ACTIVE);
+    sm->current_state = STATE_FAULT_REACTION_ACTIVE;
+    sm->state_entry_time = HAL_GetSystemTick();
   }
+  UpdateStatusword(sm);
+  HAL_ExitCritical(irq_state);
+  MHAL_PWM_Disable();
 }
 bool StateMachine_ClearFault(StateMachine *sm) {
+  if (sm == NULL) return false;
+  uint32_t irq_state = HAL_EnterCritical();
   if (sm->current_state != STATE_FAULT && sm->current_state != STATE_FAULT_REACTION_ACTIVE) {
+    HAL_ExitCritical(irq_state);
     return false;
   }
   /* Safety_ClearFaults has checked the live sensors and cleared its latch. */
   sm->active_fault_code = 0;
   ClearIntent(sm);
-  ExecuteTransition(sm, STATE_SWITCH_ON_DISABLED);
+  sm->current_state = STATE_SWITCH_ON_DISABLED;
+  sm->state_entry_time = HAL_GetSystemTick();
+  sm->operation_power_enabled = false;
+  sm->calibration_power_enabled = false;
+  UpdateStatusword(sm);
+  HAL_ExitCritical(irq_state);
+  MHAL_PWM_Disable();
   return true;
+}
+bool StateMachine_SetOperationPower(StateMachine *sm, bool enabled) {
+  if (sm == NULL) return false;
+  uint32_t irq_state = HAL_EnterCritical();
+  if (sm->current_state != STATE_OPERATION_ENABLED ||
+      sm->active_fault_code != 0u || sm->maintenance_active ||
+      sm->transition_in_progress) {
+    HAL_ExitCritical(irq_state);
+    return false;
+  }
+  sm->operation_power_enabled = false;
+  sm->transition_in_progress = true;
+  UpdateStatusword(sm);
+  HAL_ExitCritical(irq_state);
+
+  if (!enabled) {
+    MHAL_PWM_Disable();
+    irq_state = HAL_EnterCritical();
+    sm->transition_in_progress = false;
+    HAL_ExitCritical(irq_state);
+    return true;
+  }
+
+  int result = MHAL_PWM_Enable();
+  irq_state = HAL_EnterCritical();
+  bool still_allowed = result == 0 &&
+                       sm->current_state == STATE_OPERATION_ENABLED &&
+                       sm->active_fault_code == 0u && !sm->maintenance_active;
+  sm->operation_power_enabled = still_allowed;
+  UpdateStatusword(sm);
+  HAL_ExitCritical(irq_state);
+  if (!still_allowed) {
+#if !defined(TEST_ENV)
+    Emergency_DisableBridgeOutputs();
+#endif
+    MHAL_PWM_Disable();
+    if (result != 0) StateMachine_EnterFault(sm, FAULT_DRIVER_CHIP);
+  }
+  irq_state = HAL_EnterCritical();
+  sm->transition_in_progress = false;
+  HAL_ExitCritical(irq_state);
+  return still_allowed;
+}
+bool StateMachine_SetCalibrationPower(StateMachine *sm, bool enabled) {
+  if (sm == NULL) return false;
+  uint32_t irq_state = HAL_EnterCritical();
+  if (sm->current_state != STATE_CALIBRATING || sm->active_fault_code != 0u ||
+      sm->maintenance_active || sm->transition_in_progress) {
+    HAL_ExitCritical(irq_state);
+    return false;
+  }
+  sm->calibration_power_enabled = false;
+  sm->transition_in_progress = true;
+  UpdateStatusword(sm);
+  HAL_ExitCritical(irq_state);
+
+  if (!enabled) {
+    MHAL_PWM_Disable();
+    irq_state = HAL_EnterCritical();
+    sm->transition_in_progress = false;
+    HAL_ExitCritical(irq_state);
+    return true;
+  }
+  int result = MHAL_PWM_Enable();
+  irq_state = HAL_EnterCritical();
+  bool still_allowed = result == 0 && sm->current_state == STATE_CALIBRATING &&
+                       sm->active_fault_code == 0u && !sm->maintenance_active;
+  sm->calibration_power_enabled = still_allowed;
+  UpdateStatusword(sm);
+  HAL_ExitCritical(irq_state);
+  if (!still_allowed) {
+#if !defined(TEST_ENV)
+    Emergency_DisableBridgeOutputs();
+#endif
+    MHAL_PWM_Disable();
+    if (result != 0) StateMachine_EnterFault(sm, FAULT_DRIVER_CHIP);
+  }
+  irq_state = HAL_EnterCritical();
+  sm->transition_in_progress = false;
+  HAL_ExitCritical(irq_state);
+  return still_allowed;
+}
+bool StateMachine_BeginMaintenance(StateMachine *sm) {
+  if (sm == NULL) return false;
+  uint32_t irq_state = HAL_EnterCritical();
+  bool powered_state = sm->current_state == STATE_OPERATION_ENABLED ||
+                       sm->current_state == STATE_CALIBRATING ||
+                       sm->current_state == STATE_QUICK_STOP_ACTIVE ||
+                       sm->target_state == STATE_OPERATION_ENABLED ||
+                       sm->target_state == STATE_CALIBRATING;
+  bool acquired = !sm->maintenance_active && !powered_state &&
+                  !sm->transition_in_progress &&
+                  !sm->operation_power_enabled &&
+                  !sm->calibration_power_enabled;
+  if (acquired) sm->maintenance_active = true;
+  HAL_ExitCritical(irq_state);
+  return acquired;
+}
+void StateMachine_EndMaintenance(StateMachine *sm) {
+  if (sm == NULL) return;
+  uint32_t irq_state = HAL_EnterCritical();
+  sm->maintenance_active = false;
+  HAL_ExitCritical(irq_state);
 }
 void StateMachine_SetPreCheckCallback(StateMachine *sm,
                                       bool (*callback)(MotorState to_state)) {
+  if (sm == NULL) return;
+  uint32_t irq_state = HAL_EnterCritical();
   sm->pre_check_callback = callback;
+  HAL_ExitCritical(irq_state);
 }

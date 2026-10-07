@@ -1,5 +1,5 @@
 /**
- * @file    protocol_vector.h
+ * @file    vector_protocol.h
  * @brief   Vector private CAN protocol
  * @details
  *          Units: position [rad], velocity [rad/s], torque [Nm], current [A]
@@ -40,6 +40,12 @@ typedef enum {
  * @brief  Initialize Vector protocol
  */
 void ProtocolVector_Init(void);
+/**
+ * @brief Complete deferred reset/bootloader transitions after the tracked ACK
+ *        frame is confirmed by the CAN Tx event FIFO.
+ * @note Call from the communication task.
+ */
+void ProtocolVector_Service(void);
 /**
  * @brief   Parse a received CAN frame
  * @param  frame  CAN frame

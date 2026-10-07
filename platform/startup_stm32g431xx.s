@@ -17,6 +17,9 @@ defined in linker script */
 .word _sbss
 /* end address for the .bss section. defined in linker script */
 .word _ebss
+/* start/end address for the CPU-only CCM bss section. */
+.word _sccm_bss
+.word _eccm_bss
 
 .section .text.Reset_Handler
 .weak Reset_Handler
@@ -55,6 +58,20 @@ FillZerobss:
 LoopFillZerobss:
   cmp r2, r4
   bcc FillZerobss
+
+/* Zero fill the CPU-only CCM bss segment. */
+  ldr r2, =_sccm_bss
+  ldr r4, =_eccm_bss
+  movs r3, #0
+  b LoopFillZeroCcmBss
+
+FillZeroCcmBss:
+  str  r3, [r2]
+  adds r2, r2, #4
+
+LoopFillZeroCcmBss:
+  cmp r2, r4
+  bcc FillZeroCcmBss
 
 /* Call the clock system intitialization function.*/
   bl  SystemInit

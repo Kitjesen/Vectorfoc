@@ -32,6 +32,10 @@ static inline void Safety_LatchFaultBits(uint32_t detected_faults,
 static uint32_t Safety_TakePendingFaults(void);
 static inline void Safety_ReportPendingFaults(MOTOR_DATA *motor,
                                               StateMachine *fsm);
+static void Safety_EnterFaultIfNeeded(uint32_t fault_bits, StateMachine *fsm);
+static void Safety_LatchPendingReportBits(uint32_t fault_bits);
+static uint32_t Safety_TakePendingReportBits(void);
+static void Safety_RetryPendingReports(MOTOR_DATA *motor);
 static void Safety_AutoClearIfSafe(StateMachine *fsm);
 void Safety_Init(const SafetyConfig *config) {
   if (config != NULL) {
@@ -41,6 +45,8 @@ void Safety_Init(const SafetyConfig *config) {
   }
   s_ctx.active_fault_bits = FAULT_NONE;
   s_ctx.pending_fault_bits = FAULT_NONE;
+  s_ctx.pending_report_bits = FAULT_NONE;
+  s_ctx.fsm_reported_fault_bits = FAULT_NONE;
   s_ctx.fault_count = 0;
   s_ctx.initialized = true;
   ErrorManager_Init(); // errorinit
@@ -66,7 +72,7 @@ void Safety_Update_Fast(MOTOR_DATA *motor, StateMachine *fsm) {
       s_ctx.last_fault_time = HAL_GetTick();
       // faultstate（），/
       if (fsm != NULL) {
-        StateMachine_EnterFault(fsm, new_faults);
+        Safety_EnterFaultIfNeeded(new_faults, fsm);
       }
     }
     Safety_LatchFaultBits(detected_faults, new_faults);
@@ -80,7 +86,7 @@ void Safety_Update_Slow(MOTOR_DATA *motor, StateMachine *fsm) {
   if (!s_ctx.initialized) {
     Safety_Init(NULL);
   }
-  //
+  Safety_RetryPendingReports(motor);
   uint32_t detected_faults = Detection_Check_Slow(motor);
   // checkfault
   if (detected_faults != FAULT_NONE) {
@@ -114,8 +120,11 @@ bool Safety_CanEnable(MOTOR_DATA *motor) {
 }
 bool Safety_ClearFaults(StateMachine *fsm) {
   /* A reset is a stopped state, never permission to replay an old enable. */
-  uint32_t irq_state = HAL_EnterCritical();
   MHAL_PWM_Disable();
+  /* Preserve a fast-path fault in history/callback delivery before clearing
+   * the active latch.  A failed callback remains queued for the slow task. */
+  Safety_ReportPendingFaults(NULL, NULL);
+  uint32_t irq_state = HAL_EnterCritical();
   Detection_Reset();
   uint32_t remaining = Detection_PreviewFaults(&motor_data);
   if (remaining != FAULT_NONE || !CurrentCalib_IsReady()) {
@@ -127,6 +136,7 @@ bool Safety_ClearFaults(StateMachine *fsm) {
   }
   s_ctx.active_fault_bits = FAULT_NONE;
   s_ctx.pending_fault_bits = FAULT_NONE;
+  s_ctx.fsm_reported_fault_bits = FAULT_NONE;
   s_ctx.fault_count = 0;
   if (fsm) {
     if (!StateMachine_ClearFault(fsm))
@@ -135,6 +145,21 @@ bool Safety_ClearFaults(StateMachine *fsm) {
   ErrorManager_ClearDomain(ERROR_DOMAIN_SAFETY);
   HAL_ExitCritical(irq_state);
   return true;
+}
+void Safety_TriggerFault(uint32_t fault_bits, MOTOR_DATA *motor,
+                         StateMachine *fsm) {
+  (void)motor;
+  if (fault_bits == FAULT_NONE) return;
+  if (!s_ctx.initialized) Safety_Init(NULL);
+
+  uint32_t irq_state = HAL_EnterCritical();
+  uint32_t new_faults = fault_bits & ~s_ctx.active_fault_bits;
+  HAL_ExitCritical(irq_state);
+  if (new_faults != FAULT_NONE) {
+    s_ctx.last_fault_time = HAL_GetTick();
+    Safety_EnterFaultIfNeeded(new_faults, fsm);
+  }
+  Safety_LatchFaultBits(fault_bits, new_faults);
 }
 bool Safety_HasActiveFault(void) {
   bool has_fault;
@@ -151,7 +176,15 @@ uint32_t Safety_GetActiveFaultBits(void) {
   return bits;
 }
 void Safety_RegisterFaultCallback(SafetyFaultCallback callback) {
+  uint32_t irq_state = HAL_EnterCritical();
   s_ctx.config.fault_callback = callback;
+  HAL_ExitCritical(irq_state);
+}
+static SafetyFaultCallback Safety_GetFaultCallback(void) {
+  uint32_t irq_state = HAL_EnterCritical();
+  SafetyFaultCallback callback = s_ctx.config.fault_callback;
+  HAL_ExitCritical(irq_state);
+  return callback;
 }
 /* ==========  ========== */
 static void OnFaultDetected(uint32_t fault_bits, MOTOR_DATA *motor,
@@ -162,14 +195,14 @@ static void OnFaultDetected(uint32_t fault_bits, MOTOR_DATA *motor,
   ReportFaultToErrorManager(fault_bits);
   // 2. statefaultstate
   if (fsm != NULL) {
-    StateMachine_EnterFault(fsm, fault_bits);
+    Safety_EnterFaultIfNeeded(fault_bits, fsm);
   }
   // 3. （CAN）
-  if (s_ctx.config.fault_callback != NULL) {
-    bool success = s_ctx.config.fault_callback(fault_bits, motor);
+  SafetyFaultCallback callback = Safety_GetFaultCallback();
+  if (callback != NULL) {
+    bool success = callback(fault_bits, motor);
     if (!success) {
-      // ，faultpending，wait
-      Safety_LatchFaultBits(0, fault_bits);
+      Safety_LatchPendingReportBits(fault_bits);
     }
   }
 }
@@ -196,6 +229,12 @@ static void ReportFaultToErrorManager(uint32_t fault_bits) {
   if (fault_bits & FAULT_CAN_TIMEOUT) {
     ERROR_REPORT(ERROR_COMM_TIMEOUT, "CAN communication timeout");
   }
+  if (fault_bits & FAULT_CONTROL_INVALID) {
+    ERROR_REPORT(ERROR_PARAM_INVALID_VALUE, "Invalid control configuration");
+  }
+  if (fault_bits & FAULT_ADC_STALE) {
+    ERROR_REPORT(ERROR_HW_ADC_TIMEOUT, "ADC sample stale or incomplete");
+  }
 }
 uint32_t Safety_GetLastFaultTime(void) { return s_ctx.last_fault_time; }
 static inline void Safety_LatchFaultBits(uint32_t detected_faults,
@@ -221,6 +260,41 @@ static inline void Safety_ReportPendingFaults(MOTOR_DATA *motor,
   }
 }
 static void Safety_AutoClearIfSafe(StateMachine *fsm) {
-  if (s_ctx.active_fault_bits != FAULT_NONE && s_ctx.pending_fault_bits == FAULT_NONE)
-    Safety_ClearFaults(fsm);
+  uint32_t irq_state = HAL_EnterCritical();
+  bool can_clear = s_ctx.active_fault_bits != FAULT_NONE &&
+                   s_ctx.pending_fault_bits == FAULT_NONE &&
+                   s_ctx.pending_report_bits == FAULT_NONE;
+  HAL_ExitCritical(irq_state);
+  if (can_clear) (void)Safety_ClearFaults(fsm);
+}
+
+static void Safety_EnterFaultIfNeeded(uint32_t fault_bits, StateMachine *fsm) {
+  if (fsm == NULL || fault_bits == FAULT_NONE) return;
+  uint32_t irq_state = HAL_EnterCritical();
+  uint32_t unreported = fault_bits & ~s_ctx.fsm_reported_fault_bits;
+  s_ctx.fsm_reported_fault_bits |= unreported;
+  HAL_ExitCritical(irq_state);
+  if (unreported != FAULT_NONE) StateMachine_EnterFault(fsm, unreported);
+}
+
+static void Safety_LatchPendingReportBits(uint32_t fault_bits) {
+  uint32_t irq_state = HAL_EnterCritical();
+  s_ctx.pending_report_bits |= fault_bits;
+  HAL_ExitCritical(irq_state);
+}
+
+static uint32_t Safety_TakePendingReportBits(void) {
+  uint32_t irq_state = HAL_EnterCritical();
+  uint32_t pending = s_ctx.pending_report_bits;
+  s_ctx.pending_report_bits = FAULT_NONE;
+  HAL_ExitCritical(irq_state);
+  return pending;
+}
+
+static void Safety_RetryPendingReports(MOTOR_DATA *motor) {
+  SafetyFaultCallback callback = Safety_GetFaultCallback();
+  if (callback == NULL) return;
+  uint32_t pending = Safety_TakePendingReportBits();
+  if (pending != FAULT_NONE && !callback(pending, motor))
+    Safety_LatchPendingReportBits(pending);
 }

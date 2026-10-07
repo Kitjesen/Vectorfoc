@@ -20,6 +20,10 @@
 
 /* Runtime boundary for pure feedforward and field-weakening algorithms. */
 void Feedforward_Update(MOTOR_DATA *motor);
+void Feedforward_Reset(void);
+float Feedforward_GetCurrent(const MOTOR_DATA *motor);
+float FieldWeakening_Calculate(const MOTOR_DATA *motor,
+                               const FieldWeakening_Config_t *config, float dt_s);
 void FieldWeakening_Update(MOTOR_DATA *motor,
                            const FieldWeakening_Config_t *config);
 void FieldWeakening_Reset(void);

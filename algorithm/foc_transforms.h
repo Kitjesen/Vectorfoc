@@ -35,6 +35,9 @@ void Park_Transform(float Ialpha, float Ibeta, float theta, float *Id,
 void Park_Inverse(float Vd, float Vq, float theta, float *Valpha, float *Vbeta);
 /* Returns 0 for linear modulation, 1 when the vector was scaled to fit,
  * and -1 when Vbus is invalid. */
+enum { SVPWM_STATUS_OK = 0, SVPWM_STATUS_OVERMODULATION = 1,
+       SVPWM_STATUS_INVALID_INPUT = -1 };
+
 int SVPWM_Modulate(float Valpha, float Vbeta, float Vbus, float *Ta, float *Tb,
                    float *Tc);
 void Trig_FastSinCos(float angle, float *sin_val, float *cos_val);
