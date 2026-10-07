@@ -152,8 +152,13 @@ void Motor_RunControlCycle(MOTOR_DATA *motor) {
     // Check if calibration failed (Transitioned to GUARD by
     // MotorInitializeTask)
     else if (motor->state.State_Mode == STATE_MODE_GUARD) {
-      // faultstate FSM
-      StateMachine_EnterFault(&g_ds402_state_machine, FAULT_STALL_OVERLOAD);
+      /* A failed power transition already records its specific hardware fault.
+       * Preserve it instead of replacing the diagnostic with a generic stall. */
+      uint32_t irq_state = HAL_EnterCritical();
+      MotorState failed_state = StateMachine_GetState(&g_ds402_state_machine);
+      if (failed_state != STATE_FAULT && failed_state != STATE_FAULT_REACTION_ACTIVE)
+        StateMachine_EnterFault(&g_ds402_state_machine, FAULT_STALL_OVERLOAD);
+      HAL_ExitCritical(irq_state);
     }
     break;
   case STATE_MODE_IDLE:

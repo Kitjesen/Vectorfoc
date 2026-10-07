@@ -353,6 +353,18 @@ static void test_init_preserves_configured_current_gains(void) {
   assert(motor_data.Controller.current_ctrl_i_gain == 0.71f);
   assert(!test_power_on);
 }
+static void test_current_calibration_preserves_driver_enable_failure(void) {
+  for (unsigned channel = 1; channel <= 6; ++channel) {
+    reset(); ready();
+    test_enable_fail_call = channel;
+    Motor_RequestCalibration(&motor_data, 3);
+    settle();
+    assert(StateMachine_GetState(&g_ds402_state_machine) == STATE_FAULT);
+    assert(g_ds402_state_machine.active_fault_code == FAULT_DRIVER_CHIP);
+    assert(!test_power_on && TestHardware_PhaseMask() == 0);
+    assert(!g_ds402_state_machine.calibration_power_enabled);
+  }
+}
 int main(void) {
   test_passive_startup();
   test_invalid_samples_and_init_failures();
@@ -366,6 +378,7 @@ int main(void) {
   test_interrupted_enable_releases_lease_and_keeps_bridge_off();
   test_invalid_and_repeated_calibration_fail_closed();
   test_init_preserves_configured_current_gains();
-  puts("startup safety: 12 production-chain test groups passed (including six-channel PWM)");
+  test_current_calibration_preserves_driver_enable_failure();
+  puts("startup safety: 13 production-chain test groups passed (including six-channel PWM)");
   return 0;
 }

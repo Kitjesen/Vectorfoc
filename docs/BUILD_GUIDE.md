@@ -96,10 +96,10 @@ startup and PWM code in `test_runner_startup`; only peripheral I/O is mocked.
 
 | 检查 | 结果 |
 | --- | --- |
-| Release 主机回归 | 29 / 29 通过；Release 保留断言，包含 12 组真实启动/FSM/保护/PWM 链路检查 |
+| Release 主机回归 | 29 / 29 通过；Release 保留断言，包含 13 组真实启动/FSM/保护/PWM 链路检查 |
 | 频率配置编译检查 | 1 组合法配置通过，15 组非法配置按预期拒绝 |
-| MT6816 ARM 应用 | 构建、链接和镜像 CRC 校验通过；RAM 20,264 / 22,512 B，CCM 9,280 / 10,240 B，Flash 102,060 / 110,592 B |
-| TMR3109 ARM 应用 | 构建、链接和镜像 CRC 校验通过；RAM 20,272 / 22,512 B，CCM 9,280 / 10,240 B，Flash 102,144 / 110,592 B |
+| MT6816 ARM 应用 | 构建、链接和镜像 CRC 校验通过；RAM 20,264 / 22,512 B，CCM 9,280 / 10,240 B，Flash 102,076 / 110,592 B |
+| TMR3109 ARM 应用 | 构建、链接和镜像 CRC 校验通过；RAM 20,272 / 22,512 B，CCM 9,280 / 10,240 B，Flash 102,160 / 110,592 B |
 | Bootloader | 构建、链接通过；Flash 13,704 / 16,384 B，原有超限已解决 |
 | Keil 引用 | XML 中 115 个源文件路径存在；只核对引用，没有执行 Keil 编译 |
 | Python 工具 | OTA 镜像头长度/CRC 回归及受影响脚本的 ruff 检查通过 |
