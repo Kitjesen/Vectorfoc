@@ -26,6 +26,10 @@ typedef enum {
 static TestValue values[MAX_TEST_BINDINGS];
 static ParamTargetBinding bindings[MAX_TEST_BINDINGS];
 static uint32_t binding_count;
+/* The registry retains the installed adapter context.  Keep the successful
+ * adapter's context alive for the duration of the test; a pointer to a local
+ * mode would dangle after requires_complete_bindings() returns. */
+static BindingMode valid_binding_mode = BIND_VALID;
 
 static bool resolve_binding(void *context, uint16_t index, ParamType type,
                             ParamTargetBinding *binding) {
@@ -85,8 +89,8 @@ static void requires_complete_bindings(void) {
          PARAM_ERR_INVALID_INDEX);
   assert(!ParamTable_IsBound());
 
-  mode = BIND_VALID;
-  assert(ParamTable_SetBindingAdapter(resolve_binding, &mode) == PARAM_OK);
+  assert(ParamTable_SetBindingAdapter(resolve_binding, &valid_binding_mode) ==
+         PARAM_OK);
   assert(ParamTable_IsBound());
   ParamTable_Init();
   assert_valid_binding_remains_installed();
